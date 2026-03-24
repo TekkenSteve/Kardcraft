@@ -1,0 +1,55 @@
+version: 1
+defaults:
+  runtime_order: ["container"]
+  container:
+    runtime: runsc
+    image: kardcraft/sandbox:latest
+    read_only_rootfs: true
+    cap_drop_all: true
+    no_new_privileges: true
+  limits:
+    timeout_seconds: 60
+    memory_mb: 512
+    cpu_seconds: 30
+    max_processes: 64
+    allow_network: false
+
+hard_caps:
+  timeout_seconds_max: 600
+  memory_mb_max: 2048
+  cpu_seconds_max: 300
+  max_processes_max: 512
+
+profiles:
+  shell-tool-default:
+    payload_type: command
+    runtime_order: ["container"]
+    limits:
+      timeout_seconds: 120
+      memory_mb: 512
+      cpu_seconds: 60
+      max_processes: 64
+      allow_network: false
+    monty:
+      enabled: false
+      max_code_chars: 0
+      blocklist_patterns: []
+      external_functions_allowlist: []
+
+  python-fastlane-safe:
+    payload_type: python
+    runtime_order: ["monty", "container"]
+    limits:
+      timeout_seconds: 60
+      memory_mb: 512
+      cpu_seconds: 30
+      max_processes: 64
+      allow_network: false
+    monty:
+      enabled: true
+      max_code_chars: 8000
+      blocklist_patterns:
+        - "\\bimport\\s+subprocess\\b"
+        - "\\bimport\\s+socket\\b"
+        - "\\bos\\.system\\s*\\("
+      external_functions_allowlist: []

@@ -1,0 +1,388 @@
+syntax = "proto3";
+
+package kardcraft;
+
+option go_package = "task-orchestrator/internal/proto;kardcraftpb";
+
+
+// ============================================================================
+// 通用消息类型
+// ============================================================================
+
+message User {
+    string id = 1;
+    string email = 2;
+    string name = 3;
+    string created_at = 4;
+    string updated_at = 5;
+}
+
+message Workspace {
+    string user_id = 1;
+    string schema_name = 2;      // PostgreSQL schema
+    string collection_name = 3;  // Milvus collection
+    string bucket_name = 4;      // MinIO bucket
+    int64 storage_quota = 5;     // 存储配额（字节）
+    string created_at = 6;
+}
+
+message TaskMetadata {
+    string task_id = 1;
+    string user_id = 2;
+    string status = 3;           // pending, processing, completed, failed, cancelled
+    float progress = 4;          // 0.0 - 1.0
+    string created_at = 5;
+    string updated_at = 6;
+    string completed_at = 7;
+    string error_message = 8;
+    string checkpoint_id = 9;    // LangGraph checkpoint ID
+}
+
+message DocumentMetadata {
+    string id = 1;
+    string user_id = 2;
+    string filename = 3;
+    string file_hash = 4;
+    int64 file_size = 5;
+    string mime_type = 6;
+    string status = 7;           // uploaded, processing, completed, failed
+    string created_at = 8;
+    string processed_at = 9;
+    string file_path = 10;       // MinIO存储路径
+}
+
+message Card {
+    string id = 1;
+    string user_id = 2;
+    string front = 3;
+    string back = 4;
+    repeated string tags = 5;
+    int32 difficulty_level = 6;
+    string last_reviewed = 7;
+    string created_at = 8;
+    string updated_at = 9;
+}
+
+message ProcessingResult {
+    bool success = 1;
+    string content = 2;
+    map<string, string> metadata = 3;
+    string error = 4;
+    int64 processing_time_ms = 5;
+    bool fallback_recommended = 6;
+}
+
+// ============================================================================
+// 任务编排服务 (Go -> Python)
+// ============================================================================
+
+service TaskOrchestrator {
+    // 创建任务
+    rpc CreateTask(CreateTaskRequest) returns (TaskResponse);
+
+    // 获取任务状态
+    rpc GetTaskStatus(TaskStatusRequest) returns (TaskStatusResponse);
+
+    // 取消任务
+    rpc CancelTask(CancelTaskRequest) returns (CancelTaskResponse);
+
+    // 列出用户任务
+    rpc ListTasks(ListTasksRequest) returns (ListTasksResponse);
+
+    // 流式任务进度
+    rpc StreamTaskProgress(TaskProgressRequest) returns (stream TaskProgressResponse);
+
+    // 健康检查
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message CreateTaskRequest {
+    string user_id = 1;
+    string task_type = 2;        // document_processing, card_generation, etc.
+    map<string, string> config = 3;
+    string input_data = 4;       // JSON格式的输入数据
+    string checkpoint_id = 5;    // 可选的checkpoint ID用于恢复
+}
+
+message TaskResponse {
+    TaskMetadata metadata = 1;
+}
+
+message TaskStatusRequest {
+    string task_id = 1;
+}
+
+message TaskStatusResponse {
+    TaskMetadata metadata = 1;
+    string result = 2;           // JSON格式的结果数据
+}
+
+message CancelTaskRequest {
+    string task_id = 1;
+}
+
+message CancelTaskResponse {
+    bool success = 1;
+    string message = 2;
+}
+
+message ListTasksRequest {
+    string user_id = 1;
+    int32 limit = 2;
+    string status_filter = 3;
+}
+
+message ListTasksResponse {
+    repeated TaskMetadata tasks = 1;
+    int32 total_count = 2;
+}
+
+message TaskProgressRequest {
+    string task_id = 1;
+}
+
+message TaskProgressResponse {
+    string task_id = 1;
+    float progress = 2;
+    string status = 3;
+    string message = 4;
+    string checkpoint_id = 5;
+    string timestamp = 6;
+}
+
+// ============================================================================
+// Python工作流服务 (Python -> Go/Rust)
+// ============================================================================
+
+service PythonWorkflow {
+    // 执行工作流
+    rpc ExecuteWorkflow(WorkflowRequest) returns (WorkflowResponse);
+
+    // 恢复工作流（从Checkpoint）
+    rpc ResumeWorkflow(ResumeRequest) returns (WorkflowResponse);
+
+    // 获取工作流状态
+    rpc GetWorkflowStatus(WorkflowStatusRequest) returns (WorkflowStatusResponse);
+
+    // 健康检查
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message WorkflowRequest {
+    string task_id = 1;
+    string user_id = 2;
+    string task_type = 3;
+    map<string, string> config = 4;
+    string input = 5;            // JSON格式输入
+    Workspace workspace = 6;     // 用户沙盒配置
+    string checkpoint_id = 7;    // 可选的checkpoint ID
+}
+
+message WorkflowResponse {
+    string task_id = 1;
+    string status = 2;
+    string result = 3;           // JSON格式结果
+    string error = 4;
+    string checkpoint_id = 5;
+    int64 execution_time_ms = 6;
+    repeated Card generated_cards = 7;
+}
+
+message ResumeRequest {
+    string task_id = 1;
+    string checkpoint_id = 2;
+    string input = 3;            // 可选的额外输入
+}
+
+message WorkflowStatusRequest {
+    string task_id = 1;
+}
+
+message WorkflowStatusResponse {
+    string status = 1;
+    float progress = 2;
+    string current_node = 3;
+    string checkpoint_id = 4;
+    string last_updated = 5;
+}
+
+// ============================================================================
+// Rust高性能服务 (Rust -> Python/Go)
+// ============================================================================
+
+service RustServices {
+    // 文档解析
+    rpc ParseDocument(ParseRequest) returns (ParseResponse);
+
+    // 批量文档解析
+    rpc BatchParseDocuments(BatchParseRequest) returns (stream BatchParseResponse);
+
+    // 向量搜索
+    rpc VectorSearch(VectorSearchRequest) returns (VectorSearchResponse);
+
+    // 插入向量
+    rpc InsertVectors(InsertVectorsRequest) returns (InsertVectorsResponse);
+
+    // 文件操作
+    rpc SaveFile(SaveFileRequest) returns (SaveFileResponse);
+    rpc GetFile(GetFileRequest) returns (GetFileResponse);
+
+    // 健康检查
+    rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+}
+
+message ParseRequest {
+    string file_path = 1;
+    string file_type = 2;        // pdf, docx, txt, etc.
+    map<string, string> options = 3;
+    string user_id = 4;          // 用于沙盒隔离
+}
+
+message ParseResponse {
+    ProcessingResult result = 1;
+    repeated string chunks = 2;  // 分块后的文本
+    map<string, string> metadata = 3;
+    int64 file_size = 4;
+    string mime_type = 5;
+}
+
+message BatchParseRequest {
+    repeated ParseRequest requests = 1;
+    int32 batch_size = 2;
+    bool parallel = 3;
+}
+
+message BatchParseResponse {
+    string request_id = 1;
+    ParseResponse response = 2;
+    bool success = 3;
+    string error = 4;
+}
+
+message VectorSearchRequest {
+    string user_id = 1;
+    string query = 2;
+    repeated float query_vector = 3;
+    int32 limit = 4;
+    map<string, string> filters = 5;
+    float similarity_threshold = 6;
+}
+
+message VectorSearchResponse {
+    repeated SearchResult results = 1;
+    int32 total_hits = 2;
+    float search_time_ms = 3;
+}
+
+message SearchResult {
+    string id = 1;
+    float score = 2;
+    string content = 3;
+    map<string, string> metadata = 4;
+    repeated float vector = 5;
+}
+
+message InsertVectorsRequest {
+    string user_id = 1;
+    repeated Vector vectors = 2;
+}
+
+message Vector {
+    string id = 1;
+    repeated float embedding = 2;
+    string content = 3;
+    map<string, string> metadata = 4;
+}
+
+message InsertVectorsResponse {
+    bool success = 1;
+    int32 inserted_count = 2;
+    repeated string inserted_ids = 3;
+    string error = 4;
+}
+
+message SaveFileRequest {
+    string user_id = 1;
+    string path = 2;
+    bytes content = 3;
+    map<string, string> metadata = 4;
+}
+
+message SaveFileResponse {
+    bool success = 1;
+    string stored_path = 2;
+    int64 file_size = 3;
+    string error = 4;
+}
+
+message GetFileRequest {
+    string user_id = 1;
+    string path = 2;
+}
+
+message GetFileResponse {
+    bool success = 1;
+    bytes content = 2;
+    map<string, string> metadata = 3;
+    string error = 4;
+}
+
+// ============================================================================
+// 通用消息
+// ============================================================================
+
+message HealthCheckRequest {
+    string service = 1;
+}
+
+message HealthCheckResponse {
+    bool healthy = 1;
+    string status = 2;
+    string version = 3;
+    int64 uptime_seconds = 4;
+    map<string, string> metrics = 5;
+}
+
+message ErrorResponse {
+    string code = 1;
+    string message = 2;
+    string details = 3;
+    string timestamp = 4;
+}
+
+// ============================================================================
+// 事件流服务
+// ============================================================================
+
+service EventStream {
+    // 订阅任务事件
+    rpc SubscribeTaskEvents(SubscribeRequest) returns (stream Event);
+
+    // 发布事件
+    rpc PublishEvent(PublishRequest) returns (PublishResponse);
+}
+
+message SubscribeRequest {
+    string user_id = 1;
+    repeated string event_types = 2;
+    string task_id = 3;
+}
+
+message Event {
+    string id = 1;
+    string type = 2;
+    string source = 3;
+    string timestamp = 4;
+    string data = 5;            // JSON格式的事件数据
+    string user_id = 6;
+    string task_id = 7;
+}
+
+message PublishRequest {
+    Event event = 1;
+}
+
+message PublishResponse {
+    bool success = 1;
+    string message = 2;
+}

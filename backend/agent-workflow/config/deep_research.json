@@ -1,0 +1,53 @@
+{
+  "max_concurrent_research_units": 3,
+  "max_researcher_iterations": 3,
+  "max_search_calls_simple": 3,
+  "max_search_calls_complex": 5,
+  "model_provider": "anthropic",
+  "model_name": "claude-3-5-sonnet-20241022",
+  "temperature": 0.0,
+  "tools": {
+    "tavily_search": {
+      "name": "tavily_search",
+      "description": "Search the web for information",
+      "enabled": true,
+      "max_results": 3,
+      "timeout": 10.0
+    },
+    "think_tool": {
+      "name": "think_tool",
+      "description": "Strategic reflection tool",
+      "enabled": true,
+      "max_results": 1,
+      "timeout": 1.0
+    },
+    "write_file": {
+      "name": "write_file",
+      "description": "Write files to research workspace",
+      "enabled": true,
+      "max_results": 1,
+      "timeout": 5.0
+    },
+    "read_file": {
+      "name": "read_file", 
+      "description": "Read files from research workspace",
+      "enabled": true,
+      "max_results": 1,
+      "timeout": 5.0
+    }
+  },
+  "sub_agents": {
+    "research_agent": {
+      "name": "research-agent",
+      "description": "Delegate research to the sub-agent researcher. Only give this researcher one topic at a time.",
+      "system_prompt_template": "researcher_instructions",
+      "tools": ["tavily_search", "think_tool"],
+      "max_iterations": 3
+    }
+  },
+  "prompt_templates": {
+    "researcher_instructions": "You are a research assistant conducting research on the user's input topic.",
+    "workflow_instructions": "Follow this workflow for all research requests: plan, research, synthesize, report.",
+    "delegation_instructions": "Your role is to coordinate research by delegating tasks to specialized research sub-agents."
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "title": "Sandbox Broker Overview",
+  "uid": "sandbox-broker-overview",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "10s",
+  "panels": [
+    {
+      "type": "timeseries",
+      "title": "Broker Error Rate",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum(rate(broker_exec_total{status=~\"failed|timeout|rejected\"}[5m])) / sum(rate(broker_exec_total[5m]))", "refId": "A"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Monty Fallback Rate",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum(rate(broker_fallback_total{from=\"monty\",to=\"container\"}[5m])) / sum(rate(broker_exec_total{eligible=\"true\"}[5m]))", "refId": "A"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Runtime Selection",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum(rate(broker_exec_total{runtime=\"monty\"}[5m]))", "legendFormat": "monty", "refId": "A"},
+        {"expr": "sum(rate(broker_exec_total{runtime=\"container\"}[5m]))", "legendFormat": "container", "refId": "B"}
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "safe_fetch Deny Ratio",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {"expr": "sum(rate(safe_fetch_total{decision=\"deny\"}[10m])) / sum(rate(safe_fetch_total[10m]))", "refId": "A"}
+      ]
+    }
+  ]
+}

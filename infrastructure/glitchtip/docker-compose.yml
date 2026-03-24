@@ -1,0 +1,40 @@
+# https://glitchtip.com/documentation/install
+
+x-environment: &default-environment
+  DATABASE_URL: postgres://postgres:postgres@postgres:5432/postgres
+  VALKEY_URL: "" # Set to enable Valkey. Ex: redis://valkey:6379
+  SECRET_KEY: change_me_to_something_random # best to run openssl rand -hex 32
+  PORT: 8000 # If changing, change the web service port too
+  EMAIL_URL: consolemail:// # Example smtp://email:password@smtp_url:port https://glitchtip.com/documentation/install#configuration
+  GLITCHTIP_DOMAIN: https://glitchtip.example.com # Change this to your domain
+  DEFAULT_FROM_EMAIL: email@example.com # Change this to your email
+  CELERY_WORKER_AUTOSCALE: "1,2" # Scale between 1 and 2 to prevent excessive memory usage. Change it or remove to set it to the number of cpu cores.
+
+x-depends_on: &default-depends_on
+  - postgres
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: "trust" # Consider removing this and setting a password
+    restart: unless-stopped
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+  # valkey: # Optional, but offers better performance. Uncomment and set VALKEY_URL to enable.
+  #  image: valkey/valkey
+  #  restart: unless-stopped
+  web:
+    image: glitchtip/glitchtip
+    depends_on: *default-depends_on
+    ports:
+      - "8000:8000"
+    environment: *default-environment
+    command: ./bin/run-all-in-one.sh # Runs web/worker/beat/migrate all in one container
+    restart: unless-stopped
+    volumes:
+      - uploads:/code/uploads
+
+volumes:
+  pg-data:
+  uploads:

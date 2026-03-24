@@ -1,0 +1,6 @@
+version: v1
+plugins:
+  - plugin: buf.build/protocolbuffers/python:v32.1
+    out: ../agent-workflow/src/kardcraft
+  - plugin: buf.build/grpc/python:v1.76.0
+    out: ../agent-workflow/src/kardcraft

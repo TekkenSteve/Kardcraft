@@ -1,0 +1,271 @@
+syntax = "proto3";
+
+package file_storage;
+
+option go_package = "file-storage/pkg/grpc/pb";
+
+import "buf/validate/validate.proto";
+import "google/protobuf/timestamp.proto";
+
+// FileStorageService provides file storage operations
+service FileStorageService {
+  // Upload uploads a file
+  rpc Upload(stream UploadRequest) returns (UploadResponse);
+  
+  // Download downloads a file
+  rpc Download(DownloadRequest) returns (stream DownloadResponse);
+  
+  // Delete deletes a file
+  rpc Delete(DeleteRequest) returns (DeleteResponse);
+  
+  // Exists checks if a file exists
+  rpc Exists(ExistsRequest) returns (ExistsResponse);
+  
+  // List lists files
+  rpc List(ListRequest) returns (ListResponse);
+  
+  // GetMetadata gets file metadata
+  rpc GetMetadata(GetMetadataRequest) returns (GetMetadataResponse);
+  
+  // UpdateMetadata updates file metadata
+  rpc UpdateMetadata(UpdateMetadataRequest) returns (UpdateMetadataResponse);
+  
+  // GeneratePresignedURL generates a presigned URL
+  rpc GeneratePresignedURL(GeneratePresignedURLRequest) returns (GeneratePresignedURLResponse);
+  
+  // GetHealth checks service health
+  rpc GetHealth(HealthRequest) returns (HealthResponse);
+  
+  // === 新增：会话和对话文件管理 ===
+  
+  // UploadConversationFile uploads a file for a specific conversation
+  rpc UploadConversationFile(stream ConversationFileUploadRequest) returns (ConversationFileUploadResponse);
+  
+  // GetConversationFiles gets all files for a conversation
+  rpc GetConversationFiles(GetConversationFilesRequest) returns (GetConversationFilesResponse);
+  
+  // DownloadConversationFile downloads a file from a conversation
+  rpc DownloadConversationFile(DownloadConversationFileRequest) returns (stream DownloadResponse);
+  
+  // ValidateFile validates a file (TODO: implement validation logic)
+  rpc ValidateFile(ValidateFileRequest) returns (ValidateFileResponse);
+}
+
+// === 新增：会话文件相关消息 ===
+
+// ConversationFileUploadRequest represents a conversation file upload request
+message ConversationFileUploadRequest {
+  oneof data {
+    ConversationFileMetadata metadata = 1;
+    bytes chunk = 2;
+  }
+}
+
+// ConversationFileMetadata contains conversation file metadata
+message ConversationFileMetadata {
+  string user_id = 1 [(buf.validate.field).string.min_len = 1];
+  string session_id = 2 [(buf.validate.field).string.min_len = 1];
+  string conversation_id = 3 [(buf.validate.field).string.min_len = 1];
+  string filename = 4 [(buf.validate.field).string.min_len = 1];
+  string content_type = 5 [(buf.validate.field).string.min_len = 1];
+  int64 file_size = 6 [(buf.validate.field).int64.gt = 0];
+  map<string, string> custom_meta = 7;
+}
+
+// ConversationFileUploadResponse represents a conversation file upload response
+message ConversationFileUploadResponse {
+  string file_id = 1;
+  string storage_key = 2;
+  int64 size = 3;
+  string etag = 4;
+  google.protobuf.Timestamp uploaded_at = 5;
+}
+
+// GetConversationFilesRequest represents a request to get conversation files
+message GetConversationFilesRequest {
+  string user_id = 1 [(buf.validate.field).string.min_len = 1];
+  string session_id = 2 [(buf.validate.field).string.min_len = 1];
+  string conversation_id = 3 [(buf.validate.field).string.min_len = 1];
+}
+
+// GetConversationFilesResponse represents a response with conversation files
+message GetConversationFilesResponse {
+  repeated ConversationFileInfo files = 1;
+}
+
+// ConversationFileInfo represents conversation file information
+message ConversationFileInfo {
+  string file_id = 1;
+  string filename = 2;
+  string content_type = 3;
+  int64 file_size = 4;
+  string storage_key = 5;
+  google.protobuf.Timestamp uploaded_at = 6;
+  map<string, string> custom_meta = 7;
+}
+
+// DownloadConversationFileRequest represents a conversation file download request
+message DownloadConversationFileRequest {
+  string user_id = 1;
+  string file_id = 2 [(buf.validate.field).string.min_len = 1];
+}
+
+// ValidateFileRequest represents a file validation request
+message ValidateFileRequest {
+  string filename = 1 [(buf.validate.field).string.min_len = 1];
+  string content_type = 2 [(buf.validate.field).string.min_len = 1];
+  int64 file_size = 3 [(buf.validate.field).int64.gt = 0];
+  bytes file_header = 4; // First few bytes for magic number validation
+}
+
+// ValidateFileResponse represents a file validation response
+message ValidateFileResponse {
+  bool is_valid = 1;
+  string validation_error = 2;
+  repeated string warnings = 3;
+}
+
+// UploadRequest represents an upload request
+message UploadRequest {
+  oneof data {
+    UploadMetadata metadata = 1;
+    bytes chunk = 2;
+  }
+}
+
+// UploadMetadata contains upload metadata
+message UploadMetadata {
+  string key = 1 [(buf.validate.field).string.min_len = 1];
+  string content_type = 2 [(buf.validate.field).string.min_len = 1];
+  map<string, string> custom_meta = 3;
+  string provider = 4; // Optional: specify storage provider
+}
+
+// UploadResponse represents an upload response
+message UploadResponse {
+  string key = 1;
+  int64 size = 2;
+  string etag = 3;
+  google.protobuf.Timestamp uploaded_at = 4;
+}
+
+// DownloadRequest represents a download request
+message DownloadRequest {
+  string key = 1 [(buf.validate.field).string.min_len = 1];
+  string provider = 2; // Optional: specify storage provider
+}
+
+// DownloadResponse represents a download response
+message DownloadResponse {
+  oneof data {
+    FileMetadata metadata = 1;
+    bytes chunk = 2;
+  }
+}
+
+// DeleteRequest represents a delete request
+message DeleteRequest {
+  string key = 1 [(buf.validate.field).string.min_len = 1];
+  string provider = 2; // Optional: specify storage provider
+}
+
+// DeleteResponse represents a delete response
+message DeleteResponse {
+  bool success = 1;
+}
+
+// ExistsRequest represents an exists request
+message ExistsRequest {
+  string key = 1 [(buf.validate.field).string.min_len = 1];
+  string provider = 2; // Optional: specify storage provider
+}
+
+// ExistsResponse represents an exists response
+message ExistsResponse {
+  bool exists = 1;
+}
+
+// ListRequest represents a list request
+message ListRequest {
+  string prefix = 1;
+  int32 limit = 2 [(buf.validate.field).int32.gt = 0];
+  string provider = 3; // Optional: specify storage provider
+}
+
+// ListResponse represents a list response
+message ListResponse {
+  repeated FileInfo files = 1;
+}
+
+// GetMetadataRequest represents a get metadata request
+message GetMetadataRequest {
+  string key = 1 [(buf.validate.field).string.min_len = 1];
+  string provider = 2; // Optional: specify storage provider
+}
+
+// GetMetadataResponse represents a get metadata response
+message GetMetadataResponse {
+  FileMetadata metadata = 1;
+}
+
+// UpdateMetadataRequest represents an update metadata request
+message UpdateMetadataRequest {
+  string key = 1 [(buf.validate.field).string.min_len = 1];
+  FileMetadata metadata = 2 [(buf.validate.field).required = true];
+  string provider = 3; // Optional: specify storage provider
+}
+
+// UpdateMetadataResponse represents an update metadata response
+message UpdateMetadataResponse {
+  bool success = 1;
+}
+
+// GeneratePresignedURLRequest represents a generate presigned URL request
+message GeneratePresignedURLRequest {
+  string key = 1 [(buf.validate.field).string.min_len = 1];
+  int64 expiry_seconds = 2 [(buf.validate.field).int64.gt = 0];
+  Operation operation = 3;
+  string provider = 4; // Optional: specify storage provider
+}
+
+// GeneratePresignedURLResponse represents a generate presigned URL response
+message GeneratePresignedURLResponse {
+  string url = 1;
+  google.protobuf.Timestamp expires_at = 2;
+}
+
+// HealthRequest represents a health check request
+message HealthRequest {}
+
+// HealthResponse represents a health check response
+message HealthResponse {
+  string status = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  map<string, string> details = 3;
+}
+
+// FileMetadata represents file metadata
+message FileMetadata {
+  string content_type = 1;
+  int64 content_length = 2;
+  string etag = 3;
+  google.protobuf.Timestamp last_modified = 4;
+  map<string, string> custom_meta = 5;
+}
+
+// FileInfo represents file information
+message FileInfo {
+  string key = 1;
+  int64 size = 2;
+  google.protobuf.Timestamp last_modified = 3;
+  string etag = 4;
+  string content_type = 5;
+  FileMetadata metadata = 6;
+}
+
+// Operation represents the type of operation for presigned URLs
+enum Operation {
+  READ = 0;
+  WRITE = 1;
+  DELETE = 2;
+}

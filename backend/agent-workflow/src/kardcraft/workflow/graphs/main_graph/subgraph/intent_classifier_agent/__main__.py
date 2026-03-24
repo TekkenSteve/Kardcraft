@@ -1,0 +1,46 @@
+"""Standalone runner for Intent Classifier Agent."""
+
+import asyncio
+from .builder import build_intent_classifier_agent
+
+async def main():
+    """Test the intent classifier agent."""
+    
+    # Build the agent
+    agent = build_intent_classifier_agent()
+    
+    # Test cases
+    test_cases = [
+        {
+            "user_input": "帮我制作关于微积分的卡片",
+            "file_ids": [],
+            "metadata": {}
+        },
+        {
+            "user_input": "我上传了一些生物学PDF，请帮我生成复习卡片",
+            "file_ids": ["file1.pdf", "file2.pdf"],
+            "metadata": {"target_count": 20}
+        },
+        {
+            "user_input": "优化我现有的英语词汇卡片",
+            "file_ids": [],
+            "metadata": {"existing_cards": True}
+        }
+    ]
+    
+    for i, test_case in enumerate(test_cases, 1):
+        print(f"\n=== Test Case {i} ===")
+        print(f"Input: {test_case['user_input']}")
+        
+        try:
+            result = await agent.ainvoke(test_case)
+            print(f"Intent: {result.get('intent_type')}")
+            print(f"Driven Mode: {result.get('driven_mode')}")
+            print(f"Subject: {result.get('subject_domain')}")
+            print(f"Complexity: {result.get('task_complexity')}")
+            print(f"Confidence: {result.get('confidence')}")
+        except Exception as e:
+            print(f"Error: {e}")
+
+if __name__ == "__main__":
+    asyncio.run(main())

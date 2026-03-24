@@ -1,0 +1,135 @@
+syntax = "proto3";
+
+package sandboxbroker.v1;
+
+message Limits {
+  int32 timeout_seconds = 1;
+  int32 memory_mb = 2;
+  int32 cpu_seconds = 3;
+  int32 max_processes = 4;
+  bool allow_network = 5;
+}
+
+message ExecutionPolicy {
+  string policy_profile = 1;
+  string risk_tier = 2;
+  Limits limits_override = 3;
+}
+
+message CommandPayload {
+  string command = 1;
+  map<string, string> env = 2;
+}
+
+message PythonPayload {
+  string code = 1;
+  string language = 2;
+  map<string, string> inputs_json = 3;
+}
+
+message ExecuteRequest {
+  string workspace_id = 1;
+  string task_id = 2;
+  string user_id = 3;
+  string tool_name = 4;
+  string workflow_type = 5;
+  map<string, string> labels = 6;
+  ExecutionPolicy policy = 7;
+
+  oneof payload {
+    CommandPayload command = 10;
+    PythonPayload python = 11;
+  }
+}
+
+message StartRequest {
+  ExecuteRequest execute = 1;
+}
+
+message ResumeRequest {
+  string snapshot_id = 1;
+  string return_value_json = 2;
+}
+
+message StatusRequest {
+  string execution_id = 1;
+}
+
+message CancelRequest {
+  string execution_id = 1;
+}
+
+message RoutingMetadata {
+  string selected_runtime = 1;
+  string eligibility_reason = 2;
+  bool fallback_used = 3;
+  string fallback_reason = 4;
+}
+
+message SandboxMetadata {
+  string runtime = 1;
+  string image = 2;
+  string policy_profile = 3;
+}
+
+message ErrorMetadata {
+  string code = 1;
+  string message = 2;
+}
+
+message ExecuteResponse {
+  string execution_id = 1;
+  string workspace_id = 2;
+  string task_id = 3;
+  string runtime = 4;
+  string status = 5;
+  bool success = 6;
+  int32 exit_code = 7;
+  string stdout = 8;
+  string stderr = 9;
+  int64 duration_ms = 10;
+  int64 started_at_ms = 11;
+  int64 completed_at_ms = 12;
+  RoutingMetadata routing = 13;
+  SandboxMetadata sandbox = 14;
+  repeated ErrorMetadata errors = 15;
+}
+
+message ExecutionProgress {
+  string execution_id = 1;
+  string snapshot_id = 2;
+  string state = 3;
+  string details_json = 4;
+}
+
+message StatusResponse {
+  string execution_id = 1;
+  string state = 2;
+  string details_json = 3;
+}
+
+message CancelResponse {
+  string execution_id = 1;
+  bool cancelled = 2;
+  string message = 3;
+}
+
+message HealthRequest {}
+
+message HealthResponse {
+  bool healthy = 1;
+  string status = 2;
+  string sandbox_runtime = 3;
+  bool runtime_ready = 4;
+  string runtime_reason = 5;
+  string config_revision = 6;
+}
+
+service SandboxBrokerService {
+  rpc Execute(ExecuteRequest) returns (ExecuteResponse);
+  rpc Start(StartRequest) returns (ExecutionProgress);
+  rpc Resume(ResumeRequest) returns (ExecutionProgress);
+  rpc GetStatus(StatusRequest) returns (StatusResponse);
+  rpc Cancel(CancelRequest) returns (CancelResponse);
+  rpc Health(HealthRequest) returns (HealthResponse);
+}

@@ -1,0 +1,73 @@
+# File Storage Service Configuration
+server:
+  port: 50053
+  host: "0.0.0.0"
+  
+# Storage configuration
+storage:
+  # Default storage provider: minio, s3, gcs, azure, memory, file
+  default_provider: "minio"
+  
+  # Provider configurations
+  providers:
+    minio:
+      endpoint: "minio:9000"
+      access_key: "minioadmin"
+      secret_key: "minioadmin"
+      secure: false
+      bucket: "kardcraft-files"
+      region: "us-east-1"
+      
+    s3:
+      region: "us-west-2"
+      bucket: "kardcraft-files-s3"
+      # access_key and secret_key can be set via environment variables
+      # AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY
+      
+    gcs:
+      bucket: "kardcraft-files-gcs"
+      # credentials_file: "/path/to/service-account.json"
+      # or use GOOGLE_APPLICATION_CREDENTIALS environment variable
+      
+    azure:
+      account_name: "kardcraftfiles"
+      container: "files"
+      # account_key can be set via AZURE_STORAGE_KEY environment variable
+      
+    file:
+      base_path: "/tmp/kardcraft-files"
+      
+    memory:
+      # In-memory storage for testing
+      enabled: true
+
+# Middleware configuration
+middleware:
+  # Enable/disable middleware
+  encryption:
+    enabled: false
+    key: "your-32-byte-encryption-key-here"
+    
+  compression:
+    enabled: true
+    algorithm: "gzip" # gzip, zstd
+    
+  cache:
+    enabled: true
+    ttl: "1h"
+    max_size: "100MB"
+    
+  audit:
+    enabled: true
+    log_level: "info"
+
+# File policies
+policies:
+  max_file_size: "100MB"
+  allowed_extensions: [".jpg", ".jpeg", ".png", ".gif", ".pdf", ".txt", ".doc", ".docx"]
+  scan_for_malware: false
+  
+# Logging
+logging:
+  level: "info"
+  format: "json" # json, text

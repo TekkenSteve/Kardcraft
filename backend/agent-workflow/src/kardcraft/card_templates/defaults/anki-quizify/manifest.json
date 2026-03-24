@@ -1,0 +1,43 @@
+{
+  "template_id": "anki-quizify",
+  "name": "Anki Quizify",
+  "description": "Default interactive Anki template",
+  "scope": "system",
+  "status": "active",
+  "is_default": true,
+  "version": 1,
+  "render_target": "anki",
+  "tags": ["anki", "default", "quizify"],
+  "mapping_spec": {
+    "default_profile": "mcq",
+    "profiles": [
+      {
+        "name": "mcq",
+        "sample_fields": {
+          "Deck": "Cognitive Science::Memory::Quizify",
+          "Front": "[[Core Idea::Active recall means retrieving information from memory, not re-reading notes.]]<br>((Hint::Think of the last time you explained a topic without looking at your notes.))<br>[Active recall]^(Retrieval strengthens memory traces and improves long-term retention.)<br>Memory improves with {{retrieval practice}}, not just {{passive review}}.<br>[<br>A. Re-read highlighted notes repeatedly<br>B. Watch summary videos at 2x speed<br>C. Close your notes and write key points from memory<br>D. Cram everything in one session<br>]::(C)",
+          "Back": "Correct answer: C.<br>Explanation: Retrieval practice exposes weak spots and improves long-term retention.",
+          "Tags": "kardcraft::preview::mcq"
+        }
+      },
+      {
+        "name": "cloze",
+        "sample_fields": {
+          "Deck": "Cognitive Science::Memory::Quizify",
+          "Front": "[[Forgetting Curve::Forgetting is fastest right after learning, then slows down.]]<br>Convert input into output: {{retrieval practice}} + {{spaced repetition}}.<br>((Hint::Recall three key terms before revealing the explanation.))<br>[<br>A. Six reviews in one day<br>B. Same-time review with no feedback<br>C. Gradually expand review intervals based on forgetting<br>D. Only review the night before exam<br>]::(C)",
+          "Back": "Key line: durable learning comes from effortful recall.<br>{{retrieval practice}} activates memory; {{spaced repetition}} reinforces it at the right time.",
+          "Tags": "kardcraft::preview::cloze"
+        }
+      }
+    ]
+  },
+  "metadata": {
+    "source": "kardcraft/card_templates/defaults/anki-quizify",
+    "license": "MIT"
+  },
+  "files": {
+    "front_html": "front.html",
+    "back_html": "back.html",
+    "css": "style.css"
+  }
+}

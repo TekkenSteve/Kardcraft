@@ -1,0 +1,52 @@
+"use client";
+
+import { createContext, useContext } from "react";
+import { SessionDataBundle, SessionHistoryData } from "./run-detail-types";
+import { RunMessage } from "@/lib/features/runSlice";
+import { RunEvent } from "@/lib/kardcraft/types";
+import { CardData } from "@/lib/features/runSlice";
+import { TimelineDisplayEvent } from "./hooks/use-timeline";
+
+export interface RunDetailDataContextValue {
+    sessionId: string | null;
+    workflowIdParam: string | null;
+    isNewSession: boolean;
+    actualSessionId: string | null;
+    resolvedSessionId: string | null;
+    isLoading: boolean;
+    error: string | null;
+    messages: RunMessage[];
+    runEvents: RunEvent[];
+    runStatus: "idle" | "running" | "completed" | "failed";
+    runPhase: "idle" | "clearing" | "loading" | "hydrated" | "streaming" | "error";
+    connectionState: "idle" | "connecting" | "connected" | "reconnecting" | "error";
+    streamError: string | null;
+    sessionTitle: string | null;
+    selectedAgent: "normal" | "card_template";
+    researchStrategy: "quick" | "standard" | "deep" | "academic";
+    isPaused: boolean;
+    pauseCheckpoint: string | null;
+    isPauseLoading: boolean;
+    isResumeLoading: boolean;
+    isCancelling: boolean;
+    isCancelled: boolean;
+    cards: CardData[];
+    sessionData: SessionDataBundle | null;
+    sessionHistory: SessionHistoryData;
+    currentTaskId: string | null;
+    timelineEvents: TimelineDisplayEvent[];
+    workspacePhase: "idle" | "clearing" | "loading" | "hydrated" | "empty" | "error";
+    loadPhase: "idle" | "clearing" | "loading" | "hydrated" | "streaming";
+}
+
+const RunDetailDataContext = createContext<RunDetailDataContextValue | null>(null);
+
+export function useRunDetailData(): RunDetailDataContextValue {
+    const ctx = useContext(RunDetailDataContext);
+    if (!ctx) {
+        throw new Error("useRunDetailData must be used within RunDetailProvider");
+    }
+    return ctx;
+}
+
+export { RunDetailDataContext };

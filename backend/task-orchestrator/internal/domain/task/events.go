@@ -1,0 +1,124 @@
+package task
+
+import (
+	"fmt"
+	"sync/atomic"
+	"time"
+)
+
+type DomainEvent interface {
+	EventID() string
+	EventType() string
+	AggregateID() string
+	OccurredAt() time.Time
+}
+
+type taskEvent struct {
+	eventID     string
+	eventType   string
+	aggregateID string
+	occurredAt  time.Time
+}
+
+func (e taskEvent) EventID() string {
+	return e.eventID
+}
+
+func (e taskEvent) EventType() string {
+	return e.eventType
+}
+
+func (e taskEvent) AggregateID() string {
+	return e.aggregateID
+}
+
+func (e taskEvent) OccurredAt() time.Time {
+	return e.occurredAt
+}
+
+type TaskCreated struct{ taskEvent }
+type TaskStarted struct{ taskEvent }
+type TaskCompleted struct{ taskEvent }
+type TaskPaused struct {
+	taskEvent
+	reason string
+}
+type TaskResumed struct {
+	taskEvent
+	reason string
+}
+type TaskCancelled struct {
+	taskEvent
+	reason string
+}
+type TaskFailed struct {
+	taskEvent
+	reason string
+}
+
+func (e TaskPaused) Reason() string {
+	return e.reason
+}
+
+func (e TaskResumed) Reason() string {
+	return e.reason
+}
+
+func (e TaskCancelled) Reason() string {
+	return e.reason
+}
+
+func (e TaskFailed) Reason() string {
+	return e.reason
+}
+
+const (
+	EventTypeTaskCreated   = "task.created"
+	EventTypeTaskStarted   = "task.started"
+	EventTypeTaskCompleted = "task.completed"
+	EventTypeTaskPaused    = "task.paused"
+	EventTypeTaskResumed   = "task.resumed"
+	EventTypeTaskCancelled = "task.cancelled"
+	EventTypeTaskFailed    = "task.failed"
+)
+
+var eventSeq uint64
+
+func newTaskCreatedEvent(taskID TaskID, at time.Time) TaskCreated {
+	return TaskCreated{taskEvent: baseTaskEvent(EventTypeTaskCreated, taskID, at)}
+}
+
+func newTaskStartedEvent(taskID TaskID, at time.Time) TaskStarted {
+	return TaskStarted{taskEvent: baseTaskEvent(EventTypeTaskStarted, taskID, at)}
+}
+
+func newTaskCompletedEvent(taskID TaskID, at time.Time) TaskCompleted {
+	return TaskCompleted{taskEvent: baseTaskEvent(EventTypeTaskCompleted, taskID, at)}
+}
+
+func newTaskPausedEvent(taskID TaskID, at time.Time, reason string) TaskPaused {
+	return TaskPaused{taskEvent: baseTaskEvent(EventTypeTaskPaused, taskID, at), reason: reason}
+}
+
+func newTaskResumedEvent(taskID TaskID, at time.Time, reason string) TaskResumed {
+	return TaskResumed{taskEvent: baseTaskEvent(EventTypeTaskResumed, taskID, at), reason: reason}
+}
+
+func newTaskCancelledEvent(taskID TaskID, at time.Time, reason string) TaskCancelled {
+	return TaskCancelled{taskEvent: baseTaskEvent(EventTypeTaskCancelled, taskID, at), reason: reason}
+}
+
+func newTaskFailedEvent(taskID TaskID, at time.Time, reason string) TaskFailed {
+	return TaskFailed{taskEvent: baseTaskEvent(EventTypeTaskFailed, taskID, at), reason: reason}
+}
+
+func baseTaskEvent(eventType string, taskID TaskID, at time.Time) taskEvent {
+	ts := at.UTC()
+	seq := atomic.AddUint64(&eventSeq, 1)
+	return taskEvent{
+		eventID:     fmt.Sprintf("%s-%s-%d", eventType, taskID.String(), seq),
+		eventType:   eventType,
+		aggregateID: taskID.String(),
+		occurredAt:  ts,
+	}
+}

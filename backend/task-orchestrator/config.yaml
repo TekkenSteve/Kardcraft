@@ -1,0 +1,6 @@
+service:
+  name: task-orchestrator
+  port: 50050
+
+runtime:
+  env: docker

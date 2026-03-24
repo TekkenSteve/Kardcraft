@@ -1,0 +1,14 @@
+version: v1
+plugins:
+  - plugin: buf.build/protocolbuffers/go
+    out: ../file-storage/pkg/grpc/pb
+    opt:
+      - paths=source_relative
+  - plugin: buf.build/grpc/go
+    out: ../file-storage/pkg/grpc/pb
+    opt:
+      - paths=source_relative
+  - plugin: buf.build/protocolbuffers/python:v32.1
+    out: ../agent-workflow/src/kardcraft
+  - plugin: buf.build/grpc/python:v1.76.0
+    out: ../agent-workflow/src/kardcraft

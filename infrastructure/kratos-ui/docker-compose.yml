@@ -1,0 +1,21 @@
+services:
+  # Kratos UI 普通用户用的，基本没用
+  kratos-selfservice-ui-node:  
+    image: oryd/kratos-selfservice-ui-node:v25.4.0 
+    container_name: kardcraft-kratos-ui
+    ports:  
+      - "4455:3000" # 从下面浏览器访问会重定向，需要把它开放出来（node 默认 3000）。如果要像官方推荐用反向代理，用已经引入的 apisix 就行
+    environment:  
+      - KRATOS_PUBLIC_URL=http://kratos:4433/  # 内部通信  
+      - KRATOS_BROWSER_URL=http://127.0.0.1:4433/  # 浏览器访问地址 http://127.0.0.1:4433/self-service/login/browser
+      # Cookie 安全配置 - 生产环境必须更改  
+      - COOKIE_SECRET=changeme  # 生产环境：使用强随机密钥  
+      - CSRF_COOKIE_NAME=ory_csrf_ui  
+      - CSRF_COOKIE_SECRET=changeme  # 生产环境：使用强随机密钥 
+    restart: on-failure 
+    depends_on:
+      - kratos
+    networks:
+      - kardcraft-network
+
+  # admin 可看一下 https://github.com/dfoxg/kratos-admin-ui ，没试过

@@ -1,0 +1,99 @@
+# ============================================================================
+# Prometheus 监控配置
+# ============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+# 告警规则
+rule_files:
+  - "alerts/*.yml"
+
+# 告警管理器
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          # - alertmanager:9093
+
+# 抓取配置
+scrape_configs:
+  # Prometheus自身
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # API网关
+  - job_name: 'api-gateway'
+    static_configs:
+      - targets: ['api-gateway:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # 任务编排器
+  - job_name: 'task-orchestrator'
+    static_configs:
+      - targets: ['task-orchestrator:50050']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Agent工作流
+  - job_name: 'agent-workflow'
+    static_configs:
+      - targets: ['agent-workflow:50051']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Sandbox Broker
+  - job_name: 'sandbox-broker'
+    static_configs:
+      - targets: ['sandbox-broker:50061']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # 文件存储
+  - job_name: 'file-storage'
+    static_configs:
+      - targets: ['file-storage:50053']
+    metrics_path: '/metrics'
+    scrape_interval: 10s
+
+  # Redis
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis:9121']
+    metrics_path: '/metrics'
+
+  # PostgreSQL
+  - job_name: 'postgres'
+    static_configs:
+      - targets: ['postgres:9187']
+    metrics_path: '/metrics'
+
+  # MinIO
+  - job_name: 'minio'
+    static_configs:
+      - targets: ['minio:9000']
+    metrics_path: '/minio/v2/metrics/cluster'
+    scheme: http
+    basic_auth:
+      username: 'minioadmin'
+      password: 'minioadmin'
+
+  # Milvus
+  - job_name: 'milvus'
+    static_configs:
+      - targets: ['milvus:9091']
+    metrics_path: '/metrics'
+
+  # Node Exporter (系统指标)
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # cAdvisor (容器指标)
+  - job_name: 'cadvisor'
+    static_configs:
+      - targets: ['cadvisor:8080']

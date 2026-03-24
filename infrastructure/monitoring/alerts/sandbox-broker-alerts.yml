@@ -1,0 +1,53 @@
+groups:
+  - name: sandbox-broker-slo
+    rules:
+      - alert: BrokerHighErrorRate
+        expr: |
+          sum(rate(broker_exec_total{status=~"failed|timeout|rejected"}[5m]))
+          /
+          sum(rate(broker_exec_total[5m])) > 0.02
+        for: 10m
+        labels:
+          severity: page
+          service: sandbox-broker
+        annotations:
+          summary: "Broker error rate > 2%"
+          description: "Execution failure ratio exceeded 2% for 10m."
+
+      - alert: RunscRuntimeNotReady
+        expr: max_over_time(broker_runtime_ready{runtime="runsc"}[2m]) == 0
+        for: 2m
+        labels:
+          severity: page
+          service: sandbox-broker
+        annotations:
+          summary: "runsc runtime not ready"
+          description: "gVisor runsc is unavailable on broker nodes."
+
+      - alert: MontyFallbackRateHigh
+        expr: |
+          sum(rate(broker_fallback_total{from="monty",to="container"}[5m]))
+          /
+          sum(rate(broker_exec_total{eligible="true"}[5m])) > 0.20
+        for: 15m
+        labels:
+          severity: warning
+          service: sandbox-broker
+        annotations:
+          summary: "Monty fallback rate high"
+          description: "Monty fallback exceeded 20% for eligible traffic."
+
+      - alert: SafeFetchDenyRatioAnomaly
+        expr: |
+          (
+            sum(rate(safe_fetch_total{decision="deny"}[10m]))
+            /
+            sum(rate(safe_fetch_total[10m]))
+          ) > 0.60
+        for: 15m
+        labels:
+          severity: warning
+          service: sandbox-broker
+        annotations:
+          summary: "safe_fetch deny ratio anomaly"
+          description: "Deny ratio > 60% for 15m; possible policy drift or DNS issue."
