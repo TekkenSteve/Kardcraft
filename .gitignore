@@ -1,0 +1,175 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+# lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# UV package manager
+uv.lock
+.python-version
+
+# IDE and editors
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.sublime-*
+
+# Logs and temporary files
+*.log
+*.log.*
+logs/
+*.tmp
+*.temp
+*.bak
+
+# Environment variables and sensitive data
+.env
+.env.llm
+.env.lightrag
+.env.ragix
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+secrets.yaml
+config.local.yaml
+
+# Test coverage and cache
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Ruff cache
+.ruff_cache/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+
+# Project specific ignores
+backend/.venv/
+backend/__pycache__/
+backend/*.log
+
+# Go
+backend/*/bin/
+backend/*/vendor/
+*.test
+*.out
+
+# Rust
+backend/rust-services/target/
+**/*.rs.bk
+Cargo.lock
+
+# Protobuf generated code
+backend/shared/protobuf/
+backend/agent-workflow/src/kardcraft/*_pb2*.py
+!backend/agent-workflow/src/kardcraft/file_storage_pb2.py
+!backend/agent-workflow/src/kardcraft/file_storage_pb2_grpc.py
+
+# Docker
+docker-compose.override.yml
+
+# Production environment file
+*.cert
+*.key
+*.pem
+
+# Temporary file
+.temp/
+temp/
+
+# Anki deck files (if generated locally)
+*.apkg
+*.colpkg
+
+# Database files (if using local SQLite)
+*.db
+*.sqlite
+*.sqlite3
+
+# Vector database files (if using local Milvus)
+milvus_data/
+milvus_logs/
+
+# Redis data
+dump.rdb
+appendonly.aof
+
+# Neo4j data
+data/
+logs/
+plugins/
+run/
+
+# Generated documentation
+docs/_build/
+docs/_static/
+docs/_templates/
+
+# Local development files
+local_settings.py
+local_config.py
+dev_config.yaml
+
+# bak
+archive/
+
+# Git worktrees
+.worktrees/
+worktrees/
+
+
