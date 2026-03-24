@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Send, Loader2, Sparkles, Pause, Play, Square, Microscope, Paperclip, ChevronDown, LayoutTemplate, Save } from "lucide-react";
+import { Send, Loader2, Sparkles, Pause, Play, Square, Paperclip, ChevronDown, LayoutTemplate, Save } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
 import {
@@ -493,7 +493,7 @@ export function ChatInput({
                         aria-label={t("chat.agentLabel")}
                     >
                         {selectedAgent === "card_template" ? (
-                            <Microscope className="h-4 w-4 text-violet-500" />
+                            <LayoutTemplate className="h-4 w-4 text-violet-500" />
                         ) : (
                             <Sparkles className="h-4 w-4 text-amber-500" />
                         )}
@@ -522,7 +522,7 @@ export function ChatInput({
                                 className="justify-start gap-2"
                                 onClick={() => onSelectedAgentChange("card_template")}
                             >
-                                <Microscope className="h-4 w-4 text-violet-500" />
+                                <LayoutTemplate className="h-4 w-4 text-violet-500" />
                                 {t("chat.agentDeepResearch")}
                             </Button>
                         </div>
