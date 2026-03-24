@@ -4,12 +4,14 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Button } from "@/components/ui/button";
 import { Sparkles, LayoutTemplate, ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { useTranslation } from "react-i18next";
 import { useDispatch } from "react-redux";
 import { setSelectedAgent, setResearchStrategy } from "@/lib/features/runSlice";
 
 export default function AgentsPage() {
     const router = useRouter();
     const dispatch = useDispatch();
+    const { t } = useTranslation();
 
     const handleSelectAgent = (agentType: "normal" | "card_template") => {
         dispatch(setSelectedAgent(agentType));
@@ -22,9 +24,9 @@ export default function AgentsPage() {
     return (
         <div className="p-4 sm:p-8 space-y-6 sm:space-y-8">
             <div>
-                <h1 className="text-3xl font-bold tracking-tight">My Agents</h1>
+                <h1 className="text-3xl font-bold tracking-tight">{t("agentsPage.title")}</h1>
                 <p className="text-muted-foreground">
-                    Choose an agent to start a new conversation.
+                    {t("agentsPage.subtitle")}
                 </p>
             </div>
 
@@ -37,32 +39,31 @@ export default function AgentsPage() {
                                 <Sparkles className="h-6 w-6 text-amber-500" />
                             </div>
                             <div>
-                                <CardTitle className="text-xl">Everyday Agent</CardTitle>
-                                <CardDescription>Quick answers & assistance</CardDescription>
+                                <CardTitle className="text-xl">{t("agentsPage.everydayTitle")}</CardTitle>
+                                <CardDescription>{t("agentsPage.everydayDesc")}</CardDescription>
                             </div>
                         </div>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <p className="text-sm text-muted-foreground">
-                            Perfect for quick questions, calculations, simple research, and everyday tasks. 
-                            Fast responses with efficient token usage.
+                            {t("agentsPage.everydayBody")}
                         </p>
                         <ul className="text-sm space-y-2">
                             <li className="flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                                Quick answers to questions
+                                {t("agentsPage.everydayPoint1")}
                             </li>
                             <li className="flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                                Calculations & analysis
+                                {t("agentsPage.everydayPoint2")}
                             </li>
                             <li className="flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
-                                Web search & summaries
+                                {t("agentsPage.everydayPoint3")}
                             </li>
                         </ul>
                         <Button variant="ghost" className="w-full group-hover:bg-amber-50 dark:group-hover:bg-amber-900/20">
-                            Start Chat
+                            {t("agentsPage.everydayAction")}
                             <ArrowRight className="ml-2 h-4 w-4" />
                         </Button>
                     </CardContent>
@@ -76,32 +77,31 @@ export default function AgentsPage() {
                                 <LayoutTemplate className="h-6 w-6 text-violet-500" />
                             </div>
                             <div>
-                                <CardTitle className="text-xl">Template Builder Agent</CardTitle>
-                                <CardDescription>Design card templates</CardDescription>
+                                <CardTitle className="text-xl">{t("agentsPage.templateTitle")}</CardTitle>
+                                <CardDescription>{t("agentsPage.templateDesc")}</CardDescription>
                             </div>
                         </div>
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <p className="text-sm text-muted-foreground">
-                            Build reusable card templates with structure and style guidance.
-                            Use this mode when you want to design or refine template formats.
+                            {t("agentsPage.templateBody")}
                         </p>
                         <ul className="text-sm space-y-2">
                             <li className="flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
-                                Template structure design
+                                {t("agentsPage.templatePoint1")}
                             </li>
                             <li className="flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
-                                Rendering style suggestions
+                                {t("agentsPage.templatePoint2")}
                             </li>
                             <li className="flex items-center gap-2">
                                 <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
-                                Reusable output format
+                                {t("agentsPage.templatePoint3")}
                             </li>
                         </ul>
                         <Button variant="ghost" className="w-full group-hover:bg-violet-50 dark:group-hover:bg-violet-900/20">
-                            Start Building
+                            {t("agentsPage.templateAction")}
                             <ArrowRight className="ml-2 h-4 w-4" />
                         </Button>
                     </CardContent>
