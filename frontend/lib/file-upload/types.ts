@@ -1,6 +1,7 @@
 export interface UploadedFile {
   id: string;
   file: File;
+  serverFileId?: string;
   name: string;
   size: number;
   type: string;

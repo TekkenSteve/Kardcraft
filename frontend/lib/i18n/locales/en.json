@@ -282,6 +282,8 @@
     "pauseAtCheckpoint": "Pause at next checkpoint",
     "resumeWorkflow": "Resume workflow",
     "stop": "Stop",
+    "uploadingFiles": "Files are still uploading. Please wait before sending.",
+    "failedFiles": "Some files failed to upload. Retry or remove them before sending.",
     "submitFailed": "Failed to submit",
     "copy": "Copy",
     "copied": "Copied!",

@@ -109,9 +109,15 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
   }, [handleFileSelect]);
 
   const removeFile = useCallback((fileId: string) => {
+    const target = files.find((file) => file.id === fileId);
     setFiles((prev) => prev.filter((file) => file.id !== fileId));
     setError(null);
-  }, []);
+    if (target?.serverFileId) {
+      void uploadAPI.deleteFile(target.serverFileId).catch((deleteError) => {
+        console.error("[FileUpload] Failed to delete uploaded file:", deleteError);
+      });
+    }
+  }, [files, uploadAPI]);
 
   const uploadFile = useCallback(async (uploadedFile: UploadedFile) => {
     setFiles((prev) =>
@@ -138,6 +144,7 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
           file.id === uploadedFile.id
             ? {
                 ...file,
+                serverFileId: response.file_id,
                 status: "uploaded",
                 uploadProgress: 100,
                 previewUrl: response.preview_url,
@@ -211,6 +218,18 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
     return uploadedFileIds;
   }, [files, uploadFile, uploadConfig.concurrentUploads, onUploadComplete]);
 
+  useEffect(() => {
+    if (showManualUploadButton || disabled || uploadingCount > 0) {
+      return;
+    }
+    if (!files.some((file) => file.status === "pending")) {
+      return;
+    }
+    void uploadAllFiles().catch(() => {
+      // Error is displayed via component state.
+    });
+  }, [showManualUploadButton, disabled, uploadingCount, files, uploadAllFiles]);
+
   const retryFile = useCallback(async (fileId: string) => {
     const fileToRetry = files.find((file) => file.id === fileId);
     if (!fileToRetry) return;
@@ -223,9 +242,20 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
   }, [files, uploadFile]);
 
   const clearAllFiles = useCallback(() => {
+    if (uploadingCount > 0 || files.some((file) => file.status === "uploading")) {
+      return;
+    }
+    const uploadedFileIds = files
+      .map((file) => file.serverFileId)
+      .filter((fileId): fileId is string => !!fileId);
     setFiles([]);
     setError(null);
-  }, []);
+    uploadedFileIds.forEach((fileId) => {
+      void uploadAPI.deleteFile(fileId).catch((deleteError) => {
+        console.error("[FileUpload] Failed to delete uploaded file:", deleteError);
+      });
+    });
+  }, [files, uploadAPI, uploadingCount]);
 
   useImperativeHandle(ref, () => ({
     uploadPendingFiles: uploadAllFiles,
@@ -348,7 +378,7 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
                 variant="ghost"
                 size="sm"
                 onClick={clearAllFiles}
-                disabled={disabled}
+                disabled={disabled || isUploading}
               >
                 清空
               </Button>

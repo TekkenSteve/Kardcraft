@@ -223,13 +223,19 @@ export class FileUploadAPI {
   }
 
   async deleteFile(fileId: string): Promise<void> {
-    const response = await fetch(`${this.baseUrl}/api/v1/files/${fileId}`, {
+    const response = await fetch(`${this.fileStorageUrl}/${fileId}`, {
       method: 'DELETE',
       headers: getAuthHeaders(),
     });
 
+    if (response.status === 404) {
+      // Treat already-deleted/non-existent files as a successful cleanup.
+      return;
+    }
+
     if (!response.ok) {
-      throw new Error(`Failed to delete file: ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`Failed to delete file: ${response.status} ${response.statusText} - ${errorText}`);
     }
   }
 

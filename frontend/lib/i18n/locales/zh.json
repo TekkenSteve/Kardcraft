@@ -282,6 +282,8 @@
     "pauseAtCheckpoint": "在下个检查点暂停",
     "resumeWorkflow": "继续流程",
     "stop": "停止",
+    "uploadingFiles": "文件仍在上传中，请稍候再发送。",
+    "failedFiles": "存在上传失败的文件，请在附件面板重试或删除后再发送。",
     "submitFailed": "提交失败",
     "copy": "复制",
     "copied": "已复制",

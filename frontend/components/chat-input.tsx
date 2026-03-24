@@ -81,7 +81,6 @@ export function ChatInput({
     const [error, setError] = useState<string | null>(null);
     const [isFilePanelOpen, setIsFilePanelOpen] = useState(false);
     const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
-    const [uploadedFileIds, setUploadedFileIds] = useState<string[]>([]);
     const [templates, setTemplates] = useState<CardTemplate[]>([]);
     const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
     const [selectedTemplateVersion, setSelectedTemplateVersion] = useState<number | undefined>(undefined);
@@ -241,7 +240,9 @@ export function ChatInput({
             }
 
             const context: Record<string, unknown> = {};
-            let fileIdsToSubmit = [...uploadedFileIds];
+            let fileIdsToSubmit = uploadedFiles
+                .filter((file) => file.status === "uploaded" && !!file.serverFileId)
+                .map((file) => file.serverFileId as string);
 
             context.render_target = "anki";
             if (selectedTemplateId) {
@@ -253,12 +254,21 @@ export function ChatInput({
 
             const taskType = selectedAgent === "card_template" ? "card_template" : "main";
 
+            const uploadingFiles = uploadedFiles.filter((file) => file.status === "uploading");
+            if (uploadingFiles.length > 0) {
+                throw new Error(t("chat.uploadingFiles"));
+            }
+
+            const failedFiles = uploadedFiles.filter((file) => file.status === "error");
+            if (failedFiles.length > 0) {
+                throw new Error(t("chat.failedFiles"));
+            }
+
             const pendingFiles = uploadedFiles.filter((file) => file.status === "pending");
             if (pendingFiles.length > 0) {
                 const newlyUploadedFileIds = await fileUploadRef.current?.uploadPendingFiles() ?? [];
                 if (newlyUploadedFileIds.length > 0) {
                     fileIdsToSubmit = Array.from(new Set([...fileIdsToSubmit, ...newlyUploadedFileIds]));
-                    setUploadedFileIds(fileIdsToSubmit);
                 }
             }
 
@@ -279,7 +289,6 @@ export function ChatInput({
                 console.log("[ChatInput] Task with files created, response:", response);
 
                 setQuery("");
-                setUploadedFileIds([]);
                 setUploadedFiles([]);
                 setIsFilePanelOpen(false);
                 fileUploadRef.current?.clearFiles();
@@ -364,14 +373,9 @@ export function ChatInput({
         setUploadedFiles(files);
     };
 
-    const handleUploadComplete = (fileIds: string[]) => {
-        setUploadedFileIds((prev) => Array.from(new Set([...prev, ...fileIds])));
-    };
-
     const clearFiles = () => {
         fileUploadRef.current?.clearFiles();
         setUploadedFiles([]);
-        setUploadedFileIds([]);
         setIsFilePanelOpen(false);
     };
 
@@ -640,7 +644,6 @@ export function ChatInput({
                                                 ref={fileUploadRef}
                                                 sessionId={sessionId}
                                                 onFilesChange={handleFilesChange}
-                                                onUploadComplete={handleUploadComplete}
                                                 config={{
                                                     maxFiles,
                                                     maxFileSize,
@@ -777,7 +780,6 @@ export function ChatInput({
                                         ref={fileUploadRef}
                                         sessionId={sessionId}
                                         onFilesChange={handleFilesChange}
-                                        onUploadComplete={handleUploadComplete}
                                         config={{
                                             maxFiles,
                                             maxFileSize,
