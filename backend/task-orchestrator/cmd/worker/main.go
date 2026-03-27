@@ -11,8 +11,8 @@ import (
 	gosdk "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
-	"task-orchestrator/internal/infrastructure/persistence"
-	"task-orchestrator/internal/infrastructure/temporal/workflows"
+	"task-orchestrator/internal/repo/persistence"
+	"task-orchestrator/internal/runtime/temporal/workflows"
 )
 
 func main() {

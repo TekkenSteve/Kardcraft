@@ -67,14 +67,14 @@ func (s *FileStorageService) UploadConversationFile(stream pb.FileStorageService
 	}
 
 	// Validate required fields
-	if metadata.UserId == "" || metadata.SessionId == "" || metadata.ConversationId == "" {
-		return status.Errorf(codes.InvalidArgument, "user_id, session_id, and conversation_id are required")
+	if metadata.UserId == "" || metadata.SessionId == "" {
+		return status.Errorf(codes.InvalidArgument, "user_id and session_id are required")
 	}
 
 	// Generate file ID and storage key
 	fileId := generateFileId()
-	storageKey := fmt.Sprintf("conversations/%s/%s/%s/%s_%s",
-		metadata.UserId, metadata.SessionId, metadata.ConversationId, fileId, metadata.Filename)
+	storageKey := fmt.Sprintf("conversations/%s/%s/%s_%s",
+		metadata.UserId, metadata.SessionId, fileId, metadata.Filename)
 
 	// Get storage instance
 	storageInstance, err := s.getStorage("")
@@ -97,7 +97,6 @@ func (s *FileStorageService) UploadConversationFile(stream pb.FileStorageService
 			CustomMeta: map[string]string{
 				"user_id":           metadata.UserId,
 				"session_id":        metadata.SessionId,
-				"conversation_id":   metadata.ConversationId,
 				"file_id":           fileId,
 				"original_filename": metadata.Filename,
 			},
@@ -165,8 +164,8 @@ func (s *FileStorageService) GetConversationFiles(ctx context.Context, req *pb.G
 		return nil, err
 	}
 
-	if req.UserId == "" || req.SessionId == "" || req.ConversationId == "" {
-		return nil, status.Errorf(codes.InvalidArgument, "user_id, session_id, and conversation_id are required")
+	if req.UserId == "" || req.SessionId == "" {
+		return nil, status.Errorf(codes.InvalidArgument, "user_id and session_id are required")
 	}
 
 	// Get storage instance
@@ -176,9 +175,9 @@ func (s *FileStorageService) GetConversationFiles(ctx context.Context, req *pb.G
 	}
 	defer storageInstance.Close()
 
-	// List files with conversation prefix
-	prefix := fmt.Sprintf("conversations/%s/%s/%s/", req.UserId, req.SessionId, req.ConversationId)
-	files, err := storageInstance.List(ctx, prefix, 100) // Limit to 100 files per conversation
+	// List files with session prefix
+	prefix := fmt.Sprintf("conversations/%s/%s/", req.UserId, req.SessionId)
+	files, err := storageInstance.List(ctx, prefix, 100) // Limit to 100 files per session
 	if err != nil {
 		return nil, s.handleStorageError(err)
 	}
@@ -797,22 +796,22 @@ func (s *FileStorageService) handleStorageError(err error) error {
 	if storageErr, ok := err.(*storage.StorageError); ok {
 		switch storageErr.Code {
 		case storage.ErrorCodeNotFound:
-			return status.Errorf(codes.NotFound, storageErr.Error())
+			return status.Error(codes.NotFound, storageErr.Error())
 		case storage.ErrorCodeAlreadyExists:
-			return status.Errorf(codes.AlreadyExists, storageErr.Error())
+			return status.Error(codes.AlreadyExists, storageErr.Error())
 		case storage.ErrorCodePermissionDenied:
-			return status.Errorf(codes.PermissionDenied, storageErr.Error())
+			return status.Error(codes.PermissionDenied, storageErr.Error())
 		case storage.ErrorCodeInvalidArgument:
-			return status.Errorf(codes.InvalidArgument, storageErr.Error())
+			return status.Error(codes.InvalidArgument, storageErr.Error())
 		case storage.ErrorCodeUnavailable:
-			return status.Errorf(codes.Unavailable, storageErr.Error())
+			return status.Error(codes.Unavailable, storageErr.Error())
 		case storage.ErrorCodeQuotaExceeded:
-			return status.Errorf(codes.ResourceExhausted, storageErr.Error())
+			return status.Error(codes.ResourceExhausted, storageErr.Error())
 		default:
-			return status.Errorf(codes.Internal, storageErr.Error())
+			return status.Error(codes.Internal, storageErr.Error())
 		}
 	}
-	return status.Errorf(codes.Internal, err.Error())
+	return status.Error(codes.Internal, err.Error())
 }
 
 func (s *FileStorageService) validateRequest(msg proto.Message) error {

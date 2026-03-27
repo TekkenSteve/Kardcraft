@@ -117,6 +117,9 @@ export const SessionWorkspaceResponseSchema = z.object({
     session_id: z.string(),
     version: z.number(),
     status: z.string(),
+    template_id: z.string().optional(),
+    selected_question_type: z.string().optional(),
+    supported_question_types: z.array(z.string()).optional(),
     card_count: z.number(),
     projection_status: z.enum(["hydrated", "empty"]).optional(),
     cards: z.array(
@@ -124,6 +127,7 @@ export const SessionWorkspaceResponseSchema = z.object({
             id: z.string(),
             user_id: z.string(),
             card_id: z.string(),
+            suggested_question_type: z.string().optional(),
             content: z.object({
                 version: z.number(),
                 model: z.string(),

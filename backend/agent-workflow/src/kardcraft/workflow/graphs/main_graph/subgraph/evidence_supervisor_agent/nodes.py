@@ -6,9 +6,11 @@ from typing import Any, Dict, List
 
 from langchain_core.messages import HumanMessage
 from langchain_core.tools import tool
+from langgraph.runtime import Runtime
 from pydantic import BaseModel, Field
 
 from kardcraft.tools.knowledge_tools import query_knowledge
+from kardcraft.workflow.graphs.main_graph.state import Context
 from kardcraft.workflow.graphs.deep_research_graph import deep_research_graph
 from kardcraft.utils.react_runtime import run_react_structured
 
@@ -78,7 +80,11 @@ async def query_ragix_evidence(
     return {"content": content}
 
 
-async def run_evidence_supervisor(state: EvidenceSupervisorState) -> Dict[str, Any]:
+async def run_evidence_supervisor(
+    state: EvidenceSupervisorState,
+    runtime: Runtime[Context],
+) -> Dict[str, Any]:
+    context = runtime.context
     learning_units = state.get("learning_units") or []
     if not learning_units:
         return {
@@ -106,9 +112,9 @@ async def run_evidence_supervisor(state: EvidenceSupervisorState) -> Dict[str, A
         {
             "query": rag_query,
             "top_k": 8,
-            "session_id": state.get("session_id"),
+            "session_id": context.session_id if context else None,
             "file_ids": state.get("file_ids") or [],
-            "user_id": state.get("user_id"),
+            "user_id": context.user_id if context else None,
         }
     )
     rag_content = str(rag_result.get("content") or "").strip()

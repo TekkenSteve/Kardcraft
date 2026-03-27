@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict
 
+from langgraph.runtime import Runtime
+
 from kardcraft.card_templates import (
     TemplatePreparationError,
     prepare_template_context_for_main_graph,
@@ -12,7 +14,7 @@ from kardcraft.card_templates import (
 from kardcraft.llm.client import chat_complete
 from kardcraft.utils.language import detect_preferred_language_with_llm
 from kardcraft.utils.llm_json import safe_parse_llm_json
-from kardcraft.workflow.graphs.main_graph.state import MainState
+from kardcraft.workflow.graphs.main_graph.state import Context, State
 from kardcraft.workflow.graphs.main_graph.subgraph.card_supervisor_agent import (
     card_supervisor_agent,
 )
@@ -23,15 +25,14 @@ from kardcraft.workflow.graphs.main_graph.subgraph.intent_classifier_agent impor
 from kardcraft.workflow.graphs.main_graph.subgraph.syllabus_supervisor_agent import (
     syllabus_supervisor_agent,
 )
-from kardcraft.workflow.graphs.main_graph.utils import canonical_user_input
 
 
 async def separate_content_and_task(user_input: str) -> Dict[str, str]:
     """Split message into source content and task demand using LLM."""
     prompt = (
-        "请把用户输入拆成JSON:\n"
-        "{\"source_content\": \"知识素材\", \"topic\": \"任务需求\"}\n"
-        "如果缺少知识素材, source_content 可为空。"
+        "Please split the user input into JSON:\n"
+        "{\"message_knowledge\": \"Knowledge material\", \"topic\": \"Task requirement\"}\n"
+        "If knowledge material is missing, message_knowledge can be empty."
     )
     try:
         response = await chat_complete(
@@ -49,36 +50,33 @@ async def separate_content_and_task(user_input: str) -> Dict[str, str]:
         parsed = safe_parse_llm_json(content, default={})
         if not isinstance(parsed, dict):
             parsed = {}
-        source = str(parsed.get("source_content") or "").strip()
+        source = str(parsed.get("message_knowledge") or "").strip()
         topic = str(parsed.get("topic") or "").strip() or user_input
-        return {"source_content": source, "topic": topic}
+        return {"message_knowledge": source, "topic": topic}
     except Exception:
-        return {"source_content": user_input, "topic": user_input}
+        return {"message_knowledge": user_input, "topic": user_input}
 
 
-async def initialize_processing(state: MainState) -> Dict[str, Any]:
+async def initialize_processing(
+    state: State,
+    runtime: Runtime[Context],
+) -> Dict[str, Any]:
     """Initialize request context and template context."""
     from kardcraft.services.langfuse import get_langfuse_client
 
     langfuse = get_langfuse_client()
-    session_id = str(state.get("session_id") or "")
-    user_id = str(state.get("user_id") or "")
+    session_id = runtime.context.session_id
+    user_id = runtime.context.user_id
     if not session_id:
         return {"error": "missing_session_id"}
-
-    input_payload = state.get("input") or {}
-    context_payload = input_payload.get("context") if isinstance(input_payload, dict) else {}
-    if not isinstance(context_payload, dict):
-        context_payload = {}
 
     try:
         prepared_template = await prepare_template_context_for_main_graph(
             user_id=user_id,
-            topic=canonical_user_input(state),
-            state_template_id=state.get("template_id"),
-            state_template_version=state.get("template_version"),
-            state_selected_profile=state.get("selected_template_profile"),
-            context_payload=context_payload,
+            topic=state.get("user_input", ""),
+            template_id=state.get("template_id"),
+            template_version_raw=state.get("template_version"),
+            selected_profile=state.get("selected_template_profile"),
         )
     except TemplatePreparationError as exc:
         payload: Dict[str, Any] = {"error": exc.message}
@@ -91,10 +89,9 @@ async def initialize_processing(state: MainState) -> Dict[str, Any]:
         trace = langfuse.trace(
             name="main_graph_execution",
             metadata={
-                "user_input": canonical_user_input(state),
+                "user_input": state.get("user_input"),
                 "session_id": session_id,
                 "user_id": user_id,
-                "conversation_id": state.get("conversation_id"),
             },
         )
         trace_id = trace.id
@@ -121,11 +118,11 @@ async def initialize_processing(state: MainState) -> Dict[str, Any]:
     }
 
 
-async def run_intent_classifier(state: MainState) -> Dict[str, Any]:
+async def run_intent_classifier(state: State) -> Dict[str, Any]:
     """Classify intent and normalize canonical inputs."""
     result = await intent_classifier.ainvoke(
         {
-            "user_input": canonical_user_input(state),
+            "user_input": state.get("user_input"),
             "file_ids": state.get("file_ids", []),
             "metadata": {
                 "target_count": state.get("target_count", 10),
@@ -142,11 +139,11 @@ async def run_intent_classifier(state: MainState) -> Dict[str, Any]:
         "language": result.get("language"),
     }
 
-    user_input = canonical_user_input(state)
-    if result.get("driven_mode") == "content_driven" and user_input:
+    user_input = state.get("user_input", "")
+    if result.get("driven_mode") == "content_driven" and state.get("file_ids") is None:
         separated = await separate_content_and_task(user_input)
-        if separated.get("source_content"):
-            update["source_content"] = separated["source_content"]
+        if separated.get("message_knowledge"):
+            update["message_knowledge"] = separated["message_knowledge"]
             update["user_input"] = separated.get("topic") or user_input
             update["topic"] = separated.get("topic") or user_input
 
@@ -157,19 +154,22 @@ async def run_intent_classifier(state: MainState) -> Dict[str, Any]:
     return update
 
 
-async def run_syllabus_supervisor(state: MainState) -> Dict[str, Any]:
+async def run_syllabus_supervisor(
+    state: State,
+    runtime: Runtime[Context],
+) -> Dict[str, Any]:
+    context = runtime.context
     result = await syllabus_supervisor_agent.ainvoke(
         {
-            "user_input": canonical_user_input(state),
-            "source_content": state.get("source_content"),
+            "user_input": state.get("user_input"),
+            "message_knowledge": state.get("message_knowledge"),
             "file_ids": state.get("file_ids") or [],
-            "session_id": state.get("session_id"),
-            "user_id": state.get("user_id"),
             "subject_domain": state.get("subject_domain"),
             "task_complexity": state.get("task_complexity"),
             "difficulty_level": state.get("difficulty_level"),
             "language": state.get("language"),
-        }
+        },
+        context=context,
     )
     return {
         "syllabus_status": result.get("status", "failed"),
@@ -180,21 +180,24 @@ async def run_syllabus_supervisor(state: MainState) -> Dict[str, Any]:
     }
 
 
-async def run_evidence_supervisor(state: MainState) -> Dict[str, Any]:
+async def run_evidence_supervisor(
+    state: State,
+    runtime: Runtime[Context],
+) -> Dict[str, Any]:
+    context = runtime.context
     result = await evidence_supervisor_agent.ainvoke(
         {
-            "user_input": canonical_user_input(state),
-            "source_content": state.get("source_content"),
+            "user_input": state.get("user_input"),
+            "message_knowledge": state.get("message_knowledge"),
             "synthesized_knowledge": state.get("synthesized_knowledge") or "",
             "file_ids": state.get("file_ids") or [],
-            "session_id": state.get("session_id"),
-            "user_id": state.get("user_id"),
             "subject_domain": state.get("subject_domain"),
             "difficulty_level": state.get("difficulty_level"),
             "target_count": state.get("target_count") or 10,
             "learning_units": state.get("learning_units") or [],
             "language": state.get("language"),
-        }
+        },
+        context=context,
     )
     research_content = str((result.get("research_results") or {}).get("content") or "").strip()
 
@@ -206,17 +209,19 @@ async def run_evidence_supervisor(state: MainState) -> Dict[str, Any]:
     }
     if research_content:
         payload["synthesized_knowledge"] = research_content
-        payload["source_content"] = research_content
+        payload["message_knowledge"] = research_content
     return payload
 
 
-async def run_card_supervisor(state: MainState) -> Dict[str, Any]:
+async def run_card_supervisor(
+    state: State,
+    runtime: Runtime[Context],
+) -> Dict[str, Any]:
+    context = runtime.context
     result = await card_supervisor_agent.ainvoke(
         {
-            "user_id": state.get("user_id"),
-            "session_id": state.get("session_id"),
-            "user_input": canonical_user_input(state),
-            "source_content": state.get("source_content"),
+            "user_input": state.get("user_input"),
+            "message_knowledge": state.get("message_knowledge"),
             "subject_domain": state.get("subject_domain"),
             "learning_units": state.get("learning_units") or [],
             "template_profiles": state.get("template_profiles") or [],
@@ -224,9 +229,10 @@ async def run_card_supervisor(state: MainState) -> Dict[str, Any]:
             "selected_template_profile": state.get("selected_template_profile"),
             "file_ids": state.get("file_ids") or [],
             "judge_score_threshold": 90,
-            "max_qa_iterations": 5,
+            "max_qa_iterations": 8,
             "language": state.get("language"),
-        }
+        },
+        context=context,
     )
 
     approved = result.get("approved_cards") or []
@@ -241,16 +247,20 @@ async def run_card_supervisor(state: MainState) -> Dict[str, Any]:
     }
 
 
-async def finalize_processing(state: MainState) -> Dict[str, Any]:
+async def finalize_processing(
+    state: State,
+    runtime: Runtime[Context],
+) -> Dict[str, Any]:
     """Persist final cards and emit final workflow payload."""
     from kardcraft.services.langfuse import get_langfuse_client
     from kardcraft.workflow.graphs.main_graph.utils import save_cards_to_workspace
 
     langfuse = get_langfuse_client()
-    workspace_id = str(state.get("session_id") or "")
+    context = runtime.context
+    workspace_id = str((context.workspace_id if context else None) or "")
     workspace_id = workspace_id.strip()
     if not workspace_id:
-        raise ValueError("session_id missing in finalize state")
+        raise ValueError("workspace_id missing in runtime context")
 
     cards = list(state.get("final_cards") or state.get("approved_cards") or [])
     saved_card_ids = list(state.get("saved_card_ids") or [])
@@ -259,7 +269,7 @@ async def finalize_processing(state: MainState) -> Dict[str, Any]:
         saved_card_ids = await save_cards_to_workspace(
             cards,
             workspace_id=workspace_id,
-            owner=str(state.get("user_id") or ""),
+            owner=str((context.user_id if context else "") or ""),
         )
 
     if langfuse.enabled:

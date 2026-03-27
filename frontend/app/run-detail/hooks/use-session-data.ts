@@ -5,7 +5,7 @@ import useSWR from "swr";
 import { useDispatch, useSelector } from "react-redux";
 import { usePathname } from "next/navigation";
 import { getSessionWorkspace } from "@/lib/kardcraft/session-repository";
-import { setCards } from "@/lib/features/runSlice";
+import { setCards, setTemplatePreflight } from "@/lib/features/runSlice";
 import { logEvent } from "@/lib/observability/client";
 import { RootState } from "@/lib/store";
 import { SessionWorkspaceResponseRecord } from "@/lib/kardcraft/session-schemas";
@@ -26,10 +26,13 @@ export function useSessionData({
     const pathname = usePathname();
     const userId = useSelector((state: RootState) => state.auth.userId);
     const runStatus = useSelector((state: RootState) => state.run.status);
+    const selectedAgent = useSelector((state: RootState) => state.run.selectedAgent);
+    const templatePreflight = useSelector((state: RootState) => state.run.templatePreflight);
     const prevRunStatusRef = useRef<typeof runStatus>("idle");
     const lastWorkspaceVersionRef = useRef<number | null>(null);
     const lastWorkspaceSessionRef = useRef<string | null>(null);
     const lastWorkspaceCardCountRef = useRef<number>(0);
+    const completionRetryTokenRef = useRef<number>(0);
     const cardsSessionId = resolvedSessionId;
     const { data: swrCards, isLoading, isValidating, error, mutate } = useSWR<SessionWorkspaceResponseRecord>(
         cardsSessionId ? ["session-workspace", cardsSessionId] : null,
@@ -55,15 +58,32 @@ export function useSessionData({
         prevRunStatusRef.current = runStatus;
 
         if (runStatus === "completed" && prev !== "completed") {
-            void mutate();
-            const retryTimers = [1200, 2800].map((delay) =>
-                window.setTimeout(() => {
-                    void mutate();
-                }, delay)
-            );
+            completionRetryTokenRef.current += 1;
+            const retryToken = completionRetryTokenRef.current;
+            const retryTimers: number[] = [];
+            const completionDelays = selectedAgent === "card_template"
+                ? [0, 800, 1600, 3200, 6400, 10000]
+                : [0, 1200];
+
+            const scheduleAttempt = (attempt: number) => {
+                if (attempt >= completionDelays.length) return;
+                const timer = window.setTimeout(async () => {
+                    if (completionRetryTokenRef.current !== retryToken) return;
+                    const result = await mutate();
+                    const cards = Array.isArray(result?.cards) ? result.cards : [];
+                    const projectionStatus = result?.projection_status;
+                    const hydrated = projectionStatus === "hydrated" || cards.length > 0;
+                    if (!hydrated) {
+                        scheduleAttempt(attempt + 1);
+                    }
+                }, completionDelays[attempt]);
+                retryTimers.push(timer);
+            };
+
+            scheduleAttempt(0);
             return () => retryTimers.forEach(window.clearTimeout);
         }
-    }, [cardsSessionId, runStatus, mutate]);
+    }, [cardsSessionId, runStatus, mutate, selectedAgent]);
 
     useEffect(() => {
         if (isNewSession) {
@@ -104,6 +124,23 @@ export function useSessionData({
             }
             lastWorkspaceCardCountRef.current = normalizedCards.length;
         }
+        const supportedQuestionTypes = Array.isArray(swrCards?.supported_question_types)
+            ? swrCards.supported_question_types.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+            : [];
+        if (supportedQuestionTypes.length > 0) {
+            const nextTemplateId = swrCards?.template_id || templatePreflight.templateId;
+            const currentQuestionTypes = templatePreflight.questionTypes || [];
+            const sameLength = currentQuestionTypes.length === supportedQuestionTypes.length;
+            const sameItems = sameLength && currentQuestionTypes.every((item, index) => item === supportedQuestionTypes[index]);
+            if (templatePreflight.templateId !== nextTemplateId || !sameItems) {
+                dispatch(setTemplatePreflight({
+                    ...templatePreflight,
+                    templateId: nextTemplateId,
+                    questionTypes: supportedQuestionTypes,
+                    checkedAt: templatePreflight.checkedAt || new Date().toISOString(),
+                }));
+            }
+        }
         const nextPhase = inferWorkspacePhase({
             projectionStatus: swrCards?.projection_status,
             cardCount: normalizedCards.length,
@@ -129,5 +166,6 @@ export function useSessionData({
         setWorkspacePhase,
         pathname,
         userId,
+        templatePreflight,
     ]);
 }

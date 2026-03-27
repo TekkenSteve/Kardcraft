@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, TypedDict
 
 class ClarificationGraphState(TypedDict, total=False):
     user_input: str
-    source_content: Optional[str]
+    message_knowledge: Optional[str]
     file_ids: List[str]
     language: Optional[str]
     pending_questions: List[Dict[str, Any]]

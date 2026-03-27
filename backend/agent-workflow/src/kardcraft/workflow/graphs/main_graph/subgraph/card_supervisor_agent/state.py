@@ -4,10 +4,8 @@ from typing import Any, Dict, List, Optional, TypedDict
 
 
 class CardSupervisorState(TypedDict, total=False):
-    user_id: Optional[str]
-    session_id: Optional[str]
     user_input: str
-    source_content: Optional[str]
+    message_knowledge: Optional[str]
     subject_domain: Optional[str]
     learning_units: List[Dict[str, Any]]
     template_profiles: List[str]

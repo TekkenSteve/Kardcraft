@@ -1,13 +1,13 @@
 """Builder for Intent Classifier Agent."""
 
 from langgraph.graph import StateGraph, END
-from .state import IntentClassifierState
+from .state import State
 from .nodes import classify_intent
 
 def build_intent_classifier_agent():
     """Build the intent classifier agent graph."""
     
-    builder = StateGraph(IntentClassifierState)
+    builder = StateGraph(State)
     
     # Add nodes
     builder.add_node("classify", classify_intent)

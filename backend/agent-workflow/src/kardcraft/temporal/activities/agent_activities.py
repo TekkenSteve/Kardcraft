@@ -15,6 +15,7 @@ from temporalio import activity
 from ...llm.context import LLMRuntimeContext, reset_runtime_context, set_runtime_context
 from ...workflow.manager import WorkflowManager
 from ...services.redis import RedisClient
+from ...utils.conversation_history import normalize_conversation_history
 from ...utils.logger import logger
 
 
@@ -43,10 +44,11 @@ class AgentActivities:
         """
         task_id = input_data.get("task_id")
         user_id = input_data.get("user_id")
-        session_id = input_data.get("session_id")
         task_type = input_data.get("task_type", "main")
+        config = input_data.get("config", {})
+        metadata = input_data.get("metadata", {})
 
-        # 立即发送heartbeat，证明Activity已启动
+        # Send the heartbeat immediately to prove the activity has started
         activity.heartbeat({"status": "initializing", "task_id": task_id})
         activity.logger.info(
             f"Executing agent workflow task_id={task_id} type={task_type}"
@@ -55,25 +57,32 @@ class AgentActivities:
         if not task_id or not user_id:
             raise ValueError("task_id and user_id are required")
 
-        input_payload = input_data.get("input", {}) or {}
-        workspace_id = (
-            str(input_payload.get("session_id") if isinstance(input_payload, dict) else "")
-            .strip()
-        )
-        if not workspace_id:
-            raise ValueError("session_id is required")
+        # 必须字段解析（Lower Bound）
+        input_payload = input_data.get("input")
+        if not isinstance(input_payload, dict):
+            raise ValueError("input must be an object")
 
-        # 发送heartbeat表示准备工作完成
-        activity.heartbeat({"status": "workspace_ready", "task_id": task_id})
+        session_id = str(input_payload.get("session_id") or "").strip()
+        if not session_id:
+            raise ValueError("session_id is required in input.session_id")
+        workspace_id = session_id
 
-        # Prepare workflow input (不直接传递 workspace 对象，避免序列化问题)
-        input_context = input_payload.get("context", {}) if isinstance(input_payload, dict) else {}
+        # 可选字段解析（Upper Bound by task_type）
+        input_context = input_payload.get("context", {})
         if not isinstance(input_context, dict):
             input_context = {}
 
-        template_id = str(input_context.get("template_id") or "").strip()
+        template_id = (
+            str(input_context.get("template_id") or "").strip()
+            if task_type == "main"
+            else str(input_payload.get("template_id") or "").strip()
+        )
         template_profile = str(input_context.get("template_profile") or "").strip()
-        template_version_raw = input_context.get("template_version")
+        template_version_raw = (
+            input_context.get("template_version")
+            if task_type == "main"
+            else input_payload.get("template_version")
+        )
         try:
             template_version = int(template_version_raw or 0)
         except Exception:
@@ -90,29 +99,37 @@ class AgentActivities:
             template_profile=template_profile or None,
         )
 
-        if task_type == "main" and not template_id:
-            raise ValueError(
-                "template_id missing before workflow execution: expected input.context.template_id for main task"
-            )
+        if task_type not in {"main", "card_template"}:
+            raise ValueError(f"unsupported task_type: {task_type}")
+        if task_type == "main":
+            query = str(input_payload.get("query") or "").strip()
+            if not query:
+                raise ValueError("query is required in input.query for main task")
+            if not template_id:
+                raise ValueError("template_id is required in input.context.template_id for main task")
+        else:
+            query = str(input_payload.get("query") or "").strip()
+        if task_type == "card_template" and not template_id:
+            raise ValueError("template_id is required in input.template_id for card_template task")
+
+        conversation_history = normalize_conversation_history(
+            input_payload.get("conversation_history")
+        )
 
         workflow_input = {
             "task_id": task_id,
             "user_id": user_id,
+            "session_id": session_id,
             "task_type": task_type,
-            "config": input_data.get("config", {}),
+            "config": config,
+            "metadata": metadata,
             "input": input_payload,
-            "checkpoint_id": input_data.get("checkpoint_id"),
-            "metadata": input_data.get("metadata", {}),
-            # 从 input 中提取必需的字段到顶层，以匹配 MainState
-            "user_input": input_payload.get("query", ""),
-            "topic": input_payload.get("query", ""),  # 用户查询内容
-            "session_id": input_payload.get("session_id", ""),
             "workspace_id": workspace_id,
-            "conversation_id": input_payload.get("conversation_id", ""),
+            "user_input": query,
+            "conversation_history": conversation_history,
             "file_ids": input_payload.get("file_ids", []),
             "target_count": input_payload.get("target_count", 10),
             "difficulty_level": input_payload.get("difficulty_level", "medium"),
-            # Template context lifted to top-level canonical state fields.
             "template_id": template_id,
             "template_version": template_version,
             "selected_template_profile": template_profile or None,
@@ -205,6 +222,7 @@ class AgentActivities:
                         "evidence_decision",
                         "clarification_decision",
                         "need_user_input",
+                        "max_iterations_reached",
                     }
                     if (
                         normalized_error in recoverable_decisions
@@ -314,6 +332,27 @@ class AgentActivities:
             if intent_type:
                 message = f"[{intent_type}] {message}"
 
+            template_id_for_workspace = str(cleaned_result.get("template_id") or template_id or "").strip()
+            supported_question_types_raw = cleaned_result.get("template_profiles") or []
+            if not isinstance(supported_question_types_raw, list):
+                supported_question_types_raw = []
+            supported_question_types: list[str] = []
+            for item in supported_question_types_raw:
+                value = str(item or "").strip()
+                if value and value not in supported_question_types:
+                    supported_question_types.append(value)
+            selected_question_type = str(
+                cleaned_result.get("selected_template_profile")
+                or cleaned_result.get("template_default_profile")
+                or template_profile
+                or ""
+            ).strip()
+            outcome_metadata = {
+                "template_id": template_id_for_workspace,
+                "supported_question_types": supported_question_types,
+                "selected_question_type": selected_question_type,
+            }
+
             safe_result = {
                 "workflow_completed": True,
                 "task_id": task_id,
@@ -368,6 +407,7 @@ class AgentActivities:
                 "user_id": user_id,
                 "session_id": session_id,
                 "message": message,
+                "metadata": outcome_metadata,
                 "result": safe_result,
                 "checkpoint_id": result.checkpoint_id if result else task_id,
                 "execution_time_ms": execution_time_ms,

@@ -6,15 +6,13 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
-
-	httpserver "task-orchestrator/internal/infrastructure/http"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := httpserver.NewServer(httpserver.DefaultPortFromEnv())
+	srv := buildServerFromEnv()
 	if err := srv.Start(ctx); err != nil {
 		log.Fatalf("failed to start orchestrator: %v", err)
 	}

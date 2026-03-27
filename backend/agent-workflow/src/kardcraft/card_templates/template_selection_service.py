@@ -158,31 +158,67 @@ async def _validate_template_with_runtime(payload: dict[str, Any]) -> tuple[dict
     return validation_summary, note_fields
 
 
+async def _load_question_types_with_runtime(
+    *,
+    front_html: str,
+    back_html: str,
+    css: str,
+) -> list[str]:
+    """Use the same runtime parser as template preview to resolve card question types."""
+    req_payload = {
+        "front_html": front_html,
+        "back_html": back_html,
+        "css": css,
+    }
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(f"{ANKI_RUNTIME_URL}/internal/anki/required-fields", json=req_payload)
+    except Exception as exc:
+        raise TemplatePreparationError(
+            "template required-fields service unavailable while resolving question types."
+        ) from exc
+
+    if resp.status_code >= 400:
+        raise TemplatePreparationError(
+            f"failed to resolve template question types from runtime: {resp.text}"
+        )
+
+    payload = resp.json() if resp.content else {}
+    raw_templates = payload.get("card_templates") if isinstance(payload, dict) else None
+    if not isinstance(raw_templates, list):
+        return []
+
+    question_types: list[str] = []
+    for item in raw_templates:
+        if not isinstance(item, dict):
+            continue
+        try:
+            ord_value = int(item.get("template_ord", -1))
+        except Exception:
+            ord_value = -1
+        if ord_value < 0:
+            continue
+        qtype = f"card_{ord_value + 1}"
+        if qtype not in question_types:
+            question_types.append(qtype)
+    return question_types
+
+
 async def prepare_template_context_for_main_graph(
     *,
     user_id: str,
     topic: str,
-    state_template_id: Any,
-    state_template_version: Any,
-    state_selected_profile: Any,
-    context_payload: dict[str, Any] | None,
+    template_id: Any,
+    template_version_raw: Any,
+    selected_profile: Any,
     repository: CardTemplateRepository | None = None,
 ) -> PreparedTemplateContext:
-    context = context_payload if isinstance(context_payload, dict) else {}
 
-    template_id = str(state_template_id or context.get("template_id") or "").strip()
     if not template_id:
         raise TemplatePreparationError(
             "template_id is required: select a card template before starting content card generation."
         )
 
-    selected_profile = str(
-        state_selected_profile
-        or context.get("template_profile")
-        or ""
-    ).strip() or None
-
-    template_version_raw = state_template_version or context.get("template_version")
     try:
         template_version = int(template_version_raw or 0)
     except Exception:
@@ -206,11 +242,25 @@ async def prepare_template_context_for_main_graph(
     if not template.front_html.strip() or not template.back_html.strip():
         raise TemplatePreparationError(f"selected template is incomplete: {template_id}")
 
-    template_profiles, default_profile = _extract_profiles_from_mapping(template.mapping_spec)
+    mapping_profiles, declared_default_profile = _extract_profiles_from_mapping(template.mapping_spec)
+    template_profiles = list(mapping_profiles)
+    # Align with template preview source: prefer mapping_spec.profiles names.
+    if not template_profiles or (len(template_profiles) == 1 and template_profiles[0] == "default"):
+        runtime_profiles = await _load_question_types_with_runtime(
+            front_html=template.front_html,
+            back_html=template.back_html,
+            css=template.css,
+        )
+        if runtime_profiles:
+            template_profiles = runtime_profiles
+    if not template_profiles:
+        raise TemplatePreparationError(
+            f"template has no resolved question types: {template.template_id}"
+        )
+    default_profile = declared_default_profile if declared_default_profile in template_profiles else template_profiles[0]
 
-    if selected_profile and selected_profile not in template_profiles:
-        selected_profile = default_profile
-    if not selected_profile:
+    selected_profile = _normalize_profile_name(selected_profile)
+    if selected_profile not in template_profiles:
         selected_profile = default_profile
 
     note_fields = _extract_note_fields(template.front_html, template.back_html)

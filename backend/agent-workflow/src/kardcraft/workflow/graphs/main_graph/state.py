@@ -1,19 +1,31 @@
 """State for main graph thin orchestrator."""
 
 from typing import Any, Dict, List, Optional, TypedDict
+from dataclasses import dataclass, field
 
+@dataclass(slots=True)
+class Context:
+    """Runtime context shared by graph execution."""
 
-class MainState(TypedDict, total=False):
-    # IDs
-    user_id: Optional[str]
+    user_id: str
     session_id: str
-    workspace_id: Optional[str]
-    conversation_id: str
+    workspace_id: str
+    input_context: Dict[str, Any]
+    conversation_history: List[Dict[str, str]] = field(default_factory=list)
+    
+class UserProfile(TypedDict, total=False):
+    """Optional user-preference envelope."""
 
+    difficulty_level: str
+    preferred_language: Optional[str]
+    learning_goals: List[str]
+    metadata: Dict[str, Any]
+
+class State(TypedDict, total=False):
     # Input
     user_input: str
-    topic: str
-    source_content: Optional[str]
+    topic: Optional[str]
+    message_knowledge: Optional[str]
     file_ids: List[str]
     target_count: int
     difficulty_level: str

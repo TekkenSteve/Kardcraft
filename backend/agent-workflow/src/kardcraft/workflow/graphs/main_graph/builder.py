@@ -15,11 +15,11 @@ from kardcraft.workflow.graphs.main_graph.nodes import (
     run_intent_classifier,
     run_syllabus_supervisor,
 )
-from kardcraft.workflow.graphs.main_graph.state import MainState
+from kardcraft.workflow.graphs.main_graph.state import Context, State
 
 
 def build_main_graph():
-    workflow = StateGraph(MainState)
+    workflow = StateGraph(State, context_schema=Context)
 
     workflow.add_node("initialize", initialize_processing)
     workflow.add_node("intent_classifier", run_intent_classifier)

@@ -5,7 +5,6 @@ This file tracks interface coverage for the DDD refactor of `backend/task-orches
 ## Covered Routes
 
 - `GET/POST /api/v1/tasks`
-- `POST /api/v1/tasks/batch`
 - `GET/POST /api/v1/tasks/template`
 - `GET /api/v1/tasks/{task_id}`
 - `POST /api/v1/tasks/{task_id}/pause`
@@ -35,6 +34,9 @@ This file tracks interface coverage for the DDD refactor of `backend/task-orches
 - `POST /api/v1/card-templates/required-fields`
 - `POST /api/v1/card-templates/precheck`
 - `POST /api/v1/card-templates/build-apkg`
+- `POST /api/v1/exports/apkg`
+- `GET /api/v1/exports/apkg/{export_id}?session_id=...`
+- `GET /api/v1/exports/apkg/{export_id}/download?session_id=...`
 - `GET/POST /api/v1/users/me/template-preferences`
 
 - `GET/POST /api/v1/schedules`
@@ -63,7 +65,8 @@ This file tracks interface coverage for the DDD refactor of `backend/task-orches
 
 ## Notes
 
-- Task domain logic is implemented with aggregate methods in `internal/domain/task`.
-- Application layer remains orchestration-only (`internal/application/service.go`).
-- Infrastructure HTTP layer adapts old interface shapes and maps them to the new domain model.
+- Task entity logic is implemented with aggregate methods in `internal/entity/task`.
+- Usecase layer remains orchestration-only (`internal/usecase/service.go`, `internal/usecase/command_service.go`).
+- Controller HTTP layer adapts interface shapes and delegates command orchestration (`internal/controller/http/v1/*`).
+- Repo/runtime concrete implementations live under `internal/repo/*` and `internal/runtime/*`.
 - Legacy implementation remains at `backend/task-orchestrator-bak` for rollback/reference.

@@ -34,6 +34,7 @@ export interface CardData {
     id: string;
     user_id: string;
     card_id: string;
+    suggested_question_type?: string;
     content: {
         version: number;
         model: string;
@@ -88,6 +89,7 @@ interface RunState {
         status: "idle" | "running" | "passed" | "failed";
         templateId: string | null;
         templateVersion: number | null;
+        questionTypes: string[];
         cardCount: number | null;
         checkedAt: string | null;
         message: string | null;
@@ -117,6 +119,7 @@ const initialState: RunState = {
         status: "idle",
         templateId: null,
         templateVersion: null,
+        questionTypes: [],
         cardCount: null,
         checkedAt: null,
         message: null,
@@ -941,6 +944,7 @@ const runSlice = createSlice({
                 status: "idle",
                 templateId: null,
                 templateVersion: null,
+                questionTypes: [],
                 cardCount: null,
                 checkedAt: null,
                 message: null,
@@ -1191,6 +1195,7 @@ const runSlice = createSlice({
                 status: "idle",
                 templateId: null,
                 templateVersion: null,
+                questionTypes: [],
                 cardCount: null,
                 checkedAt: null,
                 message: null,

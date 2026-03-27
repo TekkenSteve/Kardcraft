@@ -8,19 +8,11 @@ from typing import Any, Dict
 from kardcraft.db.card_repository import CardRepository
 from kardcraft.db.postgres import postgres
 from kardcraft.services.pack_workspace import WorkspaceCard, pack_workspace
-from kardcraft.workflow.graphs.main_graph.state import MainState
+from kardcraft.workflow.graphs.main_graph.state import State
 
-
-def canonical_user_input(state: MainState) -> str:
-    value = str(state.get("user_input") or "").strip()
-    if value:
-        return value
-    return str(state.get("topic") or "").strip()
-
-
-def map_intent_input(state: MainState) -> Dict[str, Any]:
+def map_intent_input(state: State) -> Dict[str, Any]:
     return {
-        "user_input": canonical_user_input(state),
+        "user_input": state.get("user_input"),
         "file_ids": state.get("file_ids", []),
         "metadata": {
             "target_count": state.get("target_count", 10),

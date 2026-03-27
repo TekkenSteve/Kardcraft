@@ -3,7 +3,7 @@
 from typing import TypedDict, List, Optional, Dict, Any
 
 
-class IntentClassifierState(TypedDict):
+class State(TypedDict):
     """State for intent classification and routing."""
 
     # Input

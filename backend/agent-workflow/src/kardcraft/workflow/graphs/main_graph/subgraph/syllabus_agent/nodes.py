@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
+from langgraph.runtime import Runtime
+
 from kardcraft.llm.client import chat_complete
 from kardcraft.llm import get_model
 from kardcraft.tools.clarification_tools import generate_clarification_questions
@@ -13,9 +15,10 @@ from kardcraft.tools.web_search_tools import quick_research
 from kardcraft.utils.llm_json import safe_parse_llm_json
 from kardcraft.utils.logger import logger
 from kardcraft.services.langfuse import get_langfuse_client
+from kardcraft.workflow.graphs.main_graph.state import Context
 
 from .prompt import PromptManager
-from .state import SyllabusState
+from .state import State
 from .utils import (
     build_outline_source_chunks,
     normalize_learning_units,
@@ -104,21 +107,21 @@ async def _llm_generate_text(
 
 
 async def _assess_and_enrich_context(
-    state: SyllabusState,
+    state: State,
     retrieved_context: List[Dict[str, Any]],
     rag_queries: List[Dict[str, Any]],
+    session_id: str | None,
+    user_id: str | None,
 ) -> Dict[str, Any]:
     """Use LLM judgement to decide whether more context retrieval is needed."""
     user_input = state.get("user_input", "")
     user_knowledge = state.get("user_knowledge", "")
-    subject_domain = state.get("subject_domain", "general") or "general"
-    file_ids = state.get("file_ids") or []
-    session_id = state.get("session_id")
-    user_id = state.get("user_id")
+    subject_domain = state.get("subject_domain", "general")
+    file_ids = state.get("file_ids")
     iteration = state.get("iteration_count", 0)
     max_iterations = state.get("max_iterations", 3)
 
-    prompt_manager = PromptManager(lang=state.get("language", "en"))
+    prompt_manager = PromptManager(lang=str(state.get("language", "en")))
     model_name, temperature = get_model("think")
 
     should_attempt_retrieval = iteration < max_iterations
@@ -134,7 +137,7 @@ async def _assess_and_enrich_context(
         seed_queries: List[str] = []
         if user_input.strip():
             seed_queries.append(user_input.strip())
-        seed_queries.append("提取上传文件中的题目、核心知识点与参考答案")
+        seed_queries.append("Extract the questions, key knowledge points, and reference answers from the uploaded file")
 
         for query in seed_queries:
             try:
@@ -218,9 +221,9 @@ async def _assess_and_enrich_context(
                     "query": query,
                     "mode": "mix",
                     "top_k": 5,
-                    "session_id": state.get("session_id"),
+                    "session_id": session_id,
                     "file_ids": state.get("file_ids"),
-                    "user_id": state.get("user_id"),
+                    "user_id": user_id,
                 }
             )
         except Exception as exc:
@@ -408,7 +411,7 @@ async def _single_pass_fallback(
     }
 
 
-async def init_syllabus(state: SyllabusState) -> Dict[str, Any]:
+async def init_syllabus(state: State) -> Dict[str, Any]:
     """Initialize syllabus state on first run."""
     existing_draft = state.get("syllabus_draft", "")
     existing_units = state.get("learning_units", [])
@@ -439,10 +442,16 @@ async def init_syllabus(state: SyllabusState) -> Dict[str, Any]:
     }
 
 
-async def generate_syllabus(state: SyllabusState) -> Dict[str, Any]:
+async def generate_syllabus(
+    state: State,
+    runtime: Runtime[Context],
+) -> Dict[str, Any]:
     """Generate a syllabus outline via map-reduce style LLM extraction."""
+    context = runtime.context
+    session_id = context.session_id if context else None
+    user_id = context.user_id if context else None
     user_input = state.get("user_input", "")
-    user_knowledge = state.get("user_knowledge", "")
+    user_knowledge = state.get("user_knowledge") or ""
     subject_domain = state.get("subject_domain", "general") or "general"
     complexity_level = state.get("complexity_level")
     language = state.get("language", "en")
@@ -461,6 +470,8 @@ async def generate_syllabus(state: SyllabusState) -> Dict[str, Any]:
             state=state,
             retrieved_context=retrieved_context,
             rag_queries=rag_queries,
+            session_id=session_id,
+            user_id=user_id,
         )
         retrieved_context = context_result["retrieved_context"]
         rag_queries = context_result["rag_queries"]
@@ -547,7 +558,7 @@ async def generate_syllabus(state: SyllabusState) -> Dict[str, Any]:
     }
 
 
-async def request_feedback(state: SyllabusState) -> Dict[str, Any]:
+async def request_feedback(state: State) -> Dict[str, Any]:
     """Auto-approve units until human-in-the-loop is wired in main flow."""
     learning_units = state.get("learning_units", [])
     iteration = state.get("iteration_count", 0)
@@ -564,7 +575,7 @@ async def request_feedback(state: SyllabusState) -> Dict[str, Any]:
     }
 
 
-async def finalize_syllabus(state: SyllabusState) -> Dict[str, Any]:
+async def finalize_syllabus(state: State) -> Dict[str, Any]:
     """Finalize syllabus state output."""
     learning_units = state.get("learning_units", [])
     approved_unit_ids = state.get("approved_unit_ids", [])

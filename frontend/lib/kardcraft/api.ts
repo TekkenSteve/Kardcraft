@@ -1203,3 +1203,57 @@ export async function bulkUpdateCardModel(sessionId: string, cardIds: string[], 
         throw new Error(`Failed to update card model: ${response.statusText} - ${errorText}`);
     }
 }
+
+export interface ApkgExportRecord {
+    export_id: string;
+    session_id: string;
+    template_id?: string;
+    status: "processing" | "completed" | "failed";
+    deck_name?: string;
+    package_name?: string;
+    confirmed_count?: number;
+    file_name?: string;
+    file_size?: number;
+    download_path?: string;
+    created_at: string;
+    updated_at: string;
+    completed_at?: string;
+    error?: string;
+}
+
+export async function createApkgExport(input: {
+    session_id: string;
+    template_id?: string;
+    deck_name?: string;
+}): Promise<ApkgExportRecord> {
+    const response = await fetch(apiUrl("/api/v1/exports/apkg"), {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            ...getAuthHeaders(),
+        },
+        credentials: "include",
+        body: JSON.stringify(input),
+    });
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to create apkg export: ${response.statusText} - ${errorText}`);
+    }
+    return response.json();
+}
+
+export async function getApkgExport(sessionId: string, exportId: string): Promise<ApkgExportRecord> {
+    const response = await fetch(apiUrl(`/api/v1/exports/apkg/${encodeURIComponent(exportId)}?session_id=${encodeURIComponent(sessionId)}`), {
+        method: "GET",
+        credentials: "include",
+    });
+    if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Failed to get apkg export: ${response.statusText} - ${errorText}`);
+    }
+    return response.json();
+}
+
+export function getApkgExportDownloadUrl(sessionId: string, exportId: string): string {
+    return apiUrl(`/api/v1/exports/apkg/${encodeURIComponent(exportId)}/download?session_id=${encodeURIComponent(sessionId)}`);
+}

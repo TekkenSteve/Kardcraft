@@ -8,10 +8,10 @@ import { RootState } from "@/lib/store";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Sparkles, User, Layers, Brain, CheckCircle2, Clock, FileText, Maximize2, Minimize2, X, LayoutGrid, List, SlidersHorizontal, Lock, Unlock } from "lucide-react";
+import { Sparkles, User, Layers, Brain, CheckCircle2, Clock, FileText, Maximize2, Minimize2, X, LayoutGrid, List, SlidersHorizontal, Lock, Unlock, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { bulkUpdateModel, bulkUpdateStatus, updateCardModel, updateCardStatus, CardData } from "@/lib/features/runSlice";
-import { bulkUpdateCardModel, bulkUpdateCardStatus } from "@/lib/kardcraft/api";
+import { bulkUpdateStatus, updateCardModel, updateCardStatus, CardData } from "@/lib/features/runSlice";
+import { bulkUpdateCardModel, bulkUpdateCardStatus, createApkgExport, getApkgExport, getApkgExportDownloadUrl, ApkgExportRecord } from "@/lib/kardcraft/api";
 
 export function CardWorkspace({
     sessionId,
@@ -33,13 +33,16 @@ export function CardWorkspace({
     const dispatch = useDispatch();
     const [activeTab, setActiveTab] = useState<"all" | "draft" | "active" | "confirmed">("all");
     const [selectedId, setSelectedId] = useState<string | null>(null);
-    const [selectedTemplate, setSelectedTemplate] = useState<string>("default");
+    const [selectedTemplate, setSelectedTemplate] = useState<string>("");
     const [searchTerm, setSearchTerm] = useState<string>("");
     const [viewMode, setViewMode] = useState<"list" | "grid">("list");
     const [density, setDensity] = useState<"comfortable" | "compact">("comfortable");
     const [inspectorOpen, setInspectorOpen] = useState(false);
     const [headerPinned, setHeaderPinned] = useState(false);
     const [headerHover, setHeaderHover] = useState(false);
+    const [exportTask, setExportTask] = useState<ApkgExportRecord | null>(null);
+    const [exporting, setExporting] = useState(false);
+    const [exportError, setExportError] = useState("");
     const PAGE_SIZE = 20;
     const VIRTUAL_THRESHOLD = 50;
     const ESTIMATED_ROW_HEIGHT = 220;
@@ -59,16 +62,16 @@ export function CardWorkspace({
             options.push({ id: normalized, label: normalized });
         };
 
-        // Template types are unknown/open-ended; derive them from actual workspace cards.
+        // Question types come from backend template metadata plus per-card suggestions.
+        for (const questionType of templatePreflight.questionTypes || []) {
+            add(questionType);
+        }
         for (const card of cards) {
+            add(card?.suggested_question_type || "");
             add(card?.content?.model || "");
         }
-        add(selectedTemplate);
-        if (options.length === 0) {
-            add("default");
-        }
         return options;
-    }, [cards, selectedTemplate]);
+    }, [cards, templatePreflight.questionTypes]);
 
     const statusCounts = useMemo(() => {
         let draft = 0;
@@ -152,11 +155,11 @@ export function CardWorkspace({
     const handleSelect = useCallback((cardId: string) => {
         setSelectedId(cardId);
         const card = cards.find((item) => item.card_id === cardId);
-        if (card?.content?.model) {
-            setSelectedTemplate(card.content.model);
-        }
+        const model = String(card?.suggested_question_type || card?.content?.model || "").trim();
+        const isKnownQuestionType = templateOptions.some((option) => option.id === model);
+        setSelectedTemplate(isKnownQuestionType ? model : "");
         setInspectorOpen(true);
-    }, [cards]);
+    }, [cards, templateOptions]);
 
     const handleTab = useCallback((tab: "all" | "draft" | "active" | "confirmed") => {
         setActiveTab(tab);
@@ -175,29 +178,17 @@ export function CardWorkspace({
         }
     }, [dispatch, filteredCards, sessionId]);
 
-    const handleApplyTemplate = useCallback(async () => {
-        if (selectedCard) {
-            dispatch(updateCardModel({ card_id: selectedCard.card_id, model: selectedTemplate }));
-            try {
-                if (sessionId) {
-                    await bulkUpdateCardModel(sessionId, [selectedCard.card_id], selectedTemplate);
-                }
-            } catch (err) {
-                console.warn("[Workspace] Failed to persist template update:", err);
-            }
-            return;
-        }
-        const ids = filteredCards.map(card => card.card_id);
-        if (!ids.length) return;
-        dispatch(bulkUpdateModel({ card_ids: ids, model: selectedTemplate }));
+    const handleApplyQuestionType = useCallback(async () => {
+        if (!selectedCard || !selectedTemplate) return;
+        dispatch(updateCardModel({ card_id: selectedCard.card_id, model: selectedTemplate }));
         try {
             if (sessionId) {
-                await bulkUpdateCardModel(sessionId, ids, selectedTemplate);
+                await bulkUpdateCardModel(sessionId, [selectedCard.card_id], selectedTemplate);
             }
         } catch (err) {
-            console.warn("[Workspace] Failed to persist template update:", err);
+            console.warn("[Workspace] Failed to persist question type update:", err);
         }
-    }, [dispatch, filteredCards, selectedCard, selectedTemplate, sessionId]);
+    }, [dispatch, selectedCard, selectedTemplate, sessionId]);
 
     const handleConfirmSelected = useCallback(async () => {
         if (!selectedCard) return;
@@ -223,9 +214,60 @@ export function CardWorkspace({
         }
     }, [dispatch, selectedCard, sessionId]);
 
+    const handleExportApkg = useCallback(async () => {
+        if (!sessionId || exporting) return;
+        setExportError("");
+        setExporting(true);
+        try {
+            const created = await createApkgExport({
+                session_id: sessionId,
+                template_id: templatePreflight.templateId || undefined,
+            });
+            setExportTask(created);
+        } catch (err) {
+            setExportError(err instanceof Error ? err.message : "Failed to export apkg");
+        } finally {
+            setExporting(false);
+        }
+    }, [exporting, sessionId, templatePreflight.templateId]);
+
+    const handleDownloadApkg = useCallback(() => {
+        if (!sessionId || !exportTask?.export_id || exportTask.status !== "completed") return;
+        window.location.href = getApkgExportDownloadUrl(sessionId, exportTask.export_id);
+    }, [exportTask, sessionId]);
+
+    useEffect(() => {
+        if (!sessionId || !exportTask?.export_id || exportTask.status !== "processing") return;
+        let cancelled = false;
+        const timer = window.setInterval(async () => {
+            try {
+                const latest = await getApkgExport(sessionId, exportTask.export_id);
+                if (!cancelled) {
+                    setExportTask(latest);
+                }
+            } catch (err) {
+                if (!cancelled) {
+                    setExportError(err instanceof Error ? err.message : "Failed to query export task");
+                }
+            }
+        }, 2000);
+        return () => {
+            cancelled = true;
+            window.clearInterval(timer);
+        };
+    }, [exportTask?.export_id, exportTask?.status, sessionId]);
+
     useEffect(() => {
         setSize(1);
     }, [activeTab, searchTerm, cardsSignature, setSize]);
+
+    useEffect(() => {
+        if (!selectedTemplate) return;
+        const valid = templateOptions.some((option) => option.id === selectedTemplate);
+        if (!valid) {
+            setSelectedTemplate("");
+        }
+    }, [selectedTemplate, templateOptions]);
 
     const cardPadding = density === "compact" ? "p-2.5 pt-1.5" : "p-3 pt-2";
     const cardText = density === "compact" ? "text-[11px]" : "text-xs";
@@ -670,19 +712,51 @@ export function CardWorkspace({
                                             focusRing
                                         )}
                                         type="button"
-                                        disabled={statusCounts.total === 0}
-                                        onClick={handleApplyTemplate}
+                                        disabled={!selectedCard || !selectedTemplate}
+                                        onClick={handleApplyQuestionType}
                                     >
-                                        {t("workspace.applyTemplate")}
+                                        {t("workspace.applyQuestionType")}
+                                    </button>
+                                    <button
+                                        className={cn(
+                                            "text-[10px] font-semibold uppercase tracking-widest border rounded-md px-2 py-2 bg-[var(--app-surface-1)] hover:bg-[var(--app-surface-2)] transition-colors border-[var(--app-border-subtle)] inline-flex items-center justify-center gap-1.5",
+                                            focusRing
+                                        )}
+                                        type="button"
+                                        disabled={statusCounts.confirmed === 0 || exporting}
+                                        onClick={handleExportApkg}
+                                    >
+                                        <Download className="w-3 h-3" />
+                                        {exporting || exportTask?.status === "processing" ? t("workspace.exportingApkg") : t("workspace.exportApkg")}
                                     </button>
                                 </div>
+                                {(exportTask || exportError) && (
+                                    <div className="text-[10px] text-muted-foreground break-all">
+                                        {exportError
+                                            ? exportError
+                                            : exportTask?.status === "completed"
+                                                ? `${t("workspace.exportReady")} ${exportTask.file_name || ""}`
+                                                : exportTask?.status === "failed"
+                                                    ? `${t("workspace.exportFailed")} ${exportTask.error || ""}`
+                                                    : t("workspace.exportingApkg")}
+                                        {exportTask?.status === "completed" && (
+                                            <button
+                                                type="button"
+                                                className={cn("ml-1 underline underline-offset-2 text-[var(--app-accent-foreground)]", focusRing)}
+                                                onClick={handleDownloadApkg}
+                                            >
+                                                {t("workspace.downloadApkg")}
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                             {selectedCard ? (
                                 <div className="space-y-2">
                                     <div className="flex items-center justify-between">
                                         <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">{t("workspace.inspector")}</div>
                                         <Badge variant="outline" className="text-[9px] font-mono">
-                                            {selectedCard.content.model}
+                                            {selectedCard.suggested_question_type || selectedCard.content.model}
                                         </Badge>
                                     </div>
                                     <div className="text-xs font-semibold flex items-center gap-2">
@@ -690,7 +764,7 @@ export function CardWorkspace({
                                         {selectedCard.content.data.front.slice(0, 80)}
                                     </div>
                                     <div className="space-y-1">
-                                        <div className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground">{t("workspace.templateLabel")}</div>
+                                        <div className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground">{t("workspace.questionTypeLabel")}</div>
                                         <select
                                             className={cn(
                                                 "w-full text-xs rounded-md border bg-[var(--app-surface-1)] px-2 py-1.5 border-[var(--app-border-subtle)]",
@@ -699,6 +773,9 @@ export function CardWorkspace({
                                             value={selectedTemplate}
                                             onChange={(event) => setSelectedTemplate(event.target.value)}
                                         >
+                                            {templateOptions.length === 0 && (
+                                                <option value="">{t("workspace.unknownQuestionType")}</option>
+                                            )}
                                             {templateOptions.map((option) => (
                                                 <option key={option.id} value={option.id}>
                                                     {option.label}
@@ -778,10 +855,21 @@ export function CardWorkspace({
                                     type="button"
                                     size="sm"
                                     variant="outline"
-                                    disabled={statusCounts.total === 0}
-                                    onClick={handleApplyTemplate}
+                                    disabled={!selectedCard || !selectedTemplate}
+                                    onClick={handleApplyQuestionType}
                                 >
-                                    {t("workspace.applyTemplate")}
+                                    {t("workspace.applyQuestionType")}
+                                </Button>
+                                <Button
+                                    type="button"
+                                    size="sm"
+                                    variant="outline"
+                                    disabled={statusCounts.confirmed === 0 || exporting}
+                                    onClick={handleExportApkg}
+                                    className="inline-flex items-center gap-1.5"
+                                >
+                                    <Download className="w-3 h-3" />
+                                    {exporting || exportTask?.status === "processing" ? t("workspace.exportingApkg") : t("workspace.exportApkg")}
                                 </Button>
                                 {selectedCard && (
                                     <>
@@ -803,6 +891,26 @@ export function CardWorkspace({
                                     </>
                                 )}
                             </div>
+                            {(exportTask || exportError) && (
+                                <div className="text-[10px] text-muted-foreground break-all">
+                                    {exportError
+                                        ? exportError
+                                        : exportTask?.status === "completed"
+                                            ? `${t("workspace.exportReady")} ${exportTask.file_name || ""}`
+                                            : exportTask?.status === "failed"
+                                                ? `${t("workspace.exportFailed")} ${exportTask.error || ""}`
+                                                : t("workspace.exportingApkg")}
+                                    {exportTask?.status === "completed" && (
+                                        <button
+                                            type="button"
+                                            className={cn("ml-1 underline underline-offset-2 text-[var(--app-accent-foreground)]", focusRing)}
+                                            onClick={handleDownloadApkg}
+                                        >
+                                            {t("workspace.downloadApkg")}
+                                        </button>
+                                    )}
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -872,18 +980,50 @@ export function CardWorkspace({
                             focusRing
                         )}
                         type="button"
-                        disabled={statusCounts.total === 0}
-                        onClick={handleApplyTemplate}
+                        disabled={!selectedCard || !selectedTemplate}
+                        onClick={handleApplyQuestionType}
                     >
-                        {t("workspace.applyTemplate")}
+                        {t("workspace.applyQuestionType")}
+                    </button>
+                    <button
+                        className={cn(
+                            "text-[10px] font-semibold uppercase tracking-widest border rounded-md px-2 py-1.5 bg-[var(--app-surface-1)] hover:bg-[var(--app-surface-2)] transition-colors border-[var(--app-border-subtle)] inline-flex items-center justify-center gap-1.5",
+                            focusRing
+                        )}
+                        type="button"
+                        disabled={statusCounts.confirmed === 0 || exporting}
+                        onClick={handleExportApkg}
+                    >
+                        <Download className="w-3 h-3" />
+                        {exporting || exportTask?.status === "processing" ? t("workspace.exportingApkg") : t("workspace.exportApkg")}
                     </button>
                 </div>
+                {(exportTask || exportError) && (
+                    <div className="text-[10px] text-muted-foreground break-all">
+                        {exportError
+                            ? exportError
+                            : exportTask?.status === "completed"
+                                ? `${t("workspace.exportReady")} ${exportTask.file_name || ""}`
+                                : exportTask?.status === "failed"
+                                    ? `${t("workspace.exportFailed")} ${exportTask.error || ""}`
+                                    : t("workspace.exportingApkg")}
+                        {exportTask?.status === "completed" && (
+                            <button
+                                type="button"
+                                className={cn("ml-1 underline underline-offset-2 text-[var(--app-accent-foreground)]", focusRing)}
+                                onClick={handleDownloadApkg}
+                            >
+                                {t("workspace.downloadApkg")}
+                            </button>
+                        )}
+                    </div>
+                )}
                 {selectedCard ? (
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
                             <div className="text-[10px] uppercase tracking-[0.2em] text-muted-foreground">{t("workspace.inspector")}</div>
                             <Badge variant="outline" className="text-[9px] font-mono">
-                                {selectedCard.content.model}
+                                {selectedCard.suggested_question_type || selectedCard.content.model}
                             </Badge>
                         </div>
                         <div className="text-xs font-semibold flex items-center gap-2">
@@ -891,7 +1031,7 @@ export function CardWorkspace({
                             {selectedCard.content.data.front.slice(0, 80)}
                         </div>
                         <div className="space-y-1">
-                            <div className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground">{t("workspace.templateLabel")}</div>
+                            <div className="text-[9px] uppercase tracking-[0.2em] text-muted-foreground">{t("workspace.questionTypeLabel")}</div>
                             <select
                                 className={cn(
                                     "w-full text-xs rounded-md border bg-[var(--app-surface-1)] px-2 py-1.5 border-[var(--app-border-subtle)]",
@@ -900,6 +1040,9 @@ export function CardWorkspace({
                                 value={selectedTemplate}
                                 onChange={(event) => setSelectedTemplate(event.target.value)}
                             >
+                                {templateOptions.length === 0 && (
+                                    <option value="">{t("workspace.unknownQuestionType")}</option>
+                                )}
                                 {templateOptions.map((option) => (
                                     <option key={option.id} value={option.id}>
                                         {option.label}

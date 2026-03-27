@@ -5,8 +5,6 @@ Redesign based on docs/syllabus_agent_redesign_plan.md:
 - Integration with ragix via RagixClient.query()
 - Tool-based calling for同级 agents (clarification_agent, deep_research_agent)
 - file_ids passed from upstream (frontend upload to minio)
-- session_id for workspace isolation
-- user_id for file download
 """
 
 from typing import TypedDict, List, Optional, Dict, Any
@@ -39,11 +37,11 @@ class ClarificationQuestion(TypedDict):
     context: Dict[str, Any]  # Context for the question
 
 
-class SyllabusState(TypedDict):
+class State(TypedDict):
     """State for syllabus generation with ragix integration.
 
     Redesigned per plan:
-    - Input: user_input, user_knowledge, file_ids (from upstream), session_id, user_id, subject_domain, complexity_level, language
+    - Input: user_input, user_knowledge, file_ids (from upstream), subject_domain, complexity_level, language
     - Ragix: rag_queries (history), retrieved_context
     - Output: syllabus_draft, learning_units, approved_unit_ids
     - Interaction: pending_questions, clarification_responses
@@ -54,16 +52,12 @@ class SyllabusState(TypedDict):
     user_input: str  # User's request/question
     user_knowledge: str  # Prior knowledge from message content
     file_ids: Optional[List[str]]  # File IDs from frontend upload to minio
-    session_id: Optional[str]  # Session ID for ragix workspace isolation
-    user_id: Optional[str]  # User ID for file download
     subject_domain: Optional[str]  # Subject domain (optional)
     complexity_level: Optional[str]  # Complexity level (optional)
     language: Optional[str]  # Preferred language from intent_classifier
 
     # ===== Ragix Query History =====
-    rag_queries: List[
-        Dict[str, Any]
-    ]  # Query history [{query, mode, result, timestamp}]
+    rag_queries: List[Dict[str, Any]]  # Query history [{query, mode, result, timestamp}]
     retrieved_context: List[Dict[str, Any]]  # Current accumulated context
 
     # ===== Output =====

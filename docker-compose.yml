@@ -19,7 +19,7 @@ services:
     networks:
       - kardcraft-network
     healthcheck:
-      test: ["CMD", "redis-cli", "--raw", "ping"]
+      test: [ "CMD", "redis-cli", "--raw", "ping" ]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -40,7 +40,7 @@ services:
     networks:
       - kardcraft-network
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: [ "CMD-SHELL", "pg_isready -U postgres" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -57,7 +57,7 @@ services:
       - POSTGRES_PASSWORD=postgres123
     volumes:
       - ./backend/database:/migrations:ro
-    command: ["/bin/sh", "/migrations/scripts/migrate.sh"]
+    command: [ "/bin/sh", "/migrations/scripts/migrate.sh" ]
     restart: on-failure
     depends_on:
       postgres:
@@ -74,12 +74,12 @@ services:
     container_name: kardcraft-kratos-migrate
     environment:
       # 数据库连接字符串 - 生产环境应启用 SSL  
-      - DSN=postgres://postgres:postgres123@postgres:5432/kardcraft?sslmode=disable&max_conns=20&max_idle_conns=4  
+      - DSN=postgres://postgres:postgres123@postgres:5432/kardcraft?sslmode=disable&max_conns=20&max_idle_conns=4
       # 生产环境：sslmode=require 或 verify-full 
     volumes:
       - ./backend/kratos/email-password:/etc/config/kratos
-    command: -c /etc/config/kratos/kratos.yml migrate sql -e --yes  
-    restart: on-failure  # 迁移失败时重试  
+    command: -c /etc/config/kratos/kratos.yml migrate sql -e --yes
+    restart: on-failure # 迁移失败时重试  
     depends_on:
       - postgres
     networks:
@@ -90,20 +90,20 @@ services:
     container_name: kardcraft-kratos
     restart: always
     ports:
-      - "${KRATOS_PUBLIC_HOST_PORT:-4433}:4433"  # Public API
-      - "${KRATOS_ADMIN_HOST_PORT:-4434}:4434"  # Admin API https://github.com/ory/kratos/blob/791b0d59/internal/httpclient/README.md
+      - "${KRATOS_PUBLIC_HOST_PORT:-4433}:4433" # Public API
+      - "${KRATOS_ADMIN_HOST_PORT:-4434}:4434" # Admin API https://github.com/ory/kratos/blob/791b0d59/internal/httpclient/README.md
     environment:
       - DSN=postgres://postgres:postgres123@postgres:5432/kardcraft?sslmode=disable&max_conns=20&max_idle_conns=4
-      - LOG_LEVEL=trace  # 生产环境：改为 info 或 warning 
-    command: serve -c /etc/config/kratos/kratos.yml --dev --watch-courier  
+      - LOG_LEVEL=trace # 生产环境：改为 info 或 warning 
+    command: serve -c /etc/config/kratos/kratos.yml --dev --watch-courier
     # 生产环境：serve -c /etc/config/kratos/kratos.yml
     volumes:
       - ./backend/kratos/email-password:/etc/config/kratos
-    depends_on:  
-      - kratos-migrate  # 等待迁移完成  
-      - postgres 
+    depends_on:
+      - kratos-migrate # 等待迁移完成  
+      - postgres
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:4433/health/ready"]
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:4433/health/ready" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -112,9 +112,9 @@ services:
 
   mailslurper:
     image: oryd/mailslurper:latest-smtps
-    ports:  
-      - "${MAILSLURPER_SMTP_HOST_PORT:-4436}:4436"  # SMTP 端口  
-      - "${MAILSLURPER_WEB_HOST_PORT:-4437}:4437"  # Web 界面端口 /mail
+    ports:
+      - "${MAILSLURPER_SMTP_HOST_PORT:-4436}:4436" # SMTP 端口  
+      - "${MAILSLURPER_WEB_HOST_PORT:-4437}:4437" # Web 界面端口 /mail
     networks:
       - kardcraft-network
 
@@ -125,8 +125,8 @@ services:
     container_name: kardcraft-minio
     restart: always
     ports:
-      - "${MINIO_API_HOST_PORT:-9000}:9000"  # API端口
-      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001"  # 控制台端口
+      - "${MINIO_API_HOST_PORT:-9000}:9000" # API端口
+      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001" # 控制台端口
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
@@ -136,7 +136,7 @@ services:
     networks:
       - kardcraft-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      test: [ "CMD", "curl", "-f", "http://localhost:9000/minio/health/live" ]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -154,7 +154,7 @@ services:
       - MINIO_ADDRESS=minio:9000
       - CLUSTER_ENABLED=false
       - COMMON_STORAGETYPE=minio
-    command: ["milvus", "run", "standalone"]
+    command: [ "milvus", "run", "standalone" ]
     volumes:
       - milvus-data:/var/lib/milvus
     depends_on:
@@ -182,11 +182,27 @@ services:
     env_file:
       - .env.lightrag
     restart: always
-    depends_on:  
-      - neo4j  
+    depends_on:
+      - neo4j
       - milvus
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks:
+      - kardcraft-network
+
+  # Gotenberg (Office -> PDF conversion)
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    container_name: kardcraft-gotenberg
+    restart: always
+    ports:
+      - "${GOTENBERG_HOST_PORT:-3333}:3000"
+    command:
+      - "gotenberg"
+      - "--api-port=3000"
+      - "--api-timeout=120s"
+      - "--libreoffice-start-timeout=120s"
+      - "--libreoffice-restart-after=20"
     networks:
       - kardcraft-network
 
@@ -220,7 +236,7 @@ services:
     networks:
       - kardcraft-network
     healthcheck:
-      test: ["CMD", "etcdctl", "endpoint", "health"]
+      test: [ "CMD", "etcdctl", "endpoint", "health" ]
       interval: 10s
       timeout: 3s
       retries: 5
@@ -245,15 +261,15 @@ services:
   #     interval: 10s
   #     timeout: 5s
   #     retries: 3
-      
+
   # Neo4j 图数据库
   neo4j:
     image: neo4j:5.26
     container_name: kardcraft-neo4j
     restart: always
     ports:
-      - "${NEO4J_HTTP_HOST_PORT:-7474}:7474"  # HTTP 端口
-      - "${NEO4J_BOLT_HOST_PORT:-7687}:7687"  # Bolt 端口
+      - "${NEO4J_HTTP_HOST_PORT:-7474}:7474" # HTTP 端口
+      - "${NEO4J_BOLT_HOST_PORT:-7687}:7687" # Bolt 端口
     environment:
       - NEO4J_AUTH=${NEO4J_USERNAME:-neo4j}/${NEO4J_PASSWORD:-neo4j123}
       - NEO4J_PLUGINS=["apoc"]
@@ -269,7 +285,7 @@ services:
     networks:
       - kardcraft-network
     healthcheck:
-      test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "neo4j123", "RETURN 1"]
+      test: [ "CMD", "cypher-shell", "-u", "neo4j", "-p", "neo4j123", "RETURN 1" ]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -280,7 +296,7 @@ services:
     container_name: kardcraft-temporal
     restart: always
     ports:
-      - "${TEMPORAL_GRPC_HOST_PORT:-7233}:7233"   # Temporal gRPC
+      - "${TEMPORAL_GRPC_HOST_PORT:-7233}:7233" # Temporal gRPC
     environment:
       - DB=postgres12
       - DB_PORT=5432
@@ -297,7 +313,7 @@ services:
     container_name: kardcraft-temporal-ui
     restart: always
     ports:
-      - "${TEMPORAL_UI_HOST_PORT:-8233}:8080"   # 修复：Temporal Web UI 标准端口
+      - "${TEMPORAL_UI_HOST_PORT:-8233}:8080" # 修复：Temporal Web UI 标准端口
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
     depends_on:
@@ -357,9 +373,9 @@ services:
       dockerfile: Dockerfile
     container_name: kardcraft-task-orchestrator
     restart: always
-    command: [/app/task-orchestrator]
+    command: [ /app/task-orchestrator ]
     ports:
-      - "${TASK_ORCHESTRATOR_HOST_PORT:-50050}:50050"  # HTTP port for orchestrator (used by frontend/APISIX)
+      - "${TASK_ORCHESTRATOR_HOST_PORT:-50050}:50050" # HTTP port for orchestrator (used by frontend/APISIX)
     environment:
       - KRATOS_PUBLIC_URL=http://kratos:4433
       - REDIS_HOST=redis
@@ -409,10 +425,10 @@ services:
       dockerfile: Dockerfile
     container_name: kardcraft-go-worker
     restart: always
-    command: ["/app/task-worker"]
+    command: [ "/app/task-worker" ]
     environment:
       - TEMPORAL_ENDPOINT=temporal:7233
-      - TASK_QUEUE=task-workflow-queue  # Go Worker 只处理 Workflows
+      - TASK_QUEUE=task-workflow-queue # Go Worker 只处理 Workflows
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=redis123
@@ -439,7 +455,7 @@ services:
     build:
       context: ./backend/agent-workflow
       dockerfile: Dockerfile
-      cache_from: [kardcraft/agent-workflow:cache]
+      cache_from: [ kardcraft/agent-workflow:cache ]
     container_name: kardcraft-agent-workflow
     env_file:
       - ${PWD}/.env.llm
@@ -502,7 +518,7 @@ services:
       - ${PWD}/.env.llm
       - ${PWD}/.env.ragix
     restart: always
-    command: ["python", "-m", "kardcraft.sandbox_broker.server"]
+    command: [ "python", "-m", "kardcraft.sandbox_broker.server" ]
     environment:
       - SANDBOX_BROKER_ADDR=0.0.0.0:50061
       - SANDBOX_BROKER_TARGET=sandbox-broker:50061
@@ -525,13 +541,7 @@ services:
     ports:
       - "${ANKI_RUNTIME_HOST_PORT:-8012}:8012"
     healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8012/health', timeout=3).getcode()==200 else 1)",
-        ]
+      test: [ "CMD", "python", "-c", "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8012/health', timeout=3).getcode()==200 else 1)" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -543,12 +553,12 @@ services:
     build:
       context: ./backend/file-storage
       dockerfile: Dockerfile
-      cache_from: [kardcraft/file-storage:cache]
+      cache_from: [ kardcraft/file-storage:cache ]
     container_name: kardcraft-file-storage
     restart: always
     ports:
-      - "${FILE_STORAGE_GRPC_HOST_PORT:-50053}:50053"  # gRPC端口
-      - "${FILE_STORAGE_HTTP_HOST_PORT:-8082}:8080"    # HTTP端口 (for presigned URL API)
+      - "${FILE_STORAGE_GRPC_HOST_PORT:-50053}:50053" # gRPC端口
+      - "${FILE_STORAGE_HTTP_HOST_PORT:-8082}:8080" # HTTP端口 (for presigned URL API)
     environment:
       - MINIO_ENDPOINT=minio:9000
       - MINIO_PUBLIC_ENDPOINT=http://localhost:9000
@@ -559,7 +569,6 @@ services:
       - minio
     networks:
       - kardcraft-network
-
   # ============================================================================
   # 开发工具
   # ============================================================================
@@ -609,9 +618,9 @@ services:
   #   networks:
   #     - kardcraft-network
 
-# ============================================================================
-# 网络配置
-# ============================================================================
+  # ============================================================================
+  # 网络配置
+  # ============================================================================
 
 networks:
   kardcraft-network:

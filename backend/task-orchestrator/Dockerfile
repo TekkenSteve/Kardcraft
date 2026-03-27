@@ -6,13 +6,11 @@ WORKDIR /src
 # 下载依赖（缓存层）
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
-    go mod download
+    go mod download && go mod verify
 
 # 复制代码并构建（代码变动只触发这层）
 COPY . .
-RUN --mount=type=cache,target=/go/pkg/mod \
-    --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     go build -ldflags="-s -w" -o /out/task-orchestrator ./cmd/orchestrator && \
     go build -ldflags="-s -w" -o /out/task-worker ./cmd/worker
 

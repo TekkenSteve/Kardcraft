@@ -4,7 +4,7 @@ from typing import Dict, Any
 from kardcraft.utils.logger import logger
 from kardcraft.services.langfuse import get_langfuse_client
 from kardcraft.llm import configure_dspy_lm
-from .state import IntentClassifierState
+from .state import State
 from .prompt import IntentClassificationPrompt
 from .utils import (
     parse_dspy_classification_result,
@@ -15,7 +15,7 @@ from .utils import (
 langfuse = get_langfuse_client()
 
 
-async def classify_intent(state: IntentClassifierState) -> Dict[str, Any]:
+async def classify_intent(state: State) -> Dict[str, Any]:
     """Classify user intent and content characteristics."""
 
     logger.info(
@@ -54,7 +54,7 @@ async def classify_intent(state: IntentClassifierState) -> Dict[str, Any]:
         logger.info(
             "✅ 意图分类完成",
             intent=classification["intent_type"],
-            driven_mode=classification.get("driven_mode", "unknown"),
+            driven_mode=classification.get("driven_mode", ""),
             subject=classification["subject_domain"],
             confidence=classification["confidence"],
         )

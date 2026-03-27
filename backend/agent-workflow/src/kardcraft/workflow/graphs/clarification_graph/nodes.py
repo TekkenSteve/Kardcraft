@@ -24,12 +24,12 @@ async def run_clarification(state: ClarificationGraphState) -> Dict[str, Any]:
         }
 
     user_input = str(state.get("user_input") or "").strip()
-    source_content = str(state.get("source_content") or "").strip()
+    message_knowledge = str(state.get("message_knowledge") or "").strip()
     file_count = len(state.get("file_ids") or [])
 
     decision = await _assess_information_sufficiency(
         user_input=user_input,
-        source_content=source_content,
+        message_knowledge=message_knowledge,
         file_count=file_count,
     )
 
@@ -67,7 +67,7 @@ async def run_clarification(state: ClarificationGraphState) -> Dict[str, Any]:
 async def _assess_information_sufficiency(
     *,
     user_input: str,
-    source_content: str,
+    message_knowledge: str,
     file_count: int,
 ) -> Dict[str, Any]:
     system_prompt = (
@@ -78,7 +78,7 @@ async def _assess_information_sufficiency(
     )
     user_prompt = (
         f"user_input:\n{user_input}\n\n"
-        f"source_content:\n{source_content}\n\n"
+        f"message_knowledge:\n{message_knowledge}\n\n"
         f"file_count:{file_count}\n"
     )
 

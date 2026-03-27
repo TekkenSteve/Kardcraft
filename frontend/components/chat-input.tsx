@@ -164,6 +164,7 @@ export function ChatInput({
             status: "running",
             templateId,
             templateVersion: templateVersion ?? null,
+            questionTypes: [],
             cardCount: null,
             checkedAt: new Date().toISOString(),
             message: "Running template precheck...",
@@ -177,6 +178,11 @@ export function ChatInput({
                 const firstError = validation.validation?.errors?.[0]?.message;
                 throw new Error(firstError || "Selected template is invalid. Please fix or switch template.");
             }
+            const nextQuestionTypes = Array.isArray(validation.available_profiles)
+                ? validation.available_profiles
+                    .map((item) => String(item || "").trim())
+                    .filter((item, index, arr) => item.length > 0 && arr.indexOf(item) === index)
+                : [];
 
             const requiredFields = await getTemplateRequiredFields({
                 template_id: templateId,
@@ -199,6 +205,7 @@ export function ChatInput({
                 status: "passed",
                 templateId,
                 templateVersion: templateVersion ?? null,
+                questionTypes: nextQuestionTypes,
                 cardCount: precheck.card_count ?? 0,
                 checkedAt: new Date().toISOString(),
                 message: `Precheck passed (${precheck.card_count} sample cards).`,
@@ -209,6 +216,7 @@ export function ChatInput({
                 status: "failed",
                 templateId,
                 templateVersion: templateVersion ?? null,
+                questionTypes: [],
                 cardCount: null,
                 checkedAt: new Date().toISOString(),
                 message: error instanceof Error ? error.message : "Template precheck failed.",

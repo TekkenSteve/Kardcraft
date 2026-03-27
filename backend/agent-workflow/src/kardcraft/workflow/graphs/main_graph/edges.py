@@ -1,9 +1,9 @@
 """Routing for thin main graph."""
 
-from kardcraft.workflow.graphs.main_graph.state import MainState
+from kardcraft.workflow.graphs.main_graph.state import State
 
 
-def route_after_syllabus(state: MainState) -> str:
+def route_after_syllabus(state: State) -> str:
     if state.get("error"):
         return "finalize"
     status = state.get("syllabus_status")
@@ -12,7 +12,7 @@ def route_after_syllabus(state: MainState) -> str:
     return "finalize"
 
 
-def route_after_evidence(state: MainState) -> str:
+def route_after_evidence(state: State) -> str:
     if state.get("error"):
         return "finalize"
     status = state.get("evidence_status")
@@ -21,6 +21,6 @@ def route_after_evidence(state: MainState) -> str:
     return "finalize"
 
 
-def route_after_card(state: MainState) -> str:
+def route_after_card(state: State) -> str:
     # all paths finalize, status only affects payload semantics
     return "finalize"

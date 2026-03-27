@@ -8,7 +8,6 @@ class CardTemplateState(TypedDict):
 
     user_id: Optional[str]
     session_id: str
-    conversation_id: str
     topic: str
     file_ids: List[str]
     input: Dict[str, Any]

@@ -18,6 +18,7 @@ from .exceptions import (
     WorkflowTimeoutError,
 )
 from .graphs.main_graph.builder import build_main_graph
+from .graphs.main_graph.state import Context as MainGraphContext
 from .graphs.card_template_graph.builder import build_card_template_graph
 
 # from .graphs.research_graph.builder import build_research_graph
@@ -194,13 +195,19 @@ class WorkflowManager:
             # Configure LangGraph with thread_id for checkpointing
             config = {"configurable": {"thread_id": task_id}}
 
+            main_graph_context: Optional[MainGraphContext] = None
+            if workflow_type == "main":
+                input_payload = input_data.get("input") or {}
+                main_graph_context = MainGraphContext(
+                    user_id=input_data.get("user_id", ""),
+                    session_id=input_data.get("session_id", ""),
+                    workspace_id=input_data.get("workspace_id", ""),
+                    input_context=input_payload.get("context",[]),
+                    conversation_history=input_data.get("conversation_history") or [],
+                )
+
             value_events = []
-            workspace_id = str(
-                input_data.get("workspace_id")
-                or input_data.get("workspace")
-                or input_data.get("session_id")
-                or ""
-            ).strip()
+            workspace_id = input_data.get("workspace_id")
             active_node: Optional[str] = None
             active_summary: Dict[str, Any] = {}
 
@@ -208,11 +215,15 @@ class WorkflowManager:
             async def run_graph():
                 nonlocal active_node, active_summary
                 # Stream both granular node updates (for progress) and full values (for final result).
-                async for mode, event in graph.astream(
-                    input_data,
-                    config=config,
-                    stream_mode=["updates", "values"],
-                ):
+                astream_kwargs: Dict[str, Any] = {
+                    "input": input_data,
+                    "config": config,
+                    "stream_mode": ["updates", "values"],
+                }
+                if main_graph_context is not None:
+                    astream_kwargs["context"] = main_graph_context
+
+                async for mode, event in graph.astream(**astream_kwargs):
                     if mode == "updates":
                         if progress_callback:
                             if isinstance(event, dict):
@@ -317,25 +328,36 @@ class WorkflowManager:
         graph = self._get_graph(workflow_type)
         config = {"configurable": {"thread_id": task_id}}
 
+        main_graph_context: Optional[MainGraphContext] = None
+        if workflow_type == "main":
+            additional_input = additional_input or {}
+            input_payload = additional_input.get("input") or {}
+            main_graph_context = MainGraphContext(
+                user_id=additional_input.get("user_id"),
+                session_id=additional_input.get("session_id"),
+                workspace_id=additional_input.get("workspace_id"),
+                input_context=input_payload.get("context"),
+                conversation_history=additional_input.get("conversation_history") or [],
+            )
+
         start_time = time.time()
         try:
             value_events = []
-            workspace_id = str(
-                (additional_input or {}).get("workspace_id")
-                or (additional_input or {}).get("workspace")
-                or (additional_input or {}).get("session_id")
-                or ""
-            ).strip()
+            workspace_id = (additional_input or {}).get("workspace_id")
             active_node: Optional[str] = None
             active_summary: Dict[str, Any] = {}
 
             async def run_resume():
                 nonlocal active_node, active_summary
-                async for mode, event in graph.astream(
-                    additional_input,
-                    config=config,
-                    stream_mode=["updates", "values"],
-                ):
+                astream_kwargs: Dict[str, Any] = {
+                    "input": additional_input,
+                    "config": config,
+                    "stream_mode": ["updates", "values"],
+                }
+                if main_graph_context is not None:
+                    astream_kwargs["context"] = main_graph_context
+
+                async for mode, event in graph.astream(**astream_kwargs):
                     if mode == "updates":
                         if progress_callback:
                             if isinstance(event, dict):

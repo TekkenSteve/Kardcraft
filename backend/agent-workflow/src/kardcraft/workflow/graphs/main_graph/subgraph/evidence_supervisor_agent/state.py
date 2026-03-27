@@ -5,11 +5,9 @@ from typing import Any, Dict, List, Optional, TypedDict
 
 class EvidenceSupervisorState(TypedDict, total=False):
     user_input: str
-    source_content: Optional[str]
+    message_knowledge: Optional[str]
     synthesized_knowledge: str
     file_ids: List[str]
-    session_id: Optional[str]
-    user_id: Optional[str]
     subject_domain: Optional[str]
     difficulty_level: Optional[str]
     target_count: Optional[int]

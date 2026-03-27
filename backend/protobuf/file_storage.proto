@@ -65,7 +65,7 @@ message ConversationFileUploadRequest {
 message ConversationFileMetadata {
   string user_id = 1 [(buf.validate.field).string.min_len = 1];
   string session_id = 2 [(buf.validate.field).string.min_len = 1];
-  string conversation_id = 3 [(buf.validate.field).string.min_len = 1];
+  reserved 3;
   string filename = 4 [(buf.validate.field).string.min_len = 1];
   string content_type = 5 [(buf.validate.field).string.min_len = 1];
   int64 file_size = 6 [(buf.validate.field).int64.gt = 0];
@@ -85,7 +85,7 @@ message ConversationFileUploadResponse {
 message GetConversationFilesRequest {
   string user_id = 1 [(buf.validate.field).string.min_len = 1];
   string session_id = 2 [(buf.validate.field).string.min_len = 1];
-  string conversation_id = 3 [(buf.validate.field).string.min_len = 1];
+  reserved 3;
 }
 
 // GetConversationFilesResponse represents a response with conversation files

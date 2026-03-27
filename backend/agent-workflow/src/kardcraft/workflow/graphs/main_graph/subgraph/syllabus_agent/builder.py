@@ -7,7 +7,8 @@ Refactored per resumable_agent_design.md:
 """
 
 from langgraph.graph import StateGraph, END
-from .state import SyllabusState
+from kardcraft.workflow.graphs.main_graph.state import Context
+from .state import State
 from .nodes import (
     init_syllabus,
     generate_syllabus,
@@ -16,7 +17,7 @@ from .nodes import (
 )
 
 
-def route_after_generation(state: SyllabusState) -> str:
+def route_after_generation(state: State) -> str:
     """Route from generate_syllabus based on state content."""
     if state.get("error") or state.get("pending_questions"):
         return "finalize"
@@ -27,7 +28,7 @@ def route_after_generation(state: SyllabusState) -> str:
     return "finalize"
 
 
-def route_after_feedback(state: SyllabusState) -> str:
+def route_after_feedback(state: State) -> str:
     """Route from request_feedback based on iterations."""
     iteration = state.get("iteration_count", 0)
     max_iters = state.get("max_iterations", 3)
@@ -41,7 +42,7 @@ def route_after_feedback(state: SyllabusState) -> str:
 def build_syllabus_agent():
     """Build the syllabus agent graph with data-driven routing."""
 
-    builder = StateGraph(SyllabusState)
+    builder = StateGraph(State, context_schema=Context)
 
     builder.add_node("init_syllabus", init_syllabus)
     builder.add_node("generate_syllabus", generate_syllabus)

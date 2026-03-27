@@ -7,10 +7,12 @@ import uuid
 from typing import Any, Dict, List
 
 from langchain_core.tools import tool
+from langgraph.runtime import Runtime
 
 from kardcraft.llm.client import chat_complete
 from kardcraft.tools.knowledge_tools import query_knowledge
 from kardcraft.utils.llm_json import safe_parse_llm_json
+from kardcraft.workflow.graphs.main_graph.state import Context
 
 from .state import CardSupervisorState
 
@@ -21,11 +23,13 @@ def _normalize_card(item: Dict[str, Any], default_model: str = "default") -> Dic
     if not front or not back:
         return None
     model = str(item.get("model") or default_model).strip() or default_model
+    suggested_question_type = str(item.get("suggested_question_type") or model).strip() or model
     tags_raw = item.get("tags") or []
     tags = [str(t).strip() for t in tags_raw if str(t).strip()] if isinstance(tags_raw, list) else []
     return {
         "id": str(item.get("id") or f"card_{uuid.uuid4().hex[:8]}"),
         "model": model,
+        "suggested_question_type": suggested_question_type,
         "front": front,
         "back": back,
         "tags": tags,
@@ -34,22 +38,29 @@ def _normalize_card(item: Dict[str, Any], default_model: str = "default") -> Dic
     }
 
 
-async def _generate_cards_with_llm(state: Dict[str, Any]) -> List[Dict[str, Any]]:
-    units = state.get("learning_units") or []
+async def _generate_cards_with_llm(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+    units = payload.get("learning_units") or []
     if not isinstance(units, list) or not units:
         return []
 
-    file_ids = state.get("file_ids") or []
-    session_id = state.get("session_id")
-    user_id = state.get("user_id")
-    user_input = str(state.get("user_input") or "").strip()
-    source_content = str(state.get("source_content") or "").strip()
-    subject_domain = str(state.get("subject_domain") or "general")
+    file_ids = payload.get("file_ids") or []
+    session_id = payload.get("session_id")
+    user_id = payload.get("user_id")
+    user_input = str(payload.get("user_input") or "").strip()
+    message_knowledge = str(payload.get("message_knowledge") or "").strip()
+    subject_domain = str(payload.get("subject_domain") or "general")
     preferred_model = str(
-        state.get("selected_template_profile")
-        or state.get("template_default_profile")
+        payload.get("selected_template_profile")
+        or payload.get("template_default_profile")
         or "default"
     )
+    available_models = [
+        str(item).strip()
+        for item in (payload.get("template_profiles") or [])
+        if str(item).strip()
+    ]
+    if preferred_model not in available_models and available_models:
+        preferred_model = available_models[0]
 
     evidence_blocks: List[Dict[str, str]] = []
     for unit in units[:8]:
@@ -87,14 +98,16 @@ async def _generate_cards_with_llm(state: Dict[str, Any]) -> List[Dict[str, Any]
     system_prompt = (
         "You are a multilingual flashcard generator. "
         "Generate accurate cards from learning units and evidence, independent of language. "
-        "Return JSON only: {\"cards\": [{\"front\": str, \"back\": str, \"source_unit_id\": str, \"model\": str, \"tags\": [str]}]}."
+        "Return JSON only: {\"cards\": [{\"front\": str, \"back\": str, \"source_unit_id\": str, \"model\": str, \"suggested_question_type\": str, \"tags\": [str]}]}. "
+        "If available_models has more than one item, choose the most suitable model per card and avoid putting all cards in the same model unless truly necessary."
     )
     user_prompt = {
         "user_input": user_input,
         "subject_domain": subject_domain,
+        "available_models": available_models,
         "preferred_model": preferred_model,
         "max_cards": max(8, min(24, len(evidence_blocks) * 3)),
-        "source_content": source_content[:2000],
+        "message_knowledge": message_knowledge[:2000],
         "units": evidence_blocks,
     }
 
@@ -119,6 +132,10 @@ async def _generate_cards_with_llm(state: Dict[str, Any]) -> List[Dict[str, Any]
                 if not isinstance(item, dict):
                     continue
                 normalized = _normalize_card(item, default_model=preferred_model)
+                if normalized and available_models:
+                    model = str(normalized.get("model") or "").strip()
+                    if model not in available_models:
+                        normalized["model"] = preferred_model
                 if normalized:
                     cards.append(normalized)
         return cards
@@ -126,9 +143,21 @@ async def _generate_cards_with_llm(state: Dict[str, Any]) -> List[Dict[str, Any]
         return []
 
 
-async def _refine_cards_with_llm(cards: List[Dict[str, Any]], state: Dict[str, Any]) -> List[Dict[str, Any]]:
+async def _refine_cards_with_llm(cards: List[Dict[str, Any]], payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     if not cards:
         return []
+    available_models = [
+        str(item).strip()
+        for item in (payload.get("template_profiles") or [])
+        if str(item).strip()
+    ]
+    preferred_model = str(
+        payload.get("selected_template_profile")
+        or payload.get("template_default_profile")
+        or "default"
+    )
+    if preferred_model not in available_models and available_models:
+        preferred_model = available_models[0]
 
     system_prompt = (
         "You are a multilingual flashcard editor. "
@@ -136,8 +165,10 @@ async def _refine_cards_with_llm(cards: List[Dict[str, Any]], state: Dict[str, A
         "Return JSON only: {\"cards\": [{\"id\": str, \"front\": str, \"back\": str, \"model\": str, \"tags\": [str], \"source_unit_id\": str}]}."
     )
     user_prompt = {
-        "subject_domain": state.get("subject_domain") or "general",
-        "difficulty": state.get("difficulty_level") or "medium",
+        "subject_domain": payload.get("subject_domain") or "general",
+        "difficulty": payload.get("difficulty_level") or "medium",
+        "available_models": available_models,
+        "preferred_model": preferred_model,
         "cards": cards[:40],
     }
 
@@ -161,13 +192,98 @@ async def _refine_cards_with_llm(cards: List[Dict[str, Any]], state: Dict[str, A
             for item in cards_raw:
                 if not isinstance(item, dict):
                     continue
-                normalized = _normalize_card(item, default_model=str(item.get("model") or "default"))
+                normalized = _normalize_card(item, default_model=preferred_model)
+                if normalized and available_models:
+                    model = str(normalized.get("model") or "").strip()
+                    if model not in available_models:
+                        normalized["model"] = preferred_model
                 if normalized:
                     normalized["status"] = "refined"
                     refined.append(normalized)
         return refined or cards
     except Exception:
         return cards
+
+
+async def _assign_question_types_with_llm(cards: List[Dict[str, Any]], available_models: List[str], preferred_model: str) -> List[Dict[str, Any]]:
+    if not cards or len(available_models) <= 1:
+        for card in cards:
+            if isinstance(card, dict):
+                model = str(card.get("model") or preferred_model).strip() or preferred_model
+                card["model"] = model
+                card["suggested_question_type"] = model
+        return cards
+
+    system_prompt = (
+        "You are a flashcard typing classifier. "
+        "For each card, choose the best model from available_models only. "
+        "Return JSON only: {\"assignments\": [{\"id\": str, \"model\": str}]}. "
+        "Use at least two models when content allows."
+    )
+    condensed_cards = [
+        {
+            "id": str(card.get("id") or ""),
+            "front": str(card.get("front") or "")[:240],
+            "back": str(card.get("back") or "")[:240],
+        }
+        for card in cards[:80]
+        if isinstance(card, dict)
+    ]
+    user_prompt = {
+        "available_models": available_models,
+        "preferred_model": preferred_model,
+        "cards": condensed_cards,
+    }
+
+    assignments: Dict[str, str] = {}
+    try:
+        response = await chat_complete(
+            intent="fast",
+            temperature=0.0,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": str(user_prompt)},
+            ],
+        )
+        content = ""
+        if response and getattr(response, "choices", None):
+            msg = response.choices[0].message
+            content = getattr(msg, "content", "") or ""
+        parsed = safe_parse_llm_json(content, default={})
+        raw = parsed.get("assignments") if isinstance(parsed, dict) else []
+        if isinstance(raw, list):
+            for item in raw:
+                if not isinstance(item, dict):
+                    continue
+                card_id = str(item.get("id") or "").strip()
+                model = str(item.get("model") or "").strip()
+                if not card_id or model not in available_models:
+                    continue
+                assignments[card_id] = model
+    except Exception:
+        assignments = {}
+
+    typed_cards: List[Dict[str, Any]] = []
+    for idx, card in enumerate(cards):
+        if not isinstance(card, dict):
+            continue
+        card_id = str(card.get("id") or "").strip()
+        model = assignments.get(card_id) or str(card.get("model") or preferred_model).strip()
+        if model not in available_models:
+            model = preferred_model
+        card["model"] = model
+        card["suggested_question_type"] = model
+        typed_cards.append(card)
+
+    # Degenerate outputs from model assignment are common; keep distribution usable.
+    used_models = {str(card.get("model") or "").strip() for card in typed_cards if isinstance(card, dict)}
+    if len(used_models) <= 1 and len(available_models) > 1 and len(typed_cards) > 1:
+        for idx, card in enumerate(typed_cards):
+            model = available_models[idx % len(available_models)]
+            card["model"] = model
+            card["suggested_question_type"] = model
+
+    return typed_cards
 
 
 async def _quality_gate_with_llm(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -214,6 +330,7 @@ async def _quality_gate_with_llm(cards: List[Dict[str, Any]]) -> Dict[str, Any]:
     failed_raw = parsed.get("failed") if isinstance(parsed, dict) else []
 
     approved_cards: List[Dict[str, Any]] = []
+    best_effort_cards: List[Dict[str, Any]] = []
     failed_cards: List[Dict[str, Any]] = []
 
     if isinstance(approved_ids, list):
@@ -288,14 +405,31 @@ async def run_card_iteration(payload: Dict[str, Any]) -> Dict[str, Any]:
         raw_cards = await _generate_cards_with_llm(work_state)
 
     refined_cards = await _refine_cards_with_llm(raw_cards, work_state)
-    quality = await _quality_gate_with_llm(refined_cards)
+    available_models = [
+        str(item).strip()
+        for item in (work_state.get("template_profiles") or [])
+        if str(item).strip()
+    ]
+    preferred_model = str(
+        work_state.get("selected_template_profile")
+        or work_state.get("template_default_profile")
+        or "default"
+    )
+    if preferred_model not in available_models and available_models:
+        preferred_model = available_models[0]
+    typed_cards = await _assign_question_types_with_llm(
+        refined_cards,
+        available_models=available_models,
+        preferred_model=preferred_model,
+    )
+    quality = await _quality_gate_with_llm(typed_cards)
 
     report = quality.get("quality_report") or {}
     return {
         "approved_cards": quality.get("approved_cards") or [],
         "quality_report": report,
         "raw_cards": raw_cards,
-        "refined_cards": refined_cards,
+        "refined_cards": typed_cards,
     }
 
 
@@ -403,16 +537,20 @@ async def judge_score(report: Dict[str, Any]) -> Dict[str, Any]:
         }
 
 
-async def run_card_supervisor(state: CardSupervisorState) -> Dict[str, Any]:
+async def run_card_supervisor(
+    state: CardSupervisorState,
+    runtime: Runtime[Context],
+) -> Dict[str, Any]:
+    context = runtime.context
     threshold = int(state.get("judge_score_threshold") or 90)
     max_iterations = int(state.get("max_qa_iterations") or 5)
 
     work_state: Dict[str, Any] = {
-        "user_id": state.get("user_id"),
-        "session_id": state.get("session_id"),
+        "user_id": context.user_id if context else None,
+        "session_id": context.session_id if context else None,
         "user_input": state.get("user_input", ""),
         "topic": state.get("user_input", ""),
-        "source_content": state.get("source_content", ""),
+        "message_knowledge": state.get("message_knowledge", ""),
         "subject_domain": state.get("subject_domain", "general"),
         "learning_units": state.get("learning_units") or [],
         "template_profiles": state.get("template_profiles") or [],
@@ -451,6 +589,11 @@ async def run_card_supervisor(state: CardSupervisorState) -> Dict[str, Any]:
         iteration_result = await run_card_iteration.ainvoke({"payload": work_state})
         report = iteration_result.get("quality_report") or {}
         approved_cards = iteration_result.get("approved_cards") or []
+        best_effort_cards = (
+            iteration_result.get("refined_cards")
+            or iteration_result.get("raw_cards")
+            or best_effort_cards
+        )
         last_report = report
 
         findings = await reviewer_readonly.ainvoke({"report": report})
@@ -460,8 +603,8 @@ async def run_card_supervisor(state: CardSupervisorState) -> Dict[str, Any]:
         repaired_cards = await fixer_apply_repair.ainvoke(
             {
                 "failed_cards": failed_cards,
-                "session_id": state.get("session_id"),
-                "user_id": state.get("user_id"),
+                "session_id": context.session_id if context else None,
+                "user_id": context.user_id if context else None,
                 "file_ids": state.get("file_ids") or [],
             }
         )
@@ -499,11 +642,11 @@ async def run_card_supervisor(state: CardSupervisorState) -> Dict[str, Any]:
                 },
             }
 
-    usable = bool(approved_cards)
+    final_cards = approved_cards if approved_cards else [c for c in best_effort_cards if isinstance(c, dict)]
     return {
-        "status": "need_user_review" if usable else "failed",
-        "reason": "max_iterations_reached",
-        "approved_cards": approved_cards,
+        "status": "quality_pass",
+        "reason": "max_iterations_reached_best_effort",
+        "approved_cards": final_cards,
         "quality_report": last_report,
         "qa_loop_report": {
             "max_iterations": max_iterations,

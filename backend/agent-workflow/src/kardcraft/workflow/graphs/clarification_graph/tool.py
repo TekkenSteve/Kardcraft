@@ -11,7 +11,7 @@ from langchain_core.tools import tool
 @tool
 async def clarify(
     user_input: str,
-    source_content: str = "",
+    message_knowledge: str = "",
     file_ids: List[str] | None = None,
     language: str | None = None,
 ) -> Dict[str, Any]:
@@ -22,7 +22,7 @@ async def clarify(
     result = await clarification_graph.ainvoke(
         {
             "user_input": user_input,
-            "source_content": source_content,
+            "message_knowledge": message_knowledge,
             "file_ids": file_ids or [],
             "language": language,
         },

@@ -1,0 +1,705 @@
+package handlers
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net/http"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	v1adapters "task-orchestrator/internal/controller/http/v1/adapters"
+	httpdto "task-orchestrator/internal/controller/http/v1/dto"
+	"task-orchestrator/internal/usecase"
+)
+
+type SessionsDeps struct {
+	WriteJSON     func(w http.ResponseWriter, status int, v any)
+	WriteAPIError func(w http.ResponseWriter, status int, code, message string, details map[string]any)
+	UserID        func(r *http.Request) string
+
+	ReadModel         *usecase.ReadModelService
+	WorkflowSvc       *usecase.WorkflowService
+	CommandService    *usecase.CommandService
+	IsTemporalEnabled func() bool
+
+	AuthzDeniedCode         string
+	IdempotencyRequiredCode string
+	NoActiveTaskCode        string
+	InvalidTransitionCode   string
+}
+
+func NewSessionsHandler(deps SessionsDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		if r.Method != http.MethodGet {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if deps.ReadModel == nil || !deps.ReadModel.Ready() {
+			http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		userID := deps.UserID(r)
+		limit := 20
+		offset := 0
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+				limit = n
+			}
+		}
+		if raw := r.URL.Query().Get("offset"); raw != "" {
+			if n, err := strconv.Atoi(raw); err == nil && n >= 0 {
+				offset = n
+			}
+		}
+		list, total, err := deps.ReadModel.ListSessions(r.Context(), userID, limit, offset)
+		if err != nil {
+			http.Error(w, "failed to list sessions", http.StatusInternalServerError)
+			return
+		}
+		sessions := make([]map[string]any, 0, len(list))
+		for _, row := range list {
+			sessions = append(sessions, sessionRowToResponse(row))
+		}
+		deps.WriteJSON(w, http.StatusOK, map[string]any{"sessions": sessions, "total_count": total})
+	}
+}
+
+func NewSessionsRouter(deps SessionsDeps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/v1/sessions/"), "/")
+		if trimmed == "" {
+			http.NotFound(w, r)
+			return
+		}
+		parts := strings.Split(trimmed, "/")
+		sessionID := parts[0]
+		if len(parts) == 1 {
+			handleSessionDetail(w, r, sessionID, deps)
+			return
+		}
+		suffix := parts[1]
+		switch suffix {
+		case "conversation":
+			handleSessionConversation(w, r, sessionID, deps)
+		case "timeline":
+			handleSessionTimeline(w, r, sessionID, deps)
+		case "history":
+			handleSessionHistory(w, r, sessionID, deps)
+		case "workspace":
+			handleSessionWorkspace(w, r, sessionID, deps)
+		case "state":
+			handleSessionState(w, r, sessionID, deps)
+		case "pause", "resume", "cancel":
+			handleSessionControl(w, r, sessionID, suffix, deps)
+		default:
+			http.NotFound(w, r)
+		}
+	}
+}
+
+func handleSessionDetail(w http.ResponseWriter, r *http.Request, sessionID string, deps SessionsDeps) {
+	if deps.ReadModel == nil || !deps.ReadModel.Ready() {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	userID := deps.UserID(r)
+	switch r.Method {
+	case http.MethodGet:
+		rec, err := deps.ReadModel.GetSession(r.Context(), sessionID, userID)
+		if err != nil || rec == nil {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		deps.WriteJSON(w, http.StatusOK, sessionRowToResponse(*rec))
+	case http.MethodPatch:
+		var req struct {
+			Title  *string `json:"title"`
+			Pinned *bool   `json:"pinned"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if req.Title == nil && req.Pinned == nil {
+			http.Error(w, "no fields to update", http.StatusBadRequest)
+			return
+		}
+		if err := deps.ReadModel.UpdateSessionMeta(r.Context(), sessionID, userID, req.Title, req.Pinned); err != nil {
+			http.Error(w, "failed to update session", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	case http.MethodDelete:
+		affected, err := deps.ReadModel.DeleteSession(r.Context(), sessionID, userID)
+		if err != nil {
+			http.Error(w, "failed to delete session", http.StatusInternalServerError)
+			return
+		}
+		if affected == 0 {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func sessionRowToResponse(row usecase.SessionRow) map[string]any {
+	resp := map[string]any{
+		"session_id":  row.SessionID,
+		"user_id":     row.UserID,
+		"pinned":      row.Pinned,
+		"task_count":  row.TaskCount,
+		"tokens_used": row.TokensUsed,
+		"created_at":  row.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":  row.UpdatedAt.UTC().Format(time.RFC3339),
+	}
+	if row.Title != nil {
+		resp["title"] = *row.Title
+	}
+	if row.LastActivityAt != nil {
+		resp["last_activity_at"] = row.LastActivityAt.UTC().Format(time.RFC3339)
+	}
+	if row.LatestTaskQuery != nil {
+		resp["latest_task_query"] = *row.LatestTaskQuery
+	}
+	if row.LatestTaskStatus != nil {
+		resp["latest_task_status"] = *row.LatestTaskStatus
+	}
+	return resp
+}
+
+func handleSessionConversation(w http.ResponseWriter, r *http.Request, sessionID string, deps SessionsDeps) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if deps.ReadModel == nil || !deps.ReadModel.Ready() {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	userID := deps.UserID(r)
+	if _, err := deps.ReadModel.GetSession(r.Context(), sessionID, userID); err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	tasks, err := deps.ReadModel.ListSessionTasks(r.Context(), sessionID, userID)
+	if err != nil {
+		http.Error(w, "failed to load session history", http.StatusInternalServerError)
+		return
+	}
+	events, err := deps.ReadModel.ListSessionEvents(r.Context(), sessionID, 2000, 0)
+	if err != nil {
+		http.Error(w, "failed to load session events", http.StatusInternalServerError)
+		return
+	}
+	eventsByTask := make(map[string][]usecase.EventRow)
+	for _, ev := range events {
+		taskID := ""
+		if ev.TaskID != nil {
+			taskID = *ev.TaskID
+		}
+		eventsByTask[taskID] = append(eventsByTask[taskID], ev)
+	}
+	messages := make([]map[string]any, 0)
+	for _, t := range tasks {
+		taskID := t.TaskID
+		timestamp := ""
+		if t.StartedAt != nil {
+			timestamp = t.StartedAt.UTC().Format(time.RFC3339)
+		} else if t.CompletedAt != nil {
+			timestamp = t.CompletedAt.UTC().Format(time.RFC3339)
+		}
+		messages = append(messages, map[string]any{"id": fmt.Sprintf("user-%s", taskID), "role": "user", "content": valueFromPtr(t.Query), "timestamp": timestamp, "task_id": taskID})
+		assistantContent := ExtractResultMessage(t.Result)
+		if assistantContent == "" {
+			if text, ts := extractAssistantContentFromEvents(eventsByTask[taskID]); text != "" {
+				assistantContent = text
+				if !ts.IsZero() {
+					timestamp = ts.UTC().Format(time.RFC3339)
+				}
+			}
+		}
+		if assistantContent != "" {
+			messages = append(messages, map[string]any{"id": fmt.Sprintf("assistant-%s", taskID), "role": "assistant", "content": assistantContent, "timestamp": timestamp, "task_id": taskID})
+		} else if strings.EqualFold(valueFromPtr(t.Status), "cancelled") {
+			messages = append(messages, map[string]any{"id": fmt.Sprintf("assistant-%s", taskID), "role": "assistant", "content": "This task was cancelled.", "timestamp": timestamp, "task_id": taskID})
+		}
+	}
+	deps.WriteJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "messages": messages})
+}
+
+func handleSessionTimeline(w http.ResponseWriter, r *http.Request, sessionID string, deps SessionsDeps) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if deps.ReadModel == nil || !deps.ReadModel.Ready() {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	userID := deps.UserID(r)
+	if _, err := deps.ReadModel.GetSession(r.Context(), sessionID, userID); err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	limit := 500
+	offset := 0
+	includePayload := true
+	if raw := strings.TrimSpace(r.URL.Query().Get("include_payload")); raw != "" {
+		includePayload = strings.EqualFold(raw, "true")
+	}
+	if raw := r.URL.Query().Get("limit"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			limit = n
+		}
+	}
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil {
+			offset = n
+		}
+	}
+	events, err := deps.ReadModel.ListSessionEvents(r.Context(), sessionID, limit, offset)
+	if err != nil {
+		http.Error(w, "failed to load session events", http.StatusInternalServerError)
+		return
+	}
+	selected := make([]map[string]any, 0, len(events))
+	for _, ev := range events {
+		item := map[string]any{
+			"id":        ev.ID,
+			"type":      ev.Type,
+			"timestamp": ev.Timestamp.UTC().Format(time.RFC3339),
+		}
+		if ev.Message != nil {
+			item["message"] = *ev.Message
+		}
+		if ev.Workflow != nil {
+			item["workflow_id"] = *ev.Workflow
+		}
+		if ev.TaskID != nil {
+			item["task_id"] = *ev.TaskID
+		}
+		if ev.StreamID != nil {
+			item["stream_id"] = *ev.StreamID
+		}
+		if includePayload {
+			item["payload"] = parsePayloadText(ev.Payload)
+		}
+		selected = append(selected, item)
+	}
+	status := "empty"
+	if len(selected) > 0 {
+		status = "hydrated"
+	}
+	deps.WriteJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "events": selected, "projection_status": status})
+}
+
+func handleSessionHistory(w http.ResponseWriter, r *http.Request, sessionID string, deps SessionsDeps) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if deps.ReadModel == nil || !deps.ReadModel.Ready() {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	userID := deps.UserID(r)
+	if _, err := deps.ReadModel.GetSession(r.Context(), sessionID, userID); err != nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	tasks, err := deps.ReadModel.ListSessionTasks(r.Context(), sessionID, userID)
+	if err != nil {
+		http.Error(w, "failed to load session history", http.StatusInternalServerError)
+		return
+	}
+	usageByTask, err := deps.ReadModel.GetTaskUsageSummaryMapBySession(r.Context(), sessionID, userID)
+	if err != nil {
+		http.Error(w, "failed to load usage summary", http.StatusInternalServerError)
+		return
+	}
+	items := make([]map[string]any, 0, len(tasks))
+	for _, t := range tasks {
+		usage := usageByTask[t.TaskID]
+		item := map[string]any{"task_id": t.TaskID, "workflow_id": t.WorkflowID, "query": valueFromPtr(t.Query), "status": valueFromPtr(t.Status), "mode": valueFromPtr(t.TaskType), "total_tokens": usage.TotalTokens, "total_cost_usd": usage.TotalCostUSD}
+		if t.StartedAt != nil {
+			item["started_at"] = t.StartedAt.UTC().Format(time.RFC3339)
+		}
+		if t.CompletedAt != nil {
+			item["completed_at"] = t.CompletedAt.UTC().Format(time.RFC3339)
+			if t.DurationMS != nil {
+				item["duration_ms"] = *t.DurationMS
+			}
+		}
+		if t.Error != nil {
+			item["error_message"] = *t.Error
+		}
+		items = append(items, item)
+	}
+	deps.WriteJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "tasks": items})
+}
+
+func handleSessionWorkspace(w http.ResponseWriter, r *http.Request, sessionID string, deps SessionsDeps) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if deps.ReadModel == nil || !deps.ReadModel.Ready() {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	userID := deps.UserID(r)
+	if _, err := deps.ReadModel.GetSession(r.Context(), sessionID, userID); err != nil {
+		deps.WriteAPIError(w, http.StatusForbidden, deps.AuthzDeniedCode, "access denied for session resource", map[string]any{"session_id": sessionID})
+		return
+	}
+	resp, err := deps.ReadModel.LoadWorkspace(r.Context(), sessionID)
+	if err != nil {
+		http.Error(w, "failed to load workspace", http.StatusInternalServerError)
+		return
+	}
+	deps.WriteJSON(w, http.StatusOK, NormalizeWorkspaceResponse(resp, sessionID))
+}
+
+func handleSessionControl(w http.ResponseWriter, r *http.Request, sessionID, action string, deps SessionsDeps) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
+		deps.WriteAPIError(w, http.StatusBadRequest, deps.IdempotencyRequiredCode, "Idempotency-Key header is required", nil)
+		return
+	}
+	if !deps.IsTemporalEnabled() {
+		http.Error(w, "temporal not enabled", http.StatusServiceUnavailable)
+		return
+	}
+	if deps.ReadModel == nil || !deps.ReadModel.Ready() {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if deps.CommandService == nil {
+		http.Error(w, "command service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	userID := deps.UserID(r)
+	var req httpdto.SessionControlHTTPBody
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	result, err := deps.CommandService.ControlSession(r.Context(), usecase.SessionControlCommand{SessionID: sessionID, UserID: userID, Action: action, Reason: req.Reason})
+	if err != nil {
+		if errors.Is(err, usecase.ErrNoActiveTask) {
+			deps.WriteAPIError(w, http.StatusNotFound, deps.NoActiveTaskCode, "session has no active task", map[string]any{"session_id": sessionID})
+			return
+		}
+		if errors.Is(err, usecase.ErrInvalidTransition) {
+			deps.WriteAPIError(w, http.StatusConflict, deps.InvalidTransitionCode, err.Error(), map[string]any{"session_id": sessionID, "action": action})
+			return
+		}
+		deps.WriteAPIError(w, http.StatusBadRequest, deps.InvalidTransitionCode, err.Error(), map[string]any{"session_id": sessionID, "action": action})
+		return
+	}
+	code := http.StatusOK
+	if result.Accepted {
+		code = http.StatusAccepted
+	}
+	deps.WriteJSON(w, code, map[string]any{
+		"session_id":            result.SessionID,
+		"active_task_id":        result.ActiveTaskID,
+		"task_state":            result.TaskState,
+		"session_control_state": result.SessionControlState,
+		"version":               0,
+		"result":                "applied",
+	})
+}
+
+func handleSessionState(w http.ResponseWriter, r *http.Request, sessionID string, deps SessionsDeps) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if deps.ReadModel == nil || !deps.ReadModel.Ready() {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	userID := deps.UserID(r)
+	row, err := deps.ReadModel.GetSession(r.Context(), sessionID, userID)
+	if err != nil || row == nil {
+		http.Error(w, "session not found", http.StatusNotFound)
+		return
+	}
+	tasks, err := deps.ReadModel.ListSessionTasks(r.Context(), sessionID, userID)
+	if err != nil {
+		http.Error(w, "failed to load session state", http.StatusInternalServerError)
+		return
+	}
+	activeTaskID := ""
+	status := normalizeSessionStatusPtr(row.LatestTaskStatus)
+	taskState := "IDLE"
+	sessionControlState := "IDLE"
+	if len(tasks) > 0 {
+		last := tasks[len(tasks)-1]
+		status = normalizeSessionStatusPtr(last.Status)
+		if activeTask, ok := ResolveSessionActiveTask(tasks); ok {
+			activeTaskID = activeTask.WorkflowID
+			taskState = normalizeTaskStateForControl(valueFromPtr(activeTask.Status))
+			sessionControlState = ControlStateFromTaskState(taskState)
+		} else {
+			taskState = normalizeTaskStateForControl(valueFromPtr(last.Status))
+		}
+	}
+	deps.WriteJSON(w, http.StatusOK, map[string]any{
+		"session_id":            sessionID,
+		"status":                status,
+		"active_task_id":        activeTaskID,
+		"task_state":            taskState,
+		"session_control_state": sessionControlState,
+		"version":               0,
+		"updated_at":            row.UpdatedAt.UTC().Format(time.RFC3339),
+	})
+}
+
+func extractAssistantContentFromEvents(events []usecase.EventRow) (string, time.Time) {
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		msg := ""
+		if ev.Message != nil {
+			msg = strings.TrimSpace(*ev.Message)
+		}
+		if msg != "" && (ev.Type == "WORKFLOW_COMPLETED" || ev.Type == "thread.message.completed" || ev.Type == "LLM_OUTPUT") {
+			return msg, ev.Timestamp
+		}
+	}
+	return "", time.Time{}
+}
+
+func ExtractResultMessage(result any) string {
+	if result == nil {
+		return ""
+	}
+	switch v := result.(type) {
+	case string:
+		text := strings.TrimSpace(v)
+		if text == "" {
+			return ""
+		}
+		var parsed any
+		if err := json.Unmarshal([]byte(text), &parsed); err == nil {
+			if msg := ExtractResultMessage(parsed); msg != "" {
+				return msg
+			}
+		}
+		return text
+	case []byte:
+		return ExtractResultMessage(string(v))
+	case map[string]any:
+		if msg, ok := v1adapters.DecodeTaskOutcomeMessage(v); ok {
+			return msg
+		}
+		for _, nestedKey := range []string{"result", "data"} {
+			if nested, ok := v[nestedKey]; ok {
+				if msg := ExtractResultMessage(nested); msg != "" {
+					return msg
+				}
+			}
+		}
+		if !sessionReadFallbackEnabled() {
+			return ""
+		}
+		for _, key := range []string{"message", "response", "content", "text", "output", "result"} {
+			if val, ok := v[key]; ok {
+				if s, ok := val.(string); ok && strings.TrimSpace(s) != "" {
+					return strings.TrimSpace(s)
+				}
+			}
+		}
+	case []any:
+		for _, item := range v {
+			if msg := ExtractResultMessage(item); msg != "" {
+				return msg
+			}
+		}
+	}
+	return ""
+}
+
+func sessionReadFallbackEnabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("TASK_READ_PATH_BACKFILL_ENABLED")), "true")
+}
+
+func IsTaskActiveStatus(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "pending", "queued", "running", "paused":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizeTaskStateForControl(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "pending", "queued", "running":
+		return "RUNNING"
+	case "paused":
+		return "PAUSED"
+	case "cancelled", "canceled":
+		return "CANCELED"
+	case "completed", "success":
+		return "SUCCEEDED"
+	case "failed", "error":
+		return "FAILED"
+	default:
+		return "IDLE"
+	}
+}
+
+func ControlStateFromTaskState(taskState string) string {
+	switch taskState {
+	case "RUNNING":
+		return "ACTIVE_RUNNING"
+	case "PAUSED":
+		return "ACTIVE_PAUSED"
+	case "CANCELED", "SUCCEEDED", "FAILED":
+		return "IDLE"
+	default:
+		return "IDLE"
+	}
+}
+
+func ResolveSessionActiveTask(tasks []usecase.TaskRow) (usecase.TaskRow, bool) {
+	for i := len(tasks) - 1; i >= 0; i-- {
+		status := valueFromPtr(tasks[i].Status)
+		if IsTaskActiveStatus(status) {
+			return tasks[i], true
+		}
+	}
+	return usecase.TaskRow{}, false
+}
+
+func normalizeSessionStatusPtr(status *string) string {
+	if status == nil {
+		return "idle"
+	}
+	switch strings.ToLower(strings.TrimSpace(*status)) {
+	case "pending", "queued", "running":
+		return "running"
+	case "failed", "error":
+		return "failed"
+	case "cancelled", "canceled":
+		return "cancelled"
+	case "paused":
+		return "paused"
+	case "completed", "success":
+		return "completed"
+	default:
+		return "idle"
+	}
+}
+
+func valueFromPtr(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+func parsePayloadText(raw *string) any {
+	if raw == nil || *raw == "" {
+		return nil
+	}
+	var out any
+	if err := json.Unmarshal([]byte(*raw), &out); err == nil {
+		return out
+	}
+	return *raw
+}
+
+func NormalizeWorkspaceResponse(raw map[string]any, sessionID string) map[string]any {
+	out := map[string]any{"session_id": sessionID, "version": 0, "status": "not_started", "card_count": 0, "cards": []map[string]any{}, "projection_status": "empty"}
+	if raw == nil {
+		return out
+	}
+	if sid, ok := raw["session_id"].(string); ok && strings.TrimSpace(sid) != "" {
+		out["session_id"] = sid
+	}
+	if v, ok := raw["version"].(float64); ok {
+		out["version"] = int(v)
+	} else if v, ok := raw["version"].(int); ok {
+		out["version"] = v
+	}
+	if status, ok := raw["status"].(string); ok && strings.TrimSpace(status) != "" {
+		out["status"] = status
+	}
+	if templateID, ok := raw["template_id"].(string); ok && strings.TrimSpace(templateID) != "" {
+		out["template_id"] = strings.TrimSpace(templateID)
+	}
+	if selected, ok := raw["selected_question_type"].(string); ok && strings.TrimSpace(selected) != "" {
+		out["selected_question_type"] = strings.TrimSpace(selected)
+	}
+	if supported := normalizeStringSliceAny(raw["supported_question_types"]); len(supported) > 0 {
+		out["supported_question_types"] = supported
+	}
+	cardsRaw, _ := raw["cards"].([]any)
+	cards := make([]map[string]any, 0, len(cardsRaw))
+	for _, entry := range cardsRaw {
+		card, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		id, _ := card["id"].(string)
+		userID, _ := card["user_id"].(string)
+		cardID, _ := card["card_id"].(string)
+		content, _ := card["content"].(map[string]any)
+		editState, _ := card["edit_state"].(map[string]any)
+		meta, _ := card["meta"].(map[string]any)
+		if id == "" || userID == "" || cardID == "" || content == nil || editState == nil || meta == nil {
+			continue
+		}
+		status, _ := editState["status"].(string)
+		if status != "draft" && status != "ai_editing" && status != "user_editing" && status != "confirmed" {
+			continue
+		}
+		data, _ := content["data"].(map[string]any)
+		if data == nil {
+			continue
+		}
+		if _, ok := data["front"].(string); !ok {
+			continue
+		}
+		if _, ok := data["back"].(string); !ok {
+			continue
+		}
+		cards = append(cards, card)
+	}
+	out["cards"] = cards
+	out["card_count"] = len(cards)
+	if len(cards) > 0 {
+		out["projection_status"] = "hydrated"
+	}
+	return out
+}
+
+func normalizeStringSliceAny(v any) []string {
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		s, ok := item.(string)
+		if !ok {
+			continue
+		}
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}

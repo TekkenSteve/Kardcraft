@@ -5,13 +5,15 @@ from __future__ import annotations
 from typing import Any, Dict, List
 
 from langchain_core.tools import tool
+from langgraph.runtime import Runtime
 from pydantic import BaseModel, Field
 
 from kardcraft.utils.react_runtime import run_react_structured
+from kardcraft.workflow.graphs.main_graph.state import Context
 from kardcraft.workflow.graphs.main_graph.subgraph.syllabus_agent import syllabus_agent
 
 from .prompt import resolve_prompt
-from .state import SyllabusSupervisorState
+from .state import State
 
 
 class SyllabusDecision(BaseModel):
@@ -50,22 +52,26 @@ async def invoke_syllabus_agent(
     }
 
 
-async def run_syllabus_supervisor(state: SyllabusSupervisorState) -> Dict[str, Any]:
-    user_input = str(state.get("user_input") or "").strip()
-    source_content = str(state.get("source_content") or "").strip()
+async def run_syllabus_supervisor(
+    state: State,
+    runtime: Runtime[Context],
+) -> Dict[str, Any]:
+    context = runtime.context
+    user_input = state.get("user_input")
+    message_knowledge = state.get("message_knowledge")
 
     payload = {
         "user_input": user_input,
-        "user_knowledge": source_content or user_input,
-        "subject_domain": str(state.get("subject_domain") or "general"),
-        "complexity_level": str(state.get("task_complexity") or state.get("difficulty_level") or "medium"),
+        "user_knowledge": message_knowledge,
+        "subject_domain": state.get("subject_domain"),
+        "complexity_level": state.get("task_complexity"),
         "file_ids": state.get("file_ids") or [],
-        "session_id": state.get("session_id"),
-        "user_id": state.get("user_id"),
+        "session_id": context.session_id,
+        "user_id": context.user_id,
         "language": state.get("language"),
     }
 
-    result = await invoke_syllabus_agent.ainvoke(payload)
+    result = await syllabus_agent.ainvoke(payload, context=context)
     learning_units = result.get("learning_units") or []
     pending_questions = result.get("pending_questions") or []
 

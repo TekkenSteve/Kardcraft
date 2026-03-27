@@ -109,8 +109,7 @@ class FileStorageClient:
     async def get_conversation_files(
         self, 
         user_id: str, 
-        session_id: str, 
-        conversation_id: str
+        session_id: str
     ) -> List[ConversationFileInfo]:
         """
         获取对话的所有文件
@@ -118,7 +117,6 @@ class FileStorageClient:
         Args:
             user_id: 用户ID
             session_id: 会话ID
-            conversation_id: 对话ID
             
         Returns:
             文件信息列表
@@ -130,7 +128,6 @@ class FileStorageClient:
                 request = file_storage_pb2.GetConversationFilesRequest(
                     user_id=user_id,
                     session_id=session_id,
-                    conversation_id=conversation_id,
                 )
                 response = await stub.GetConversationFiles(request, timeout=self.timeout)
 
@@ -150,7 +147,7 @@ class FileStorageClient:
                 return files
 
         except Exception as e:
-            logger.error(f"获取对话文件列表失败: user_id={user_id}, session_id={session_id}, conversation_id={conversation_id}, error={e}")
+            logger.error(f"获取会话文件列表失败: user_id={user_id}, session_id={session_id}, error={e}")
             raise
     
     async def validate_file(
@@ -227,10 +224,10 @@ async def download_conversation_file(user_id: str, file_id: str) -> Tuple[bytes,
     return await client.download_conversation_file(user_id, file_id)
 
 
-async def get_conversation_files(user_id: str, session_id: str, conversation_id: str) -> List[ConversationFileInfo]:
+async def get_conversation_files(user_id: str, session_id: str) -> List[ConversationFileInfo]:
     """便捷函数：获取对话文件列表"""
     client = get_file_storage_client()
-    return await client.get_conversation_files(user_id, session_id, conversation_id)
+    return await client.get_conversation_files(user_id, session_id)
 
 
 async def validate_file(filename: str, content_type: str, file_size: int, file_header: bytes) -> Tuple[bool, str, List[str]]:

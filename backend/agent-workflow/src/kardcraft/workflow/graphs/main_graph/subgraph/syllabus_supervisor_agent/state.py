@@ -3,12 +3,10 @@
 from typing import Any, Dict, List, Optional, TypedDict
 
 
-class SyllabusSupervisorState(TypedDict, total=False):
+class State(TypedDict, total=False):
     user_input: str
-    source_content: Optional[str]
+    message_knowledge: Optional[str]
     file_ids: List[str]
-    session_id: Optional[str]
-    user_id: Optional[str]
     subject_domain: Optional[str]
     task_complexity: Optional[str]
     difficulty_level: Optional[str]
