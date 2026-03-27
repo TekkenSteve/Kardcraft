@@ -151,10 +151,6 @@ def _render_page(message: str = "", result: str = "") -> str:
         </select>
         <label>File IDs (comma or newline separated)</label>
         <textarea name="file_ids" rows="3" placeholder="{list(STATE.uploads.keys())[:3]}"></textarea>
-        <label>Parser Override (optional, e.g. mineru_api)</label>
-        <input name="parser_override" placeholder="leave blank for smart parser" />
-        <label>Parse Method Override (optional, e.g. auto)</label>
-        <input name="parse_method_override" placeholder="leave blank for default" />
         <label>MinerU API URL (optional)</label>
         <input name="mineru_api_url" placeholder="http://localhost:30001" />
         <label>MinerU Cloud API Base URL (optional)</label>
@@ -269,8 +265,6 @@ async def index_files(
     file_ids: str = Form(""),
     ragix_mode: str = Form("default"),
     session_id: str = Form(""),
-    parser_override: str = Form(""),
-    parse_method_override: str = Form(""),
     mineru_api_url: str = Form(""),
     mineru_cloud_api_url: str = Form(""),
     mineru_cloud_api_token: str = Form(""),
@@ -342,8 +336,6 @@ async def index_files(
             doc_id = await STATE.ragix.add_local_document(
                 tmp_path,
                 session_id=session_id or None,
-                parser_override=parser_override.strip() or None,
-                parse_method_override=parse_method_override.strip() or None,
                 parser_params=parser_params or None,
             )
             STATE.indexed[fid] = {"doc_id": doc_id, "file_path": tmp_path}

@@ -49,21 +49,21 @@ class ComponentRegistry:
         # self.register_component("processors", "generic", GenericModalProcessor)
 
         # 注册解析器组件
-        from ..implementations.parsers import (
-            PdfParser,
-            DocxParser,
-            ExcelParser,
-            SmartParser,
-        )
+        # from ..implementations.parsers import (
+        #     PdfParser,
+        #     DocxParser,
+        #     ExcelParser,
+        #     SmartParser,
+        # )
 
-        self.register_component("parsers", "pdf", PdfParser)
-        self.register_component("parsers", "docx", DocxParser)
-        self.register_component("parsers", "excel", ExcelParser)
-        self.register_component("parsers", "smart", SmartParser)
+        # self.register_component("parsers", "pdf", PdfParser)
+        # self.register_component("parsers", "docx", DocxParser)
+        # self.register_component("parsers", "excel", ExcelParser)
+        # self.register_component("parsers", "smart", SmartParser)
 
         # 可选引擎（仅在 .env.ragix 配置时注册）
         if self._is_enabled("RAGIX_ENABLE_MINERU"):
-            from ..implementations.parsers.engines.mineru import MinerUParser
+            from ..implementations.parsers.engines.mineru_router import MinerUParser
             self.register_component("parsers", "mineru", MinerUParser)
         if self._is_enabled("RAGIX_ENABLE_MINERU_API"):
             from ..implementations.parsers.engines.mineru_api import MinerUAPIParser
@@ -73,12 +73,6 @@ class ComponentRegistry:
                 MinerUCloudAPIParser,
             )
             self.register_component("parsers", "mineru_cloud_api", MinerUCloudAPIParser)
-        if self._is_enabled("RAGIX_ENABLE_PADDLEX"):
-            from ..implementations.parsers.engines.paddlex import PaddleXParser
-            self.register_component("parsers", "paddlex", PaddleXParser)
-        if self._is_enabled("RAGIX_ENABLE_RAPID_OCR"):
-            from ..implementations.parsers.engines.rapid_ocr import RapidOCRParser
-            self.register_component("parsers", "rapid_ocr", RapidOCRParser)
         if self._is_enabled("RAGIX_ENABLE_DEEPSEEK_OCR"):
             from ..implementations.parsers.engines.deepseek_ocr import DeepSeekOCRParser
             self.register_component("parsers", "deepseek_ocr", DeepSeekOCRParser)

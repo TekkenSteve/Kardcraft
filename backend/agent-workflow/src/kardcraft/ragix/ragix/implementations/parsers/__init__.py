@@ -6,17 +6,11 @@
 """
 
 from .base import BaseFileParser
-from .pdf import PdfParser
-from .docx import DocxParser
-from .excel import ExcelParser
-from .smart import SmartParser
 from .engines.docling import DoclingParser
+from .engines.mineru_router import MinerUParser
 
 __all__ = [
     "BaseFileParser",
-    "PdfParser",
-    "DocxParser",
-    "ExcelParser",
-    "SmartParser",
     "DoclingParser",
+    "MinerUParser",
 ]

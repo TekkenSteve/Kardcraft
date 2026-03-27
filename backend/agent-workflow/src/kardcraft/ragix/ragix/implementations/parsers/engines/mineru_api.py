@@ -1,27 +1,25 @@
-# implementations/parsers/mineru_api.py - MinerU HTTP API 解析器
-"""
-MinerU HTTP API 解析器
+"""Minimal MinerU HTTP API parser.
 
-基于 Yuxi-Know 的 mineru_parser.py 实现
-使用 MinerU HTTP API 进行文档解析
+Goal: keep the flow obvious.
+1) upload file to MinerU API
+2) read markdown/content_list from response
+3) return ParseResult
 """
 
+import io
+import json
 import os
-import tempfile
-import time
+import zipfile
 from pathlib import Path
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Tuple
 
 import requests
 
 from ..base import BaseFileParser
 from ....protocols.parsers import ParseResult
-from kardcraft.utils.logger import logger
 
 
 class MinerUAPIParser(BaseFileParser):
-    """MinerU HTTP API 解析器"""
-
     def __init__(self, config):
         super().__init__(config)
         self._supported_extensions = [
@@ -31,25 +29,23 @@ class MinerUAPIParser(BaseFileParser):
             ".png",
             ".bmp",
             ".tiff",
-            ".tif",
+            ".webp",
+            ".gif",
+            ".jp2"
         ]
 
-        # 从配置或环境变量获取 API 地址
-        self.server_url = config.params.get("server_url") or os.getenv(
-            "MINERU_API_URI", "http://localhost:30001"
-        )
-        self.parse_endpoint = f"{self.server_url}/file_parse"
-
-        # 处理参数
-        self.lang_list = config.params.get("lang_list", ["ch"])
-        self.backend = config.params.get("backend", "vlm-http-client")
-        self.parse_method = config.params.get("parse_method", "auto")
+        params = config.params or {}
+        self.server_url = str(params.get("server_url") or os.getenv("MINERU_API_URI") or "http://localhost:8000").rstrip("/")
+        self.endpoint = f"{self.server_url}/file_parse"
+        self.timeout = int(params.get("timeout") or os.getenv("MINERU_TIMEOUT", "1800"))
+        self.parse_method = params.get("parse_method", "auto")
+        self.lang_list = params.get("lang_list", ["ch"])
+        self.backend = params.get("backend", "pipeline")
 
     def get_supported_extensions(self) -> List[str]:
         return self._supported_extensions
 
     async def parse(self, file_path: str) -> ParseResult:
-        """使用 MinerU HTTP API 解析文件"""
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
 
@@ -57,141 +53,92 @@ class MinerUAPIParser(BaseFileParser):
         if not self._supports_file_type(file_ext):
             raise ValueError(f"Unsupported file type: {file_ext}")
 
-        try:
-            # 构建请求数据
-            data = {
-                "lang_list": self.lang_list,
-                "backend": self.backend,
+        response = self._request_parse(file_path)
+        content_list, markdown = self._decode_response(response)
+
+        metadata = self._get_file_metadata(file_path)
+        metadata.update(
+            {
+                "parser": "mineru_api",
+                "server_url": self.server_url,
                 "parse_method": self.parse_method,
-                "return_md": True,
-                "response_format_zip": True,
-                "return_images": True,
+                "content_items": len(content_list),
             }
+        )
 
-            # vlm-http-client 后端需要 server_url
-            if self.backend == "vlm-http-client":
-                mineru_vl_server = os.environ.get("MINERU_VL_SERVER")
-                if mineru_vl_server:
-                    data["server_url"] = mineru_vl_server
+        return ParseResult(
+            doc_id=self._generate_doc_id(file_path, markdown),
+            content=markdown,
+            metadata=metadata,
+            multimodal_items=self._extract_multimodal_items(content_list),
+            content_list=content_list,
+            entities=[],
+            relations=[],
+            document_structure=self._build_document_structure(markdown, metadata),
+        )
 
-            logger.info(f"MinerU API starting: {file_path}")
+    def _request_parse(self, file_path: str) -> requests.Response:
+        data = {
+            "parse_method": self.parse_method,
+            "lang_list": self.lang_list,
+            "backend": self.backend,
+            "return_md": True,
+            "response_format_zip": True,
+            "return_images": True,
+        }
 
-            # 发送请求
-            with open(file_path, "rb") as f:
-                files = {"files": (Path(file_path).name, f, "application/octet-stream")}
+        with open(file_path, "rb") as f:
+            response = requests.post(
+                self.endpoint,
+                files={"files": (Path(file_path).name, f, "application/octet-stream")},
+                data=data,
+                timeout=self.timeout,
+            )
 
-                response = requests.post(
-                    self.parse_endpoint,
-                    files=files,
-                    data=data,
-                    timeout=int(os.environ.get("MINERU_TIMEOUT", 1800)),
-                )
+        if response.status_code != 200:
+            raise RuntimeError(f"MinerU API error ({response.status_code}): {response.text}")
+        return response
 
-            if response.status_code != 200:
-                try:
-                    error_data = response.json()
-                    error_detail = error_data.get("detail", str(error_data))
-                except Exception:
-                    error_detail = response.text or f"HTTP {response.status_code}"
-                raise RuntimeError(f"MinerU API error: {error_detail}")
-
-            # 处理响应（ZIP 格式）
-            zip_data = response.content
-
-            # 保存到临时文件并处理
-            with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp_zip:
-                tmp_zip.write(zip_data)
-                tmp_zip.flush()
-                tmp_zip_path = tmp_zip.name
-
-            try:
-                # 解析 ZIP 文件内容
-                content, markdown_content = self._process_zip_file(tmp_zip_path)
-
-                # 提取多模态元素
-                multimodal_items = self._extract_multimodal_items(content)
-
-                # 元数据
-                metadata = self._get_file_metadata(file_path)
-                metadata.update(
-                    {
-                        "parser": "mineru_api",
-                        "server_url": self.server_url,
-                        "backend": self.backend,
-                        "content_items": len(content),
-                    }
-                )
-
-                doc_id = self._generate_doc_id(file_path, markdown_content)
-
-                document_structure = self._build_document_structure_from_content(
-                    content, metadata
-                )
-
-                return ParseResult(
-                    doc_id=doc_id,
-                    content=markdown_content,
-                    metadata=metadata,
-                    multimodal_items=multimodal_items,
-                    entities=[],
-                    relations=[],
-                    document_structure=document_structure,
-                )
-
-            finally:
-                if os.path.exists(tmp_zip_path):
-                    os.unlink(tmp_zip_path)
-
-        except Exception as e:
-            logger.error(f"MinerU API parsing failed: {e}")
-            raise
-
-    def _process_zip_file(self, zip_path: str) -> tuple[List[Dict], str]:
-        """处理 ZIP 文件，提取内容"""
-        import zipfile
-        import json
-
-        content_list = []
-        markdown_content = ""
-
+    def _decode_response(self, response: requests.Response) -> Tuple[List[Dict[str, Any]], str]:
+        # Main path: zip payload with *_content_list.json + *.md
         try:
-            with zipfile.ZipFile(zip_path, "r") as zf:
-                # 查找 JSON 文件
-                json_files = [
-                    f for f in zf.namelist() if f.endswith("_content_list.json")
-                ]
+            return self._decode_zip(response.content)
+        except zipfile.BadZipFile:
+            pass
 
-                for json_file in json_files:
-                    try:
-                        with zf.open(json_file) as f:
-                            content_list = json.load(f)
-                    except Exception as e:
-                        logger.warning(f"Failed to read {json_file}: {e}")
+        # Fallback: JSON payload
+        try:
+            payload = response.json()
+            content_list = payload.get("content_list") or payload.get("items") or []
+            markdown = str(payload.get("markdown") or payload.get("md") or payload.get("content") or "")
+            return (content_list if isinstance(content_list, list) else []), markdown
+        except Exception:
+            return [], response.text or ""
 
-                # 查找 Markdown 文件
-                md_files = [f for f in zf.namelist() if f.endswith(".md")]
+    def _decode_zip(self, zip_bytes: bytes) -> Tuple[List[Dict[str, Any]], str]:
+        content_list: List[Dict[str, Any]] = []
+        markdown = ""
 
-                for md_file in md_files:
-                    try:
-                        with zf.open(md_file) as f:
-                            markdown_content = f.read().decode("utf-8")
-                    except Exception as e:
-                        logger.warning(f"Failed to read {md_file}: {e}")
+        with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+            for name in zf.namelist():
+                if name.endswith("_content_list.json"):
+                    with zf.open(name) as f:
+                        loaded = json.loads(f.read().decode("utf-8", errors="ignore"))
+                        if isinstance(loaded, list):
+                            content_list = loaded
+                elif name.endswith(".md") and not markdown:
+                    with zf.open(name) as f:
+                        markdown = f.read().decode("utf-8", errors="ignore")
 
-        except Exception as e:
-            logger.error(f"Failed to process ZIP file: {e}")
+        return content_list, markdown
 
-        return content_list, markdown_content
-
-    def _extract_multimodal_items(self, content_list: List[Dict]) -> List[Dict]:
-        """从内容列表中提取多模态元素"""
-        multimodal_items = []
-
+    @staticmethod
+    def _extract_multimodal_items(content_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        items: List[Dict[str, Any]] = []
         for idx, item in enumerate(content_list):
-            item_type = item.get("type", "")
-
+            item_type = item.get("type")
             if item_type == "image":
-                multimodal_items.append(
+                items.append(
                     {
                         "type": "image",
                         "content": item.get("img_path", ""),
@@ -202,9 +149,8 @@ class MinerUAPIParser(BaseFileParser):
                         "metadata": item,
                     }
                 )
-
             elif item_type == "table":
-                multimodal_items.append(
+                items.append(
                     {
                         "type": "table",
                         "content": item.get("table_body", ""),
@@ -215,9 +161,8 @@ class MinerUAPIParser(BaseFileParser):
                         "metadata": item,
                     }
                 )
-
             elif item_type == "equation":
-                multimodal_items.append(
+                items.append(
                     {
                         "type": "equation",
                         "content": item.get("latex", ""),
@@ -227,64 +172,4 @@ class MinerUAPIParser(BaseFileParser):
                         "metadata": item,
                     }
                 )
-
-        return multimodal_items
-
-    def _build_document_structure_from_content(
-        self, content_list: List[Dict], metadata: Dict
-    ):
-        """从内容列表构建文档结构"""
-        from ...protocols.context_extractors import DocumentStructure
-
-        elements = []
-
-        for idx, item in enumerate(content_list):
-            item_type = item.get("type", "text")
-
-            element = {
-                "id": f"element_{idx}",
-                "type": item_type,
-                "page_idx": item.get("page_idx", 0),
-                "index": idx,
-                "content": item.get("text", ""),
-            }
-
-            elements.append(element)
-
-        element_index_map = {elem["id"]: idx for idx, elem in enumerate(elements)}
-
-        return DocumentStructure(
-            elements=elements, metadata=metadata, element_index_map=element_index_map
-        )
-
-    def check_health(self) -> dict:
-        """检查 MinerU 服务健康状态"""
-        try:
-            health_url = f"{self.server_url}/openapi.json"
-            response = requests.get(health_url, timeout=5)
-
-            if response.status_code == 200:
-                return {
-                    "status": "healthy",
-                    "message": "MinerU 服务运行正常",
-                    "details": {"server_url": self.server_url},
-                }
-            else:
-                return {
-                    "status": "unhealthy",
-                    "message": f"MinerU 服务响应异常: {response.status_code}",
-                    "details": {"server_url": self.server_url},
-                }
-
-        except requests.exceptions.ConnectionError:
-            return {
-                "status": "unavailable",
-                "message": "MinerU 服务无法连接",
-                "details": {"server_url": self.server_url},
-            }
-        except Exception as e:
-            return {
-                "status": "error",
-                "message": f"MinerU 健康检查失败: {str(e)}",
-                "details": {"server_url": self.server_url},
-            }
+        return items

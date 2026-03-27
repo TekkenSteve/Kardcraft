@@ -33,7 +33,7 @@ class BaseFileParser(BaseComponent):
         return True
 
     async def parse(self, file_path: str) -> ParseResult:
-        """解析文件 - 子类必须实现"""
+        """Parse file - subclass must implement"""
         raise NotImplementedError("Subclasses must implement parse()")
 
     def get_supported_extensions(self) -> List[str]:

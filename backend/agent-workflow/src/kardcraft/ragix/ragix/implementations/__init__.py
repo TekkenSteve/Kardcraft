@@ -20,10 +20,6 @@ __all__ = [
     "GenericModalProcessor",
     
     # 解析器实现
-    "PdfParser",
-    "DocxParser",
-    "ExcelParser",
-    "SmartParser",
     "MinerUParser",
     "DoclingParser",
     

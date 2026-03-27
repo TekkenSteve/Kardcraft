@@ -14,7 +14,8 @@ from typing import List, Dict, Any, Optional
 from ...protocols.parsers import ParserConfig, ParseResult
 from ...utils.cache import Cache
 from ...utils.cache_config import get_cache_ttl
-from ...implementations.parsers.smart import SmartParser
+from ...implementations.parsers.base import BaseFileParser
+from .parser_router import ParserRouter
 from kardcraft.utils.logger import logger
 
 
@@ -26,24 +27,21 @@ class PreprocessConfig:
 
 
 class DocumentPipeline:
-    """Preprocess documents using existing parsers (SmartParser)."""
+    """Preprocess documents using parser router + concrete parser."""
 
     def __init__(self, config: PreprocessConfig):
         self.config = config
-        self._parser = SmartParser(ParserConfig(name="document_pipeline"))
+        self._router = ParserRouter()
         self._initialized = False
 
     async def initialize(self) -> None:
         if self._initialized:
             return
-        await self._parser.initialize()
         self._initialized = True
 
     async def preprocess(
         self,
         file_path: str,
-        parser_override: Optional[str] = None,
-        parse_method_override: Optional[str] = None,
         parser_params: Optional[Dict[str, Any]] = None,
     ) -> List[Dict[str, Any]]:
         """Return a list of text payloads for insertion."""
@@ -53,27 +51,19 @@ class DocumentPipeline:
         if not os.path.exists(file_path):
             raise FileNotFoundError(file_path)
 
-        if (
-            parser_override is None
-            and self._parser.choose_parser_strategy(file_path) == "lightrag_native"
-        ):
-            logger.info("Use LightRAG native parsing for simple format")
+        selection = self._router.select_parser(file_path)
+        parser_cls = selection.parser_cls
+        if parser_cls is None:
+            logger.info("Unable to obtain parser, pre-parsing failed")
             return []
 
-        if parser_override:
-            parser = SmartParser(
-                ParserConfig(
-                    name=f"document_pipeline_{parser_override}",
-                    params={
-                        "parser_override": parser_override,
-                        "parse_method_override": parse_method_override,
-                        "parser_params": parser_params or {},
-                    },
-                )
+        parser = parser_cls(
+            ParserConfig(
+                name=f"document_pipeline_{parser_cls.__name__.lower()}",
+                params=dict(parser_params or {}),
             )
-            await parser.initialize()
-        else:
-            parser = self._parser
+        )
+        await parser.initialize()
         cache_key = self._build_cache_key(file_path, parser)
         cached = None
         try:

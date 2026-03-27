@@ -2,13 +2,10 @@
 """
 Docling 文档解析器
 
-基于 RAGAnything 的 Docling Parser 实现
-支持 PDF、Office 文档和 HTML 文件的解析
 """
 
 import os
 import json
-import subprocess
 import base64
 import tempfile
 from pathlib import Path
@@ -17,6 +14,7 @@ from typing import List, Dict, Any, Optional, Union, Tuple
 from ..base import BaseFileParser
 from ....protocols.parsers import ParseResult
 from kardcraft.utils.logger import logger
+from docling.document_converter import DocumentConverter
 
 
 class DoclingParser(BaseFileParser):
@@ -185,65 +183,33 @@ class DoclingParser(BaseFileParser):
             raise
 
     async def _run_docling(self, input_path: str) -> Tuple[List[Dict], str]:
-        """运行 Docling 命令"""
-        input_path = Path(input_path)
+        """Run Docling with Python API (no shell command)."""
+        converter = DocumentConverter()
+        result = converter.convert(input_path)
+        doc = result.document
+
+        # Keep conversion pipeline unchanged by adapting API output to the
+        # existing _convert_from_docling structure.
+        try:
+            docling_content = doc.export_to_dict()  # type: ignore[attr-defined]
+        except Exception:
+            docling_content = {}
+
+        try:
+            md_content = doc.export_to_markdown()  # type: ignore[attr-defined]
+        except Exception:
+            md_content = ""
 
         with tempfile.TemporaryDirectory() as output_dir:
-            output_path = Path(output_dir)
-
-            file_stem = input_path.stem
-            file_output_dir = output_path / file_stem / "docling"
-            file_output_dir.mkdir(parents=True, exist_ok=True)
-
-            cmd_json = [
-                "docling",
-                "--output",
-                str(file_output_dir),
-                "--to",
-                "json",
-                str(input_path),
-            ]
-
-            cmd_md = [
-                "docling",
-                "--output",
-                str(file_output_dir),
-                "--to",
-                "md",
-                str(input_path),
-            ]
-
-            logger.info(f"Running Docling: {' '.join(cmd_json)}")
-
-            try:
-                import platform
-
-                subprocess_kwargs = {
-                    "capture_output": True,
-                    "text": True,
-                    "check": True,
-                    "encoding": "utf-8",
-                    "errors": "ignore",
-                }
-
-                if platform.system() == "Windows":
-                    subprocess_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-
-                subprocess.run(cmd_json, **subprocess_kwargs)
-                subprocess.run(cmd_md, **subprocess_kwargs)
-
-            except subprocess.CalledProcessError as e:
-                logger.error(f"Error running docling: {e}")
-                raise
-            except FileNotFoundError:
-                raise RuntimeError(
-                    "docling command not found. Please ensure Docling is properly installed."
-                )
-
-            content_list, md_content = self._read_output_files(
-                file_output_dir, file_stem
+            file_output_dir = Path(output_dir)
+            content_list = self._convert_from_docling(
+                docling_content.get("body", []),
+                "body",
+                file_output_dir,
+                0,
+                "0",
+                docling_content,
             )
-
             return content_list, md_content
 
     def _read_output_files(
@@ -574,11 +540,11 @@ class DoclingParser(BaseFileParser):
 
     @classmethod
     def check_installation(cls) -> bool:
-        """检查 Docling 是否正确安装"""
+        """Check whether Docling Python package is importable."""
         try:
-            result = subprocess.run(
-                ["docling", "--version"], capture_output=True, text=True, timeout=10
-            )
-            return result.returncode == 0
+            from docling.document_converter import DocumentConverter
+
+            _ = DocumentConverter
+            return True
         except Exception:
             return False

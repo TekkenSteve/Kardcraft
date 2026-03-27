@@ -58,8 +58,6 @@ class RagixClient:
         file_id: str,
         user_id: str,
         session_id: Optional[str] = None,
-        parser_override: Optional[str] = None,
-        parse_method_override: Optional[str] = None,
         parser_params: Optional[Dict[str, Any]] = None,
     ) -> str:
         """从 file-storage 拉取文件并上传索引（返回 track_id）"""
@@ -81,8 +79,6 @@ class RagixClient:
             filename,
             content_bytes,
             session_id=session_id,
-            parser_override=parser_override,
-            parse_method_override=parse_method_override,
             parser_params=parser_params,
         )
 
@@ -90,8 +86,6 @@ class RagixClient:
         self,
         file_path: str,
         session_id: Optional[str] = None,
-        parser_override: Optional[str] = None,
-        parse_method_override: Optional[str] = None,
         parser_params: Optional[Dict[str, Any]] = None,
     ) -> str:
         """上传本地文件并索引（返回 track_id）"""
@@ -107,8 +101,6 @@ class RagixClient:
             filename,
             content_bytes,
             session_id=session_id,
-            parser_override=parser_override,
-            parse_method_override=parse_method_override,
             parser_params=parser_params,
         )
 
@@ -117,8 +109,6 @@ class RagixClient:
         file_ids: List[str],
         user_id: str,
         session_id: Optional[str] = None,
-        parser_override: Optional[str] = None,
-        parse_method_override: Optional[str] = None,
         parser_params: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """批量上传并索引（返回 track_id 列表）"""
@@ -132,8 +122,6 @@ class RagixClient:
                     file_id,
                     user_id,
                     session_id=session_id,
-                    parser_override=parser_override,
-                    parse_method_override=parse_method_override,
                     parser_params=parser_params,
                 )
             )
@@ -162,7 +150,7 @@ class RagixClient:
         mode: str = "mix",
         modes: Optional[List[str]] = None,
     ) -> Answer:
-        """查询 LightRAG（workspace 通过 session_id 隔离）"""
+        """Query LightRAG (workspace isolated by session_id)"""
         if not self._initialized:
             await self.initialize()
 
@@ -225,8 +213,6 @@ class RagixClient:
         filename: str,
         content_bytes: bytes,
         session_id: Optional[str],
-        parser_override: Optional[str] = None,
-        parse_method_override: Optional[str] = None,
         parser_params: Optional[Dict[str, Any]] = None,
     ) -> str:
         """预处理后插入文本，失败则回退上传原文件"""
@@ -238,8 +224,6 @@ class RagixClient:
         try:
             payloads = await self._preprocess.preprocess(
                 tmp_path,
-                parser_override=parser_override,
-                parse_method_override=parse_method_override,
                 parser_params=parser_params,
             )
             if payloads:
