@@ -114,12 +114,6 @@ backend/rust-services/target/
 **/*.rs.bk
 Cargo.lock
 
-# Protobuf generated code
-backend/shared/protobuf/
-backend/agent-workflow/src/kardcraft/*_pb2*.py
-!backend/agent-workflow/src/kardcraft/file_storage_pb2.py
-!backend/agent-workflow/src/kardcraft/file_storage_pb2_grpc.py
-
 # Docker
 docker-compose.override.yml
 
