@@ -14,6 +14,7 @@ export function ConversationPanel() {
         isPaused,
         isPauseLoading,
         isResumeLoading,
+        canControlTask,
         isCancelling,
         isNewSession,
         sessionId,
@@ -40,14 +41,14 @@ export function ConversationPanel() {
                 <div className="border-t bg-background p-4 shrink-0">
                     <ChatInput
                         sessionId={isNewSession ? undefined : resolvedSessionId ?? undefined}
-                        disabled={runStatus === "running"}
-                        isTaskComplete={runStatus !== "running"}
+                        disabled={runStatus === "running" && canControlTask}
+                        isTaskComplete={runStatus !== "running" || !canControlTask}
                         selectedAgent={selectedAgent}
                         onSelectedAgentChange={(agent) => setSelectedAgentValue(agent)}
                         initialResearchStrategy={researchStrategy}
                         onTaskCreated={handleTaskCreated}
                         currentTaskId={currentTaskId}
-                        isTaskRunning={runStatus === "running"}
+                        isTaskRunning={runStatus === "running" && canControlTask}
                         isPaused={isPaused}
                         isPauseLoading={isPauseLoading}
                         isResumeLoading={isResumeLoading}
@@ -64,15 +65,15 @@ export function ConversationPanel() {
     return (
         <ChatInput
             sessionId={isNewSession ? undefined : resolvedSessionId ?? undefined}
-            disabled={runStatus === "running"}
-            isTaskComplete={runStatus !== "running"}
+            disabled={runStatus === "running" && canControlTask}
+            isTaskComplete={runStatus !== "running" || !canControlTask}
             selectedAgent={selectedAgent}
             onSelectedAgentChange={(agent) => setSelectedAgentValue(agent)}
             initialResearchStrategy={researchStrategy}
             onTaskCreated={handleTaskCreated}
             currentTaskId={currentTaskId}
             variant="centered"
-            isTaskRunning={runStatus === "running"}
+            isTaskRunning={runStatus === "running" && canControlTask}
             isPaused={isPaused}
             isPauseLoading={isPauseLoading}
             isResumeLoading={isResumeLoading}

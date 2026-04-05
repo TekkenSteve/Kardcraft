@@ -127,7 +127,7 @@ func TestSSEHandler_ReturnsAuthzDeniedBeforeSubscribe(t *testing.T) {
 	}
 }
 
-func TestSessionControl_RequiresIdempotencyKey(t *testing.T) {
+func TestSessionControlRoutesRemoved(t *testing.T) {
 	s := newAuthzRouteServer()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/sessions/s1/pause", strings.NewReader(`{}`))
 	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
@@ -135,12 +135,8 @@ func TestSessionControl_RequiresIdempotencyKey(t *testing.T) {
 
 	s.Handler().ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rr.Code)
-	}
-	payload := decodeAPIErrorBody(t, rr.Body.String())
-	if payload.Error.Code != errCodeIdempotencyKeyRequired {
-		t.Fatalf("expected %s, got %s", errCodeIdempotencyKeyRequired, payload.Error.Code)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
 	}
 }
 

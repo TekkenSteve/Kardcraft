@@ -1,20 +1,20 @@
 "use client";
 
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Button } from "@/components/ui/button";
-import { cn, openExternalUrl } from "@/lib/utils";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
-import rehypeHighlight from "rehype-highlight";
-import "highlight.js/styles/github-dark.css";
-import { ExternalLink, Copy, Check, Sparkles, Microscope, AlertCircle, XCircle, Brain, Users, Zap, CheckCircle, Loader2, Search, Play, Pause, CircleSlash, Clock, Link, MessageSquare, FolderSync, Info, ShieldAlert, RefreshCw } from "lucide-react";
-import React, { type ReactNode, useMemo, useState, type ComponentPropsWithoutRef } from "react";
-import { useTranslation } from "react-i18next";
 import { RunMessage } from "@/lib/features/runSlice";
-import { useSelector } from "react-redux";
 import { RootState } from "@/lib/store";
+import { cn, openExternalUrl } from "@/lib/utils";
+import "highlight.js/styles/github-dark.css";
+import { AlertCircle, Brain, Check, CheckCircle, CircleSlash, Clock, Copy, ExternalLink, File, FileAudio, FileText, FileVideo, FolderSync, Image as ImageIcon, Link, Loader2, MessageSquare, Microscope, Paperclip, Pause, Play, RefreshCw, Search, ShieldAlert, Sparkles, Users, XCircle, Zap } from "lucide-react";
+import React, { useMemo, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
+import { useTranslation } from "react-i18next";
+import ReactMarkdown from "react-markdown";
+import { useSelector } from "react-redux";
+import rehypeHighlight from "rehype-highlight";
+import remarkGfm from "remark-gfm";
 
 export interface Citation {
     url: string;
@@ -93,6 +93,58 @@ type Message = RunMessage & {
         citations?: Citation[];
     };
     toolData?: unknown;
+};
+
+type MessageAttachment = {
+    fileId: string;
+    filename: string;
+    size: number;
+    mimeType: string;
+};
+
+const normalizeAttachment = (value: unknown): MessageAttachment | null => {
+    if (!value || typeof value !== "object") return null;
+    const raw = value as Record<string, unknown>;
+    const fileId = String(raw.fileId ?? "").trim();
+    const filename = String(raw.filename ?? "").trim();
+    if (!fileId || !filename) return null;
+
+    const sizeRaw = raw.size;
+    const size = typeof sizeRaw === "number" && Number.isFinite(sizeRaw) ? sizeRaw : 0;
+    const mimeTypeRaw = raw.mimeType;
+    const mimeType = typeof mimeTypeRaw === "string" ? mimeTypeRaw : "application/octet-stream";
+
+    return {
+        fileId,
+        filename,
+        size,
+        mimeType,
+    };
+};
+
+const extractMessageAttachments = (message: Message): MessageAttachment[] => {
+    const candidates: unknown[] = [];
+    if (Array.isArray(message.attachments)) {
+        candidates.push(...message.attachments);
+    }
+
+    const metadata = message.metadata as Record<string, unknown> | undefined;
+    if (metadata) {
+        if (Array.isArray(metadata.attachments)) candidates.push(...metadata.attachments);
+        if (Array.isArray(metadata.files)) candidates.push(...metadata.files);
+    }
+
+    const normalized = candidates
+        .map((item) => normalizeAttachment(item))
+        .filter((item): item is MessageAttachment => item !== null);
+
+    const seen = new Set<string>();
+    return normalized.filter((item) => {
+        const key = `${item.fileId}:${item.filename}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
 };
 
 // Status message icon mapping based on event type
@@ -203,6 +255,33 @@ function CitationLink({ index, citation }: { index: number; citation: Citation }
                 </TooltipContent>
             </Tooltip>
         </TooltipProvider>
+    );
+}
+
+// Component to render file attachments
+function FileAttachment({ file }: { file: { fileId: string; filename: string; size: number; mimeType: string } }) {
+    const formatFileSize = (bytes: number): string => {
+        if (bytes < 1024) return `${bytes} B`;
+        if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+        return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+    };
+
+    const getFileIcon = (mimeType: string) => {
+        if (mimeType.startsWith('image/')) return <ImageIcon className="h-4 w-4" />;
+        if (mimeType.startsWith('video/')) return <FileVideo className="h-4 w-4" />;
+        if (mimeType.startsWith('audio/')) return <FileAudio className="h-4 w-4" />;
+        if (mimeType.includes('pdf') || mimeType.includes('document')) return <FileText className="h-4 w-4" />;
+        return <File className="h-4 w-4" />;
+    };
+
+    return (
+        <div className="inline-flex items-center gap-2 px-2 py-1.5 rounded-md bg-muted/50 border border-border/50 text-xs">
+            {getFileIcon(file.mimeType)}
+            <div className="flex flex-col">
+                <span className="font-medium truncate max-w-[200px]">{file.filename}</span>
+                <span className="text-muted-foreground text-[10px]">{formatFileSize(file.size)}</span>
+            </div>
+        </div>
     );
 }
 
@@ -483,6 +562,7 @@ export function RunConversation({ messages, agentType = "normal" }: RunConversat
         <div className="space-y-2 p-3 sm:p-4 overflow-hidden">
             {displayedMessages.map((message) => {
                 const messageLabel = message.role === "user" ? userLabel : (message.sender || message.role);
+                const attachments = extractMessageAttachments(message);
                 // Render status messages inline (human-readable progress updates)
                 if (message.role === "status") {
                     return (
@@ -527,15 +607,37 @@ export function RunConversation({ messages, agentType = "normal" }: RunConversat
                             "flex max-w-[85%] sm:max-w-[80%] flex-col gap-1 min-w-0",
                             message.role === "user" ? "items-end" : "items-start"
                         )}>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                                 <span className="text-xs font-medium text-muted-foreground">
                                     {messageLabel}
                                 </span>
                                 <span className="text-xs text-muted-foreground">
                                     {message.timestamp}
                                 </span>
+                                {message.role === "user" && attachments.length > 0 && (
+                                    <div className="flex items-center gap-1.5 max-w-full">
+                                        {attachments.map((file) => (
+                                            <span
+                                                key={`meta-${file.fileId}`}
+                                                className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground max-w-[180px]"
+                                                title={file.filename}
+                                            >
+                                                <Paperclip className="h-3 w-3 shrink-0" />
+                                                <span className="truncate">{file.filename}</span>
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                             <div className="space-y-2 min-w-0 w-full">
+                                {/* Display file attachments if present */}
+                                {message.role !== "user" && attachments.length > 0 && (
+                                    <div className="flex flex-wrap gap-2 mb-2">
+                                        {attachments.map((file) => (
+                                            <FileAttachment key={file.fileId} file={file} />
+                                        ))}
+                                    </div>
+                                )}
                                 <Card className={cn(
                                     "px-2 sm:px-3 py-1 text-sm prose prose-sm max-w-none prose-p:my-0.5 prose-p:leading-relaxed prose-ul:my-0.5 prose-ol:my-0.5 prose-li:my-0 prose-headings:mt-2 prose-headings:mb-0.5 prose-headings:leading-tight break-words overflow-wrap-anywhere overflow-hidden prose-pre:whitespace-pre-wrap prose-pre:break-all",
                                     message.role === "user" ? "bg-primary text-primary-foreground [&_a]:text-primary-foreground [&_a]:underline [&_a]:decoration-primary-foreground/50 [&_a:hover]:text-primary-foreground/80 [&_a:hover]:decoration-primary-foreground" :

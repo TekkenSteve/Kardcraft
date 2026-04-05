@@ -1,21 +1,20 @@
 "use client";
 
-import { useSearchParams, useRouter } from "next/navigation";
+import { CardData, resetRun, RunMessage, setResearchStrategy, setSelectedAgent } from "@/lib/features/runSlice";
+import { useRunStream } from "@/lib/kardcraft/stream";
+import { RunEvent } from "@/lib/kardcraft/types";
+import { RootState } from "@/lib/store";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useDispatch, useSelector } from "react-redux";
-import { RootState } from "@/lib/store";
-import { RunMessage, CardData } from "@/lib/features/runSlice";
-import { RunEvent } from "@/lib/kardcraft/types";
-import { useRunStream } from "@/lib/kardcraft/stream";
-import { resetRun, setSelectedAgent, setResearchStrategy } from "@/lib/features/runSlice";
+import { SessionDataBundle, SessionHistoryData } from "../run-detail-types";
+import { useScrollSync } from "./use-scroll-sync";
 import { useSessionData } from "./use-session-data";
 import { useSessionLoader } from "./use-session-loader";
-import { useStreaming } from "./use-streaming";
-import { useTimeline, TimelineDisplayEvent } from "./use-timeline";
-import { useScrollSync } from "./use-scroll-sync";
-import { useTaskControls } from "./use-task-controls";
 import { useSessionTransition } from "./use-session-transition";
-import { SessionDataBundle, SessionHistoryData } from "../run-detail-types";
+import { useStreaming } from "./use-streaming";
+import { useTaskControls } from "./use-task-controls";
+import { TimelineDisplayEvent, useTimeline } from "./use-timeline";
 
 export interface RunDetailState {
     sessionId: string | null;
@@ -38,6 +37,7 @@ export interface RunDetailState {
     pauseCheckpoint: string | null;
     isPauseLoading: boolean;
     isResumeLoading: boolean;
+    canControlTask: boolean;
     isCancelling: boolean;
     isCancelled: boolean;
     cards: CardData[];
@@ -59,7 +59,7 @@ export interface RunDetailState {
     timelineScrollRef: React.RefObject<HTMLDivElement>;
     handleRetryStream: () => void;
     handleFetchFinalOutputClick: () => void;
-    handleTaskCreated: (newTaskId: string, query: string, workflowId?: string, newSessionId?: string) => void;
+    handleTaskCreated: (newTaskId: string, query: string, workflowId?: string, newSessionId?: string, attachments?: Array<{fileId: string; filename: string; size: number; mimeType: string}>) => void;
     handlePause: () => void;
     handleResume: () => void;
     handleCancel: () => void;
@@ -288,11 +288,12 @@ export function useRunDetailState(): RunDetailState {
     const {
         isPauseLoading,
         isResumeLoading,
+        canControlTask,
         handlePause,
         handleResume,
         handleCancel,
     } = useTaskControls({
-        currentSessionId: resolvedSessionId,
+        currentTaskId: activeWorkflowId,
         runStatus,
         isPaused,
         isCancelling,
@@ -333,6 +334,7 @@ export function useRunDetailState(): RunDetailState {
         pauseCheckpoint,
         isPauseLoading,
         isResumeLoading,
+        canControlTask,
         isCancelling,
         isCancelled,
         cards,

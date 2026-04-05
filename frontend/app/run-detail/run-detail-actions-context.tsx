@@ -5,7 +5,7 @@ import { createContext, useContext } from "react";
 export interface RunDetailActionsContextValue {
     handleRetryStream: () => void;
     handleFetchFinalOutputClick: () => void;
-    handleTaskCreated: (newTaskId: string, query: string, workflowId?: string, newSessionId?: string) => void;
+    handleTaskCreated: (newTaskId: string, query: string, workflowId?: string, newSessionId?: string, attachments?: Array<{fileId: string; filename: string; size: number; mimeType: string}>) => void;
     handlePause: () => void;
     handleResume: () => void;
     handleCancel: () => void;

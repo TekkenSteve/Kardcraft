@@ -28,6 +28,7 @@ export interface RunDetailDataContextValue {
     pauseCheckpoint: string | null;
     isPauseLoading: boolean;
     isResumeLoading: boolean;
+    canControlTask: boolean;
     isCancelling: boolean;
     isCancelled: boolean;
     cards: CardData[];

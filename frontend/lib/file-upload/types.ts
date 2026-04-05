@@ -73,6 +73,12 @@ export interface TaskWithFilesRequest {
   task_type?: string;
   session_id?: string;
   file_ids: string[];
+  attachments?: Array<{
+    file_id: string;
+    filename: string;
+    size: number;
+    mime_type: string;
+  }>;
   context?: Record<string, unknown>;
   research_strategy?: 'quick' | 'standard' | 'deep' | 'academic';
 }

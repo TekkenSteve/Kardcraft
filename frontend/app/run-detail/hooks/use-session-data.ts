@@ -41,9 +41,17 @@ export function useSessionData({
             dedupingInterval: 10_000,
             keepPreviousData: false,
             revalidateOnFocus: false,
-            // Workspace hydration is event-driven by stream/card updates.
-            // Avoid polling during running to prevent control-plane contention.
-            refreshInterval: 0,
+            // Keep workspace responsive while cards are being generated.
+            refreshInterval: (latestData) => {
+                if (!cardsSessionId) return 0;
+                if (runStatus === "running") return 1500;
+                if (runStatus === "completed") {
+                    const cards = Array.isArray(latestData?.cards) ? latestData.cards : [];
+                    const hydrated = latestData?.projection_status === "hydrated" || cards.length > 0;
+                    return hydrated ? 0 : 1500;
+                }
+                return 0;
+            },
         }
     );
 

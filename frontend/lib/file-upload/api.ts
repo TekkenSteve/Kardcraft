@@ -199,6 +199,7 @@ export class FileUploadAPI {
       input: {
         session_id: request.session_id,
         file_ids: request.file_ids,
+        attachments: request.attachments,
         context: request.context,
         research_strategy: request.research_strategy,
       },

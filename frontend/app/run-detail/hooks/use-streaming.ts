@@ -1,32 +1,32 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
-import { useDispatch } from "react-redux";
-import { useTranslation } from "react-i18next";
-import { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import {
+    addMessage,
+    RunMessage,
+    setCancelled,
+    setCancelling,
+    setMainWorkflowId,
+    setPaused,
+    setResearchStrategy,
+    setRunPhase,
+    setSelectedAgent,
+    setStatus,
+    setStreamError,
+    updateMessageMetadata,
+} from "@/lib/features/runSlice";
 import { getTask } from "@/lib/kardcraft/api";
 import {
     getSessionConversation,
-    getSessionTimeline,
     getSessionHistory,
+    getSessionTimeline,
 } from "@/lib/kardcraft/session-repository";
-import {
-    addMessage,
-    updateMessageMetadata,
-    setStreamError,
-    setSelectedAgent,
-    setResearchStrategy,
-    setMainWorkflowId,
-    setStatus,
-    setPaused,
-    setCancelling,
-    setCancelled,
-    setRunPhase,
-} from "@/lib/features/runSlice";
-import { extractResultContent } from "../run-detail-utils";
-import { SessionDataBundle, SessionHistoryData } from "../run-detail-types";
-import { RunMessage } from "@/lib/features/runSlice";
 import { RunEvent } from "@/lib/kardcraft/types";
+import { AppRouterInstance } from "next/dist/shared/lib/app-router-context.shared-runtime";
+import { useCallback, useEffect } from "react";
+import { useTranslation } from "react-i18next";
+import { useDispatch } from "react-redux";
+import { SessionDataBundle, SessionHistoryData } from "../run-detail-types";
+import { extractResultContent } from "../run-detail-utils";
 
 const isTaskScopedWorkflowId = (value: string | null | undefined): value is string => {
     if (!value) return false;
@@ -208,7 +208,7 @@ export function useStreaming({
         }
     }, [runStatus, sessionId, actualSessionId, startTransition, setSessionData, setSessionHistory]);
 
-    const handleTaskCreated = async (newTaskId: string, query: string, workflowId?: string, newSessionId?: string) => {
+    const handleTaskCreated = async (newTaskId: string, query: string, workflowId?: string, newSessionId?: string, attachments?: Array<{fileId: string; filename: string; size: number; mimeType: string}>) => {
         const activeWorkflowId = isTaskScopedWorkflowId(workflowId)
             ? workflowId
             : (isTaskScopedWorkflowId(newTaskId) ? newTaskId : null);
@@ -229,6 +229,7 @@ export function useStreaming({
             content: query,
             timestamp: new Date().toLocaleTimeString(),
             taskId: activeWorkflowId,
+            attachments: attachments,
         }));
 
         dispatch(addMessage({

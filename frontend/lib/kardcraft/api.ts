@@ -678,7 +678,7 @@ export interface SessionWorkspaceResponse {
 
 export interface SessionStateResponse {
     session_id: string;
-    status: "idle" | "running" | "completed" | "failed" | "paused" | "cancelled";
+    status: "idle" | "running" | "completed" | "failed" | "paused" | "cancelled" | "canceled";
     active_task_id?: string;
     task_state?: "IDLE" | "RUNNING" | "PAUSED" | "SUCCEEDED" | "FAILED" | "CANCELED";
     session_control_state?: "IDLE" | "ACTIVE_RUNNING" | "ACTIVE_PAUSED" | "TERMINATING";
@@ -694,15 +694,6 @@ export interface ApiErrorEnvelope {
     };
 }
 
-export interface SessionControlResponse {
-    session_id: string;
-    active_task_id?: string;
-    task_state: "RUNNING" | "PAUSED" | "SUCCEEDED" | "FAILED" | "CANCELED";
-    session_control_state: "IDLE" | "ACTIVE_RUNNING" | "ACTIVE_PAUSED" | "TERMINATING";
-    version: number;
-    result?: "applied" | "noop" | "accepted";
-}
-
 function nextIdempotencyKey(): string {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
         return crypto.randomUUID();
@@ -711,8 +702,9 @@ function nextIdempotencyKey(): string {
 }
 
 async function extractApiError(response: Response, fallbackPrefix: string): Promise<Error> {
+    const text = await response.text();
     try {
-        const payload = (await response.json()) as Partial<ApiErrorEnvelope>;
+        const payload = JSON.parse(text) as Partial<ApiErrorEnvelope>;
         const code = payload?.error?.code;
         const message = payload?.error?.message;
         if (code && message) {
@@ -721,8 +713,7 @@ async function extractApiError(response: Response, fallbackPrefix: string): Prom
     } catch {
         // fall through to text fallback
     }
-    const errorText = await response.text();
-    return new Error(`${fallbackPrefix}: ${response.statusText}${errorText ? ` - ${errorText}` : ""}`);
+    return new Error(`${fallbackPrefix}: ${response.statusText}${text ? ` - ${text}` : ""}`);
 }
 
 export async function getSessionConversation(sessionId: string): Promise<SessionConversationResponse> {
@@ -794,57 +785,6 @@ export async function getSessionState(sessionId: string): Promise<SessionStateRe
     return response.json();
 }
 
-export async function pauseSessionTask(sessionId: string, reason?: string): Promise<SessionControlResponse> {
-    const response = await fetch(apiUrl(`/api/v1/sessions/${sessionId}/pause`), {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "Idempotency-Key": nextIdempotencyKey(),
-        },
-        credentials: "include",
-        body: JSON.stringify(reason ? { reason } : {}),
-    });
-
-    if (!response.ok) {
-        throw await extractApiError(response, "Failed to pause session task");
-    }
-    return response.json();
-}
-
-export async function resumeSessionTask(sessionId: string, reason?: string): Promise<SessionControlResponse> {
-    const response = await fetch(apiUrl(`/api/v1/sessions/${sessionId}/resume`), {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "Idempotency-Key": nextIdempotencyKey(),
-        },
-        credentials: "include",
-        body: JSON.stringify(reason ? { reason } : {}),
-    });
-
-    if (!response.ok) {
-        throw await extractApiError(response, "Failed to resume session task");
-    }
-    return response.json();
-}
-
-export async function cancelSessionTask(sessionId: string, reason?: string): Promise<SessionControlResponse> {
-    const response = await fetch(apiUrl(`/api/v1/sessions/${sessionId}/cancel`), {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            "Idempotency-Key": nextIdempotencyKey(),
-        },
-        credentials: "include",
-        body: JSON.stringify(reason ? { reason } : {}),
-    });
-
-    if (!response.ok) {
-        throw await extractApiError(response, "Failed to cancel session task");
-    }
-    return response.json();
-}
-
 // Task Control Types
 
 export interface TaskControlResponse {
@@ -870,14 +810,14 @@ export async function pauseTask(taskId: string, reason?: string): Promise<TaskCo
         method: "POST",
         headers: {
             "Content-Type": "application/json",
+            "Idempotency-Key": nextIdempotencyKey(),
         },
         credentials: "include",
         body: JSON.stringify(reason ? { reason } : {}),
     });
 
     if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to pause task: ${response.statusText} - ${errorText}`);
+        throw await extractApiError(response, "Failed to pause task");
     }
 
     return response.json();
@@ -888,32 +828,32 @@ export async function resumeTask(taskId: string, reason?: string): Promise<TaskC
         method: "POST",
         headers: {
             "Content-Type": "application/json",
+            "Idempotency-Key": nextIdempotencyKey(),
         },
         credentials: "include",
         body: JSON.stringify(reason ? { reason } : {}),
     });
 
     if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to resume task: ${response.statusText} - ${errorText}`);
+        throw await extractApiError(response, "Failed to resume task");
     }
 
     return response.json();
 }
 
-export async function cancelTask(taskId: string, reason?: string): Promise<{ success: boolean }> {
+export async function cancelTask(taskId: string, reason?: string): Promise<TaskControlResponse> {
     const response = await fetch(apiUrl(`/api/v1/tasks/${taskId}/cancel`), {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
+            "Idempotency-Key": nextIdempotencyKey(),
         },
         credentials: "include",
         body: JSON.stringify(reason ? { reason } : {}),
     });
 
     if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to cancel task: ${response.statusText} - ${errorText}`);
+        throw await extractApiError(response, "Failed to cancel task");
     }
 
     return response.json();

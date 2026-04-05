@@ -4,21 +4,21 @@ import { useEffect, useState } from "react";
 import { useDispatch } from "react-redux";
 import { useTranslation } from "react-i18next";
 import {
-    cancelSessionTask,
-    getSessionState,
-    pauseSessionTask,
-    resumeSessionTask,
-    SessionStateResponse,
+    cancelTask,
+    getTask,
+    getTaskControlState,
+    pauseTask,
+    resumeTask,
 } from "@/lib/kardcraft/api";
-import { setPaused, setCancelled, setCancelling, setStreamError } from "@/lib/features/runSlice";
+import { setPaused, setCancelled, setCancelling, setStatus, setStreamError } from "@/lib/features/runSlice";
 
 export function useTaskControls({
-    currentSessionId,
+    currentTaskId,
     runStatus,
     isPaused,
     isCancelling,
 }: {
-    currentSessionId: string | null;
+    currentTaskId: string | null;
     runStatus: "idle" | "running" | "completed" | "failed";
     isPaused: boolean;
     isCancelling: boolean;
@@ -27,74 +27,125 @@ export function useTaskControls({
     const { t } = useTranslation();
     const [isPauseLoading, setIsPauseLoading] = useState(false);
     const [isResumeLoading, setIsResumeLoading] = useState(false);
+    const [isPauseSyncing, setIsPauseSyncing] = useState(false);
+    const [canControlTask, setCanControlTask] = useState(false);
 
-    const sessionPaused = (state: SessionStateResponse) =>
-        state.session_control_state === "ACTIVE_PAUSED" || state.task_state === "PAUSED" || state.status === "paused";
+    const taskPaused = (state: { is_paused: boolean }) => state.is_paused;
 
-    const sessionCancelled = (state: SessionStateResponse) =>
-        state.task_state === "CANCELED" || state.status === "cancelled";
+    const taskCancelled = (state: { is_cancelled: boolean }) => state.is_cancelled;
+    const isTerminalTaskStatus = (status: unknown) => {
+        const normalized = String(status || "").toUpperCase();
+        return normalized === "TASK_STATUS_COMPLETED" || normalized === "TASK_STATUS_FAILED" || normalized === "TASK_STATUS_CANCELLED";
+    };
+    const syncTaskTerminalStatus = async () => {
+        if (!currentTaskId) return;
+        const task = await getTask(currentTaskId);
+        if (!isTerminalTaskStatus(task?.status)) {
+            setCanControlTask(true);
+            return;
+        }
+        setCanControlTask(false);
+        if (String(task?.status).toUpperCase() === "TASK_STATUS_COMPLETED") {
+            dispatch(setStatus("completed"));
+            return;
+        }
+        if (String(task?.status).toUpperCase() === "TASK_STATUS_CANCELLED") {
+            dispatch(setCancelled({ value: true, message: t("runDetail.cancelledMessage") }));
+            return;
+        }
+        dispatch(setStatus("failed"));
+    };
 
     useEffect(() => {
-        if (currentSessionId && runStatus === "running") {
-            getSessionState(currentSessionId)
+        setCanControlTask(!!currentTaskId && runStatus === "running");
+    }, [currentTaskId, runStatus]);
+
+    useEffect(() => {
+        if (currentTaskId && runStatus === "running") {
+            getTaskControlState(currentTaskId)
                 .then(state => {
                     dispatch(setPaused({
-                        paused: sessionPaused(state),
+                        paused: taskPaused(state),
                         reason: undefined,
                     }));
-                    if (sessionCancelled(state)) {
+                    if (taskCancelled(state)) {
                         dispatch(setCancelled({ value: true, message: t("runDetail.cancelledMessage") }));
                     }
                 })
                 .catch(err => {
-                    console.warn("[RunDetail] Failed to fetch session-state:", err);
+                    console.warn("[RunDetail] Failed to fetch task control-state:", err);
                 });
+            syncTaskTerminalStatus().catch((err) => {
+                console.warn("[RunDetail] Failed to sync task terminal status:", err);
+            });
         }
-    }, [currentSessionId, runStatus, dispatch, t]);
+    }, [currentTaskId, runStatus, dispatch, t]);
 
     useEffect(() => {
-        if (!isPaused || !currentSessionId) return;
+        if (!currentTaskId || runStatus !== "running") return;
+        const timer = setInterval(() => {
+            syncTaskTerminalStatus().catch((err) => {
+                console.warn("[RunDetail] Failed to poll task terminal status:", err);
+            });
+        }, 2500);
+        return () => clearInterval(timer);
+    }, [currentTaskId, runStatus]);
 
-        const REFRESH_INTERVAL_MS = 20000;
+    useEffect(() => {
+        if ((!isPaused && !isPauseSyncing) || !currentTaskId) return;
+
+        const REFRESH_INTERVAL_MS = 1500;
 
         const refreshControlState = async () => {
             try {
-                const state = await getSessionState(currentSessionId);
-                if (!sessionPaused(state)) {
-                    dispatch(setPaused({ paused: false }));
+                const state = await getTaskControlState(currentTaskId);
+                const paused = taskPaused(state);
+                dispatch(setPaused({ paused }));
+                if (paused) {
+                    setIsPauseLoading(false);
+                    setIsResumeLoading(false);
                 }
-                if (sessionCancelled(state)) {
+                if (!paused && isPauseSyncing) {
+                    setIsPauseSyncing(false);
+                    setIsPauseLoading(false);
+                    setIsResumeLoading(false);
+                }
+                if (taskCancelled(state)) {
+                    setIsPauseSyncing(false);
+                    setIsPauseLoading(false);
+                    setIsResumeLoading(false);
                     dispatch(setCancelled({ value: true, message: t("runDetail.cancelledMessage") }));
                 }
             } catch (err) {
-                console.warn("[RunDetail] Failed to refresh session-state:", err);
+                console.warn("[RunDetail] Failed to refresh task control-state:", err);
             }
         };
 
+        refreshControlState();
         const interval = setInterval(refreshControlState, REFRESH_INTERVAL_MS);
         return () => clearInterval(interval);
-    }, [isPaused, currentSessionId, dispatch, t]);
+    }, [isPaused, isPauseSyncing, currentTaskId, dispatch, t]);
 
     useEffect(() => {
-        if (!isCancelling || !currentSessionId) return;
+        if (!isCancelling || !currentTaskId) return;
 
         const CANCEL_POLL_INTERVAL_MS = 2000;
 
         const checkCancelledState = async () => {
             try {
-                const state = await getSessionState(currentSessionId);
-                if (sessionCancelled(state)) {
+                const state = await getTaskControlState(currentTaskId);
+                if (taskCancelled(state)) {
                     dispatch(setCancelled({ value: true, message: t("runDetail.cancelledMessage") }));
                 }
             } catch (err) {
-                console.warn("[RunDetail] Failed to check cancelled session state:", err);
+                console.warn("[RunDetail] Failed to check cancelled task state:", err);
             }
         };
 
         checkCancelledState();
         const interval = setInterval(checkCancelledState, CANCEL_POLL_INTERVAL_MS);
         return () => clearInterval(interval);
-    }, [isCancelling, currentSessionId, dispatch, t]);
+    }, [isCancelling, currentTaskId, dispatch, t]);
 
     useEffect(() => {
         if (isPaused) {
@@ -107,43 +158,56 @@ export function useTaskControls({
     }, [isPaused]);
 
     const handlePause = async () => {
-        if (!currentSessionId) {
+        if (!currentTaskId || !canControlTask) {
             dispatch(setStreamError(t("runDetail.pauseFailed")));
             return;
         }
         setIsPauseLoading(true);
         try {
-            await pauseSessionTask(currentSessionId);
+            await pauseTask(currentTaskId);
+            setIsPauseSyncing(true);
         } catch (err) {
+            setIsPauseSyncing(false);
             setIsPauseLoading(false);
+            if (err instanceof Error && err.message.includes("invalid-transition")) {
+                setCanControlTask(false);
+            }
             dispatch(setStreamError(err instanceof Error ? err.message : t("runDetail.pauseFailed")));
         }
     };
 
     const handleResume = async () => {
-        if (!currentSessionId) {
+        if (!currentTaskId || !canControlTask) {
             dispatch(setStreamError(t("runDetail.resumeFailed")));
             return;
         }
         setIsResumeLoading(true);
         try {
-            await resumeSessionTask(currentSessionId);
+            await resumeTask(currentTaskId);
+            setIsPauseSyncing(true);
         } catch (err) {
+            setIsPauseSyncing(false);
             setIsResumeLoading(false);
+            if (err instanceof Error && err.message.includes("invalid-transition")) {
+                setCanControlTask(false);
+            }
             dispatch(setStreamError(err instanceof Error ? err.message : t("runDetail.resumeFailed")));
         }
     };
 
     const handleCancel = async () => {
-        if (!currentSessionId) {
+        if (!currentTaskId || !canControlTask) {
             dispatch(setStreamError(t("runDetail.cancelFailed")));
             return;
         }
         dispatch(setCancelling({ value: true, message: t("runDetail.cancellingStatus") }));
         try {
-            await cancelSessionTask(currentSessionId);
+            await cancelTask(currentTaskId);
         } catch (err) {
             dispatch(setCancelling({ value: false }));
+            if (err instanceof Error && (err.message.includes("invalid-transition") || err.message.includes("task-not-found"))) {
+                setCanControlTask(false);
+            }
             dispatch(setStreamError(err instanceof Error ? err.message : t("runDetail.cancelFailed")));
         }
     };
@@ -151,6 +215,7 @@ export function useTaskControls({
     return {
         isPauseLoading,
         isResumeLoading,
+        canControlTask,
         handlePause,
         handleResume,
         handleCancel,

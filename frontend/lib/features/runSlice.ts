@@ -2,10 +2,10 @@
 
 import { createSlice, PayloadAction } from "@reduxjs/toolkit";
 import {
+    LlmOutputEvent,
     RunEvent,
     ThreadMessageCompletedEvent,
     ThreadMessageDeltaEvent,
-    LlmOutputEvent,
     WorkflowPausedEvent,
 } from "../kardcraft/types";
 
@@ -28,7 +28,59 @@ export interface RunMessage {
     isError?: boolean;
     isCancelled?: boolean;
     eventType?: string;
+    attachments?: Array<{
+        fileId: string;
+        filename: string;
+        size: number;
+        mimeType: string;
+    }>;
 }
+
+type MessageAttachment = NonNullable<RunMessage["attachments"]>[number];
+
+const normalizeAttachment = (value: unknown): MessageAttachment | null => {
+    if (!value || typeof value !== "object") return null;
+    const raw = value as Record<string, unknown>;
+    const fileId = String(raw.fileId ?? raw.file_id ?? raw.id ?? "").trim();
+    const filename = String(raw.filename ?? raw.file_name ?? raw.name ?? "").trim();
+    if (!fileId || !filename) return null;
+    const sizeRaw = raw.size;
+    const size = typeof sizeRaw === "number" && Number.isFinite(sizeRaw) ? sizeRaw : 0;
+    const mimeTypeRaw = raw.mimeType ?? raw.mime_type ?? raw.type;
+    const mimeType = typeof mimeTypeRaw === "string" ? mimeTypeRaw : "application/octet-stream";
+    return { fileId, filename, size, mimeType };
+};
+
+const normalizeAttachments = (value: unknown): RunMessage["attachments"] | undefined => {
+    if (!Array.isArray(value)) return undefined;
+    const normalized = value
+        .map((item) => normalizeAttachment(item))
+        .filter((item): item is MessageAttachment => item !== null);
+    return normalized.length > 0 ? normalized : undefined;
+};
+
+const normalizeMessageForStore = (message: RunMessage): RunMessage => {
+    const normalizedAttachments = normalizeAttachments(message.attachments);
+    const nextMetadata =
+        message.metadata && typeof message.metadata === "object"
+            ? { ...(message.metadata as Record<string, unknown>) }
+            : message.metadata;
+    if (nextMetadata && typeof nextMetadata === "object") {
+        const normalizedMetaAttachments = normalizeAttachments((nextMetadata as Record<string, unknown>).attachments);
+        if (normalizedMetaAttachments) {
+            (nextMetadata as Record<string, unknown>).attachments = normalizedMetaAttachments;
+        }
+        const normalizedMetaFiles = normalizeAttachments((nextMetadata as Record<string, unknown>).files);
+        if (normalizedMetaFiles) {
+            (nextMetadata as Record<string, unknown>).files = normalizedMetaFiles;
+        }
+    }
+    return {
+        ...message,
+        attachments: normalizedAttachments,
+        metadata: nextMetadata,
+    };
+};
 
 export interface CardData {
     id: string;
@@ -1060,12 +1112,13 @@ const runSlice = createSlice({
             state.cardsVersion += 1;
         },
         addMessage: (state, action: PayloadAction<RunMessage>) => {
-            debugRun("[Redux] addMessage called:", action.payload);
-            if (!state.messages.some(m => m.id === action.payload.id)) {
-                state.messages.push(action.payload);
+            const normalizedMessage = normalizeMessageForStore(action.payload);
+            debugRun("[Redux] addMessage called:", normalizedMessage);
+            if (!state.messages.some(m => m.id === normalizedMessage.id)) {
+                state.messages.push(normalizedMessage);
                 debugRun("[Redux] Message added to state");
             } else {
-                debugRun("[Redux] Message with ID already exists:", action.payload.id);
+                debugRun("[Redux] Message with ID already exists:", normalizedMessage.id);
             }
         },
         updateMessageMetadata: (state, action: PayloadAction<{ taskId: string; metadata: Record<string, unknown> }>) => {

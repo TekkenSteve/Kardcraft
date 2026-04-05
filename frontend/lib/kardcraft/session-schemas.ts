@@ -41,6 +41,16 @@ export const ConversationMessageSchema = z.object({
     timestamp: z.string().optional(),
     task_id: z.string().optional(),
     metadata: z.record(z.string(), z.unknown()).optional(),
+    attachments: z
+        .array(
+            z.object({
+                file_id: z.string(),
+                filename: z.string(),
+                size: z.number().nonnegative(),
+                mime_type: z.string(),
+            })
+        )
+        .optional(),
 });
 
 export const SessionConversationResponseSchema = z.object({

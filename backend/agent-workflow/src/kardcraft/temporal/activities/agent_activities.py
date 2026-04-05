@@ -223,6 +223,7 @@ class AgentActivities:
                         "clarification_decision",
                         "need_user_input",
                         "max_iterations_reached",
+                        "missing_learning_units",
                     }
                     if (
                         normalized_error in recoverable_decisions

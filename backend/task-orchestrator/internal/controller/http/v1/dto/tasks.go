@@ -13,12 +13,20 @@ type ConversationMessage struct {
 	TaskID    string `json:"task_id,omitempty"`
 }
 
+type Attachment struct {
+	FileID   string `json:"file_id"`
+	Filename string `json:"filename"`
+	Size     int64  `json:"size"`
+	MimeType string `json:"mime_type"`
+}
+
 type CreateTaskInput struct {
 	SessionID           string                `json:"session_id"`
 	Query               string                `json:"query,omitempty"`
 	ConversationHistory []ConversationMessage `json:"conversation_history,omitempty"`
 	Context             CreateTaskContext     `json:"context,omitempty"`
 	FileIDs             []string              `json:"file_ids,omitempty"`
+	Attachments         []Attachment          `json:"attachments,omitempty"`
 	TargetCount         int                   `json:"target_count,omitempty"`
 	DifficultyLevel     string                `json:"difficulty_level,omitempty"`
 	TemplateID          string                `json:"template_id,omitempty"`

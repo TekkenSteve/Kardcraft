@@ -42,6 +42,17 @@ const formatMessageTimestamp = (raw?: string): string => {
     return raw;
 };
 
+const normalizeMessageAttachments = (attachments: SessionConversationResponseRecord["messages"][number]["attachments"]) => {
+    if (!Array.isArray(attachments)) return undefined;
+    // API payload is snake_case; keep frontend message model camelCase.
+    return attachments.map((item) => ({
+        fileId: item.file_id,
+        filename: item.filename,
+        size: item.size,
+        mimeType: item.mime_type,
+    }));
+};
+
 export function useSessionLoader({
     sessionId,
     runStatus,
@@ -150,6 +161,7 @@ export function useSessionLoader({
                 timestamp,
                 taskId: safeMessage.data.task_id,
                 metadata: safeMessage.data.metadata,
+                attachments: normalizeMessageAttachments(safeMessage.data.attachments),
                 isError: safeMessage.data.role === "system" && /failed/i.test(safeMessage.data.content || ""),
             }));
         });

@@ -35,6 +35,7 @@ type TasksDeps struct {
 
 	ActiveTaskCode  string
 	AuthzDeniedCode string
+	IdempotencyRequiredCode string
 }
 
 func NewTasksHandler(deps TasksDeps) http.HandlerFunc {
@@ -283,6 +284,28 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	attachments := normalizeInputAttachments(req.Input.Attachments)
+	if len(attachments) > 0 {
+		payloadBytes, err := json.Marshal(map[string]any{
+			"attachments": attachments,
+			"file_ids":    req.Input.FileIDs,
+		})
+		if err != nil {
+			log.Printf("failed to marshal attachment payload session_id=%s user_id=%s task_id=%s err=%v", createResult.SessionID, userID, workflowID, err)
+		} else if err := deps.ReadModel.InsertEvent(
+			r.Context(),
+			createResult.SessionID,
+			workflowID,
+			workflowID,
+			"MESSAGE_SENT",
+			"User message sent",
+			string(payloadBytes),
+			fmt.Sprintf("message:user:%s", workflowID),
+			time.Now().UTC(),
+		); err != nil {
+			log.Printf("failed to persist user attachment metadata session_id=%s user_id=%s task_id=%s err=%v", createResult.SessionID, userID, workflowID, err)
+		}
+	}
 	deps.EnsureWorkflowStreamReader(workflowID)
 	deps.WriteJSON(w, http.StatusCreated, map[string]any{
 		"workflow_id": createResult.WorkflowID,
@@ -520,6 +543,10 @@ func handleTaskControl(w http.ResponseWriter, r *http.Request, taskID string, ac
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
+		deps.WriteAPIError(w, http.StatusBadRequest, deps.IdempotencyRequiredCode, "Idempotency-Key header is required", map[string]any{"task_id": taskID, "action": action})
+		return
+	}
 	var req struct {
 		Reason string `json:"reason"`
 	}
@@ -582,4 +609,36 @@ func resolveSessionID(raw string) string {
 		return sessionID
 	}
 	return fmt.Sprintf("session_%d", time.Now().UTC().UnixNano())
+}
+
+func normalizeInputAttachments(raw []httpdto.Attachment) []map[string]any {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(raw))
+	for _, item := range raw {
+		fileID := strings.TrimSpace(item.FileID)
+		filename := strings.TrimSpace(item.Filename)
+		if fileID == "" || filename == "" {
+			continue
+		}
+		size := item.Size
+		if size < 0 {
+			size = 0
+		}
+		mimeType := strings.TrimSpace(item.MimeType)
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+		out = append(out, map[string]any{
+			"file_id":   fileID,
+			"filename":  filename,
+			"size":      size,
+			"mime_type": mimeType,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

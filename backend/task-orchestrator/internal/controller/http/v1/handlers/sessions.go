@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	v1adapters "task-orchestrator/internal/controller/http/v1/adapters"
-	httpdto "task-orchestrator/internal/controller/http/v1/dto"
 	"task-orchestrator/internal/usecase"
 )
 
@@ -25,10 +23,7 @@ type SessionsDeps struct {
 	CommandService    *usecase.CommandService
 	IsTemporalEnabled func() bool
 
-	AuthzDeniedCode         string
-	IdempotencyRequiredCode string
-	NoActiveTaskCode        string
-	InvalidTransitionCode   string
+	AuthzDeniedCode string
 }
 
 func NewSessionsHandler(deps SessionsDeps) http.HandlerFunc {
@@ -96,8 +91,6 @@ func NewSessionsRouter(deps SessionsDeps) http.HandlerFunc {
 			handleSessionWorkspace(w, r, sessionID, deps)
 		case "state":
 			handleSessionState(w, r, sessionID, deps)
-		case "pause", "resume", "cancel":
-			handleSessionControl(w, r, sessionID, suffix, deps)
 		default:
 			http.NotFound(w, r)
 		}
@@ -215,7 +208,17 @@ func handleSessionConversation(w http.ResponseWriter, r *http.Request, sessionID
 		} else if t.CompletedAt != nil {
 			timestamp = t.CompletedAt.UTC().Format(time.RFC3339)
 		}
-		messages = append(messages, map[string]any{"id": fmt.Sprintf("user-%s", taskID), "role": "user", "content": valueFromPtr(t.Query), "timestamp": timestamp, "task_id": taskID})
+		userMessage := map[string]any{
+			"id":        fmt.Sprintf("user-%s", taskID),
+			"role":      "user",
+			"content":   valueFromPtr(t.Query),
+			"timestamp": timestamp,
+			"task_id":   taskID,
+		}
+		if attachments := extractUserAttachmentsFromEvents(eventsByTask[taskID]); len(attachments) > 0 {
+			userMessage["attachments"] = attachments
+		}
+		messages = append(messages, userMessage)
 		assistantContent := ExtractResultMessage(t.Result)
 		if assistantContent == "" {
 			if text, ts := extractAssistantContentFromEvents(eventsByTask[taskID]); text != "" {
@@ -232,6 +235,123 @@ func handleSessionConversation(w http.ResponseWriter, r *http.Request, sessionID
 		}
 	}
 	deps.WriteJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "messages": messages})
+}
+
+func extractUserAttachmentsFromEvents(events []usecase.EventRow) []map[string]any {
+	for i := len(events) - 1; i >= 0; i-- {
+		ev := events[i]
+		if ev.Payload == nil || strings.TrimSpace(*ev.Payload) == "" {
+			continue
+		}
+		payload := parsePayloadText(ev.Payload)
+		record, ok := payload.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		if attachments := normalizeAttachmentsAny(record["attachments"]); len(attachments) > 0 {
+			return attachments
+		}
+		if input, ok := record["input"].(map[string]any); ok {
+			if attachments := normalizeAttachmentsAny(input["attachments"]); len(attachments) > 0 {
+				return attachments
+			}
+			if attachments := fileIDsToAttachments(input["file_ids"]); len(attachments) > 0 {
+				return attachments
+			}
+		}
+		if attachments := fileIDsToAttachments(record["file_ids"]); len(attachments) > 0 {
+			return attachments
+		}
+	}
+	return nil
+}
+
+func normalizeAttachmentsAny(value any) []map[string]any {
+	list, ok := value.([]any)
+	if !ok || len(list) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, entry := range list {
+		rec, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		fileID := strings.TrimSpace(asStringAny(rec["file_id"]))
+		filename := strings.TrimSpace(asStringAny(rec["filename"]))
+		if fileID == "" || filename == "" {
+			continue
+		}
+		size := asInt64Any(rec["size"])
+		if size < 0 {
+			size = 0
+		}
+		mimeType := strings.TrimSpace(asStringAny(rec["mime_type"]))
+		if mimeType == "" {
+			mimeType = "application/octet-stream"
+		}
+		out = append(out, map[string]any{
+			"file_id":   fileID,
+			"filename":  filename,
+			"size":      size,
+			"mime_type": mimeType,
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func fileIDsToAttachments(value any) []map[string]any {
+	list, ok := value.([]any)
+	if !ok || len(list) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, entry := range list {
+		fileID := strings.TrimSpace(asStringAny(entry))
+		if fileID == "" {
+			continue
+		}
+		out = append(out, map[string]any{
+			"file_id":   fileID,
+			"filename":  fileID,
+			"size":      int64(0),
+			"mime_type": "application/octet-stream",
+		})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func asStringAny(v any) string {
+	switch val := v.(type) {
+	case string:
+		return val
+	case fmt.Stringer:
+		return val.String()
+	default:
+		return ""
+	}
+}
+
+func asInt64Any(v any) int64 {
+	switch val := v.(type) {
+	case int:
+		return int64(val)
+	case int32:
+		return int64(val)
+	case int64:
+		return val
+	case float64:
+		return int64(val)
+	default:
+		return 0
+	}
 }
 
 func handleSessionTimeline(w http.ResponseWriter, r *http.Request, sessionID string, deps SessionsDeps) {
@@ -365,57 +485,6 @@ func handleSessionWorkspace(w http.ResponseWriter, r *http.Request, sessionID st
 		return
 	}
 	deps.WriteJSON(w, http.StatusOK, NormalizeWorkspaceResponse(resp, sessionID))
-}
-
-func handleSessionControl(w http.ResponseWriter, r *http.Request, sessionID, action string, deps SessionsDeps) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
-		deps.WriteAPIError(w, http.StatusBadRequest, deps.IdempotencyRequiredCode, "Idempotency-Key header is required", nil)
-		return
-	}
-	if !deps.IsTemporalEnabled() {
-		http.Error(w, "temporal not enabled", http.StatusServiceUnavailable)
-		return
-	}
-	if deps.ReadModel == nil || !deps.ReadModel.Ready() {
-		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	if deps.CommandService == nil {
-		http.Error(w, "command service unavailable", http.StatusServiceUnavailable)
-		return
-	}
-	userID := deps.UserID(r)
-	var req httpdto.SessionControlHTTPBody
-	_ = json.NewDecoder(r.Body).Decode(&req)
-	result, err := deps.CommandService.ControlSession(r.Context(), usecase.SessionControlCommand{SessionID: sessionID, UserID: userID, Action: action, Reason: req.Reason})
-	if err != nil {
-		if errors.Is(err, usecase.ErrNoActiveTask) {
-			deps.WriteAPIError(w, http.StatusNotFound, deps.NoActiveTaskCode, "session has no active task", map[string]any{"session_id": sessionID})
-			return
-		}
-		if errors.Is(err, usecase.ErrInvalidTransition) {
-			deps.WriteAPIError(w, http.StatusConflict, deps.InvalidTransitionCode, err.Error(), map[string]any{"session_id": sessionID, "action": action})
-			return
-		}
-		deps.WriteAPIError(w, http.StatusBadRequest, deps.InvalidTransitionCode, err.Error(), map[string]any{"session_id": sessionID, "action": action})
-		return
-	}
-	code := http.StatusOK
-	if result.Accepted {
-		code = http.StatusAccepted
-	}
-	deps.WriteJSON(w, code, map[string]any{
-		"session_id":            result.SessionID,
-		"active_task_id":        result.ActiveTaskID,
-		"task_state":            result.TaskState,
-		"session_control_state": result.SessionControlState,
-		"version":               0,
-		"result":                "applied",
-	})
 }
 
 func handleSessionState(w http.ResponseWriter, r *http.Request, sessionID string, deps SessionsDeps) {

@@ -94,79 +94,34 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 	})
 }
 
-func TestHandleSessionControlBoundaries(t *testing.T) {
-	reqBody := `{"reason":"manual"}`
+func TestHandleSessionControlRoutesRemoved(t *testing.T) {
+	s := newCommandTestServer(newFakeCommandStore(), &fakeCommandRuntime{}, true)
+	req := newJSONRequest(http.MethodPost, "/api/v1/sessions/s1/pause", `{"reason":"manual"}`)
+	req.Header.Set("Idempotency-Key", "k1")
+	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+	rr := httptest.NewRecorder()
 
-	t.Run("legal transition", func(t *testing.T) {
-		store := newFakeCommandStore()
-		store.sessionTasks = []port.SessionTask{{TaskID: "task-1", Status: "running"}}
-		runtime := &fakeCommandRuntime{}
-		s := newCommandTestServer(store, runtime, true)
-		req := newJSONRequest(http.MethodPost, "/api/v1/sessions/s1/pause", reqBody)
-		req.Header.Set("Idempotency-Key", "k1")
-		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
-		rr := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d body=%s", rr.Code, rr.Body.String())
+	}
+}
 
-		s.Handler().ServeHTTP(rr, req)
-		if rr.Code != http.StatusOK {
-			t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
-		}
-	})
+func TestHandleTaskControlRequiresIdempotencyKey(t *testing.T) {
+	store := newFakeCommandStore()
+	s := newCommandTestServer(store, &fakeCommandRuntime{}, true)
+	req := newJSONRequest(http.MethodPost, "/api/v1/tasks/task-1/pause", `{"reason":"manual"}`)
+	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+	rr := httptest.NewRecorder()
 
-	t.Run("invalid transition", func(t *testing.T) {
-		store := newFakeCommandStore()
-		store.sessionTasks = []port.SessionTask{{TaskID: "task-1", Status: "paused"}}
-		s := newCommandTestServer(store, &fakeCommandRuntime{}, true)
-		req := newJSONRequest(http.MethodPost, "/api/v1/sessions/s1/pause", reqBody)
-		req.Header.Set("Idempotency-Key", "k1")
-		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
-		rr := httptest.NewRecorder()
-
-		s.Handler().ServeHTTP(rr, req)
-		if rr.Code != http.StatusConflict {
-			t.Fatalf("expected 409, got %d body=%s", rr.Code, rr.Body.String())
-		}
-	})
-
-	t.Run("no active task", func(t *testing.T) {
-		store := newFakeCommandStore()
-		store.sessionTasks = []port.SessionTask{{TaskID: "task-1", Status: "completed"}}
-		s := newCommandTestServer(store, &fakeCommandRuntime{}, true)
-		req := newJSONRequest(http.MethodPost, "/api/v1/sessions/s1/pause", reqBody)
-		req.Header.Set("Idempotency-Key", "k1")
-		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
-		rr := httptest.NewRecorder()
-
-		s.Handler().ServeHTTP(rr, req)
-		if rr.Code != http.StatusNotFound {
-			t.Fatalf("expected 404, got %d body=%s", rr.Code, rr.Body.String())
-		}
-	})
-
-	t.Run("runtime signal failure", func(t *testing.T) {
-		store := newFakeCommandStore()
-		store.sessionTasks = []port.SessionTask{{TaskID: "task-1", Status: "running"}}
-		s := newCommandTestServer(store, &fakeCommandRuntime{signalErr: errors.New("runtime down")}, true)
-		req := newJSONRequest(http.MethodPost, "/api/v1/sessions/s1/pause", reqBody)
-		req.Header.Set("Idempotency-Key", "k1")
-		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
-		rr := httptest.NewRecorder()
-
-		s.Handler().ServeHTTP(rr, req)
-		if rr.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
-		}
-	})
-
-	t.Run("handler keeps transition logic in usecase", func(t *testing.T) {
-		data, err := os.ReadFile("handlers/sessions.go")
-		if err != nil {
-			t.Fatalf("read handlers/sessions.go: %v", err)
-		}
-		if strings.Contains(string(data), "validateTransition(") {
-			t.Fatalf("sessions handler should not evaluate state transitions directly")
-		}
-	})
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	payload := decodeAPIErrorBody(t, rr.Body.String())
+	if payload.Error.Code != errCodeIdempotencyKeyRequired {
+		t.Fatalf("expected %s, got %s", errCodeIdempotencyKeyRequired, payload.Error.Code)
+	}
 }
 
 func newCommandTestServer(store *fakeCommandStore, runtime *fakeCommandRuntime, temporalEnabled bool) *Server {

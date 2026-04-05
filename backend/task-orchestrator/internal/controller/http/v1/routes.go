@@ -30,6 +30,7 @@ func (s *Server) registerTaskRoutes() {
 		},
 		ActiveTaskCode:  errCodeActiveTaskExists,
 		AuthzDeniedCode: errCodeAuthzDenied,
+		IdempotencyRequiredCode: errCodeIdempotencyKeyRequired,
 	}
 	s.mux.HandleFunc("/api/v1/tasks", v1handlers.NewTasksHandler(tasksDeps))
 	s.mux.HandleFunc("/api/v1/tasks/template", v1handlers.NewTemplateTasksHandler(tasksDeps))
@@ -103,9 +104,6 @@ func (s *Server) registerSessionAndTemplateRoutes() {
 		CommandService:          s.commandService,
 		IsTemporalEnabled:       s.isTemporalEnabled,
 		AuthzDeniedCode:         errCodeAuthzDenied,
-		IdempotencyRequiredCode: errCodeIdempotencyKeyRequired,
-		NoActiveTaskCode:        errCodeNoActiveTask,
-		InvalidTransitionCode:   errCodeInvalidTransition,
 	}
 	s.mux.HandleFunc("/api/v1/sessions", v1handlers.NewSessionsHandler(sessionsDeps))
 	s.mux.HandleFunc("/api/v1/sessions/", v1handlers.NewSessionsRouter(sessionsDeps))

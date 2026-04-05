@@ -1,29 +1,29 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { FileUpload, FileUploadHandle } from "@/components/file-upload";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { Send, Loader2, Sparkles, Pause, Play, Square, Paperclip, ChevronDown, LayoutTemplate, Save } from "lucide-react";
-import { useRouter } from "next/navigation";
-import { useTranslation } from "react-i18next";
+import { clearTemplatePreflight, setTemplatePreflight } from "@/lib/features/runSlice";
+import { FileUploadAPI } from "@/lib/file-upload/api";
+import { UploadedFile } from "@/lib/file-upload/types";
 import {
-    submitTask,
-    listCardTemplates,
-    setUserTemplatePreference,
-    validateCardTemplate,
-    getTemplateRequiredFields,
-    precheckCardTemplate,
     CardTemplate,
     getTask,
+    getTemplateRequiredFields,
     importCardTemplate,
+    listCardTemplates,
+    precheckCardTemplate,
+    setUserTemplatePreference,
+    submitTask,
+    validateCardTemplate,
 } from "@/lib/kardcraft/api";
 import { cn } from "@/lib/utils";
-import { FileUpload, FileUploadHandle } from "@/components/file-upload";
-import { UploadedFile } from "@/lib/file-upload/types";
-import { FileUploadAPI } from "@/lib/file-upload/api";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ChevronDown, LayoutTemplate, Loader2, Paperclip, Pause, Play, Save, Send, Sparkles, Square } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useDispatch } from "react-redux";
-import { clearTemplatePreflight, setTemplatePreflight } from "@/lib/features/runSlice";
 
 export type AgentSelection = "normal" | "card_template";
 export type ResearchStrategy = "quick" | "standard" | "deep" | "academic";
@@ -35,7 +35,7 @@ interface ChatInputProps {
     selectedAgent?: AgentSelection;
     onSelectedAgentChange?: (agent: AgentSelection) => void;
     initialResearchStrategy?: ResearchStrategy;
-    onTaskCreated?: (taskId: string, query: string, workflowId?: string, sessionId?: string) => void;
+    onTaskCreated?: (taskId: string, query: string, workflowId?: string, sessionId?: string, attachments?: Array<{fileId: string; filename: string; size: number; mimeType: string}>) => void;
     currentTaskId?: string | null;
     /** Use centered textarea layout for empty sessions */
     variant?: "default" | "centered";
@@ -285,12 +285,22 @@ export function ChatInput({
             }
 
             if (fileIdsToSubmit.length > 0) {
+                const attachments = uploadedFiles
+                    .filter((file) => file.status === "uploaded" && !!file.serverFileId)
+                    .map((file) => ({
+                        file_id: file.serverFileId as string,
+                        filename: file.name,
+                        size: file.size,
+                        mime_type: file.type,
+                    }));
+
                 // Use the new API for tasks with files
                 const response = await uploadAPI.submitTaskWithFiles({
                     query: query.trim(),
                     task_type: taskType,
                     session_id: sessionId,
                     file_ids: fileIdsToSubmit,
+                    attachments,
                     context: Object.keys(context).length ? context : undefined,
                 });
 
@@ -303,7 +313,18 @@ export function ChatInput({
 
                 if (onTaskCreated) {
                     console.log("[ChatInput] Calling onTaskCreated with workflow_id:", response.workflow_id);
-                    onTaskCreated(response.workflow_id, query.trim(), response.workflow_id, response.session_id);
+                    onTaskCreated(
+                        response.workflow_id,
+                        query.trim(),
+                        response.workflow_id,
+                        response.session_id,
+                        attachments.map((item) => ({
+                            fileId: item.file_id,
+                            filename: item.filename,
+                            size: item.size,
+                            mimeType: item.mime_type,
+                        }))
+                    );
                 } else {
                     // Fallback if no callback provided
                     router.push(`/run-detail?workflow_id=${response.workflow_id}`);
