@@ -9,7 +9,7 @@ This module centralizes:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import os
 from typing import Any, Dict, List, Optional, Callable
@@ -69,6 +69,7 @@ def _build_excerpt_from_text(
 
     radius = (max_chars - len(needle)) // 2
     radius = max(0, radius)
+    start = max(0, idx - radius)
     end = min(len(text), idx + len(needle) + radius)
     excerpt = text[start:end]
     if start > 0:
@@ -327,13 +328,13 @@ class ToolBroker:
         if isinstance(metadata, FileMetadata):
             custom_meta = getattr(metadata, "custom_meta", None) or {}
             filename = custom_meta.get("original_filename") or file_id
+        content_text = _safe_decode_bytes(content_bytes)
+        excerpt = _build_excerpt_from_text(
+            content_text,
             query=query,
             locator=locator,
             max_chars=max_chars,
         )
-        filename = file_id
-        if isinstance(metadata, FileMetadata):
-            filename = metadata.custom_meta.get("original_filename") or file_id
 
         logger.info(
             "tool_broker fetch_file_excerpt",
