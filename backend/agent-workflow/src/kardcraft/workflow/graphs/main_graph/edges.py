@@ -3,6 +3,14 @@
 from kardcraft.workflow.graphs.main_graph.state import State
 
 
+def route_after_preflight(state: State) -> str:
+    if state.get("error"):
+        return "finalize"
+    if state.get("preflight_status") == "need_user_input":
+        return "finalize"
+    return "syllabus_supervisor"
+
+
 def route_after_syllabus(state: State) -> str:
     if state.get("error"):
         return "finalize"

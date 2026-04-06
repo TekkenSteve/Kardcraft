@@ -46,6 +46,9 @@ class State(TypedDict, total=False):
     subject_domain: Optional[str]
     task_complexity: Optional[str]
     language: Optional[str]
+    classification_confidence: Optional[float]
+    preflight_status: Optional[str]     # pass_through | need_user_input | skipped
+    preflight_reason: Optional[str]
 
     # Stage statuses
     syllabus_status: Optional[str]       # outline_ready | need_user_input | failed

@@ -3,6 +3,7 @@
 from langgraph.graph import END, StateGraph
 
 from kardcraft.workflow.graphs.main_graph.edges import (
+    route_after_preflight,
     route_after_card,
     route_after_evidence,
     route_after_syllabus,
@@ -13,6 +14,7 @@ from kardcraft.workflow.graphs.main_graph.nodes import (
     run_card_supervisor,
     run_evidence_supervisor,
     run_intent_classifier,
+    run_socratic_preflight,
     run_syllabus_supervisor,
 )
 from kardcraft.workflow.graphs.main_graph.state import Context, State
@@ -23,6 +25,7 @@ def build_main_graph():
 
     workflow.add_node("initialize", initialize_processing)
     workflow.add_node("intent_classifier", run_intent_classifier)
+    workflow.add_node("socratic_preflight", run_socratic_preflight)
     workflow.add_node("syllabus_supervisor", run_syllabus_supervisor)
     workflow.add_node("evidence_supervisor", run_evidence_supervisor)
     workflow.add_node("card_supervisor", run_card_supervisor)
@@ -30,7 +33,15 @@ def build_main_graph():
 
     workflow.set_entry_point("initialize")
     workflow.add_edge("initialize", "intent_classifier")
-    workflow.add_edge("intent_classifier", "syllabus_supervisor")
+    workflow.add_edge("intent_classifier", "socratic_preflight")
+    workflow.add_conditional_edges(
+        "socratic_preflight",
+        route_after_preflight,
+        {
+            "syllabus_supervisor": "syllabus_supervisor",
+            "finalize": "finalize",
+        },
+    )
     workflow.add_conditional_edges(
         "syllabus_supervisor",
         route_after_syllabus,

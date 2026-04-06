@@ -14,6 +14,7 @@ from kardcraft.card_templates import (
 from kardcraft.llm.client import chat_complete
 from kardcraft.utils.language import detect_preferred_language_with_llm
 from kardcraft.utils.llm_json import safe_parse_llm_json
+from kardcraft.workflow.graphs.clarification_graph.tool import clarify
 from kardcraft.workflow.graphs.main_graph.state import Context, State
 from kardcraft.workflow.graphs.main_graph.subgraph.card_supervisor_agent import (
     card_supervisor_agent,
@@ -25,6 +26,41 @@ from kardcraft.workflow.graphs.main_graph.subgraph.intent_classifier_agent impor
 from kardcraft.workflow.graphs.main_graph.subgraph.syllabus_supervisor_agent import (
     syllabus_supervisor_agent,
 )
+
+SOC_PRECHECK_INTENTS = {"create_cards"}
+SOC_PREFLIGHT_CONFIDENCE_THRESHOLD = 0.75
+
+
+def _extract_first_question(pending_questions: list[dict[str, Any]]) -> str:
+    for item in pending_questions:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("question_text") or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def _should_trigger_preflight(state: State) -> tuple[bool, str]:
+    intent_type = str(state.get("intent_type") or "").strip().lower()
+    if intent_type not in SOC_PRECHECK_INTENTS:
+        return False, "intent_not_targeted"
+
+    file_ids = [str(x).strip() for x in (state.get("file_ids") or []) if str(x).strip()]
+    if file_ids:
+        return False, "has_files"
+
+    message_knowledge = str(state.get("message_knowledge") or "").strip()
+    if message_knowledge:
+        return False, "has_inline_knowledge"
+
+    driven_mode = str(state.get("driven_mode") or "").strip().lower()
+    confidence = float(state.get("classification_confidence") or 0.0)
+    low_confidence = confidence < SOC_PREFLIGHT_CONFIDENCE_THRESHOLD
+    topic_driven = driven_mode == "topic_driven"
+    if not low_confidence and not topic_driven:
+        return False, "signals_sufficient"
+    return True, "topic_or_low_confidence"
 
 
 async def separate_content_and_task(user_input: str) -> Dict[str, str]:
@@ -108,6 +144,8 @@ async def initialize_processing(
         "selected_template_profile": prepared_template.selected_template_profile,
         "template_note_fields": prepared_template.template_note_fields,
         "template_validation": prepared_template.template_validation,
+        "preflight_status": None,
+        "preflight_reason": None,
         "pending_questions": [],
         "learning_units": [],
         "approved_cards": [],
@@ -137,6 +175,7 @@ async def run_intent_classifier(state: State) -> Dict[str, Any]:
         "subject_domain": result.get("subject_domain"),
         "task_complexity": result.get("task_complexity"),
         "language": result.get("language"),
+        "classification_confidence": float(result.get("confidence") or 0.0),
     }
 
     user_input = state.get("user_input", "")
@@ -152,6 +191,51 @@ async def run_intent_classifier(state: State) -> Dict[str, Any]:
         update["language"] = await detect_preferred_language_with_llm(demand)
 
     return update
+
+
+async def run_socratic_preflight(state: State) -> Dict[str, Any]:
+    """Soft gate: trigger clarifying questions only for high-ambiguity, no-file requests."""
+    if state.get("pending_questions"):
+        return {
+            "preflight_status": "need_user_input",
+            "preflight_reason": "pending_questions_exist",
+            "status": "need_user_input",
+        }
+
+    should_trigger, reason = _should_trigger_preflight(state)
+    if not should_trigger:
+        return {
+            "preflight_status": "skipped",
+            "preflight_reason": reason,
+        }
+
+    message_knowledge = str(state.get("message_knowledge") or "").strip()
+    user_input = str(state.get("user_input") or "").strip()
+    clarification = await clarify.ainvoke(
+        {
+            "user_input": user_input,
+            "message_knowledge": message_knowledge,
+            "file_ids": [],
+            "language": state.get("language"),
+        }
+    )
+    status = str(clarification.get("status") or "").strip().lower()
+    pending_questions = clarification.get("pending_questions") or []
+    if status == "need_user_input" and pending_questions:
+        question = _extract_first_question(pending_questions)
+        return {
+            "preflight_status": "need_user_input",
+            "preflight_reason": str(clarification.get("reason") or "preflight_clarification"),
+            "pending_questions": pending_questions,
+            "status": "need_user_input",
+            "question": question,
+            "message": question or "Additional user input is required to continue.",
+        }
+
+    return {
+        "preflight_status": "pass_through",
+        "preflight_reason": str(clarification.get("reason") or "clarification_sufficient"),
+    }
 
 
 async def run_syllabus_supervisor(
