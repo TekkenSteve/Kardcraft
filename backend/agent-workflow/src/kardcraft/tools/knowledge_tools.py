@@ -8,46 +8,33 @@ These are pure function capabilities extracted from syllabus_agent:
 All tools are stateless and can be called from any agent via main_graph routing.
 """
 
-import os
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Literal
 
 from langchain_core.tools import tool
 
+from kardcraft.tools.tool_broker import get_tool_broker
 from kardcraft.utils.logger import logger
 
-_ragix_client: Optional[Any] = None
-_ALLOWED_QUERY_MODES = {"mix", "naive", "local", "global", "hybrid", "bypass"}
-
-
-def _normalize_query_mode(mode: str) -> str:
-    normalized = str(mode or "mix").strip().lower()
-    if normalized not in _ALLOWED_QUERY_MODES:
-        raise ValueError(
-            "Unsupported Ragix query mode: "
-            f"{mode!r}. Allowed modes: {sorted(_ALLOWED_QUERY_MODES)}"
-        )
-    return normalized
-
-async def _get_ragix_client() -> Optional[Any]:
-    """Get or create RagixClient instance."""
-    global _ragix_client
-    if _ragix_client is not None:
-        return _ragix_client
-
-    try:
-        from kardcraft.ragix import RagixClient
-
-        client = RagixClient()
-        await client.initialize()
-        logger.info("Ragix client initialized for tools")
-        _ragix_client = client
-        return client
-
-    except Exception as e:
-        logger.warning(f"Ragix initialization failed: {e}")
-        return None
-
+async def _search_via_broker(
+    *,
+    query: str,
+    session_id: Optional[str],
+    file_ids: Optional[List[str]],
+    user_id: Optional[str],
+    top_k: int,
+    mode: str,
+) -> Dict[str, Any]:
+    """Delegate query execution/validation to the unified ToolBroker."""
+    broker = get_tool_broker()
+    return await broker.search_ragix(
+        query=query,
+        session_id=session_id,
+        file_ids=file_ids,
+        user_id=user_id,
+        top_k=top_k,
+        mode=mode,
+    )
 
 @tool
 async def query_knowledge(
@@ -76,46 +63,26 @@ async def query_knowledge(
         - mode: Query mode used
         - file_ids: File IDs searched
     """
-    normalized_mode = _normalize_query_mode(mode)
-
     logger.info(
         "query_knowledge tool called",
         query=query[:100],
         session_id=bool(session_id),
         file_count=len(file_ids) if file_ids else 0,
-        mode=normalized_mode,
+        mode=mode,
     )
 
     try:
-        ragix = await _get_ragix_client()
-
-        if ragix is None:
-            logger.warning("Ragix client unavailable")
-            return {
-                "content": "",
-                "refs": [],
-                "query": query,
-                "mode": normalized_mode,
-                "file_ids": file_ids or [],
-                "error": "Ragix client unavailable",
-            }
-
-        result = await ragix.query(
-            query,
+        result = await _search_via_broker(
+            query=query,
             session_id=session_id,
             file_ids=file_ids,
             user_id=user_id,
             top_k=top_k,
-            mode=normalized_mode,
+            mode=mode,
         )
-
-        result_text = getattr(result, "text", None)
-        if result_text is None:
-            result_text = getattr(result, "content", "")
-
-        result_refs = getattr(result, "citations", None)
-        if result_refs is None:
-            result_refs = getattr(result, "refs", []) if result else []
+        normalized_mode = str(result.get("mode") or mode or "mix").strip().lower()
+        result_text = str(result.get("content") or "")
+        result_refs = result.get("refs") or []
 
         query_record = {
             "query": query,
@@ -128,7 +95,7 @@ async def query_knowledge(
 
         context_entry = {
             "content": result_text or "",
-            "refs": [ref.dict() for ref in result_refs] if result_refs else [],
+            "refs": result_refs,
             "query": query,
             "mode": normalized_mode,
             "file_ids": file_ids or [],
@@ -151,11 +118,12 @@ async def query_knowledge(
 
     except Exception as e:
         logger.error(f"query_knowledge failed: {e}")
+        fallback_mode = str(mode or "mix").strip().lower()
         return {
             "content": "",
             "refs": [],
             "query": query,
-            "mode": normalized_mode,
+            "mode": fallback_mode,
             "file_ids": file_ids or [],
             "error": str(e),
         }
@@ -197,46 +165,28 @@ async def progressive_query(
     )
 
     try:
-        ragix = await _get_ragix_client()
-
-        if ragix is None:
-            logger.warning("Ragix client unavailable for progressive query")
-            return {
-                "results": [],
-                "focus_area": focus_area,
-                "max_depth": max_depth,
-                "content": "",
-                "error": "Ragix client unavailable",
-            }
-
         results = []
 
         for depth in range(max_depth + 1):
             mode = ["naive", "local", "global"][min(depth, 2)]
 
-            answer = await ragix.query(
-                focus_area,
+            answer = await _search_via_broker(
+                query=focus_area,
                 session_id=session_id,
                 file_ids=file_ids,
                 user_id=user_id,
                 top_k=top_k,
                 mode=mode,
             )
-
-            answer_text = getattr(answer, "text", None)
-            if answer_text is None:
-                answer_text = getattr(answer, "content", "")
-
-            answer_refs = getattr(answer, "citations", None)
-            if answer_refs is None:
-                answer_refs = getattr(answer, "refs", []) if answer else []
+            answer_text = str(answer.get("content") or "")
+            answer_refs = answer.get("refs") or []
 
             results.append(
                 {
                     "depth": depth,
                     "mode": mode,
                     "content": answer_text or "",
-                    "refs": [ref.dict() for ref in answer_refs] if answer_refs else [],
+                    "refs": answer_refs,
                 }
             )
 
@@ -318,24 +268,10 @@ async def enrich_with_context(
         focus_areas = []
 
     try:
-        ragix = await _get_ragix_client()
-
-        if ragix is None:
-            logger.warning("Ragix client unavailable for enrichment")
-            return {
-                "original_content": content,
-                "enriched_content": content,
-                "retrieved_content": "",
-                "refs": [],
-                "focus_areas": focus_areas,
-                "error": "Ragix client unavailable",
-            }
-
         # Build query from focus areas
         query = " ".join(focus_areas) if focus_areas else content[:500]
-
-        result = await ragix.query(
-            query,
+        result = await _search_via_broker(
+            query=query,
             session_id=session_id,
             file_ids=file_ids,
             user_id=user_id,
@@ -343,8 +279,8 @@ async def enrich_with_context(
             mode=mode,
         )
 
-        retrieved_content = result.content if result else ""
-        refs = [ref.dict() for ref in result.refs] if result and result.refs else []
+        retrieved_content = str(result.get("content") or "")
+        refs = result.get("refs") or []
 
         # Combine original with retrieved
         enriched_content = (
@@ -376,5 +312,56 @@ async def enrich_with_context(
         }
 
 
+@tool
+async def list_history_files(
+    session_id: str,
+    user_id: str,
+) -> Dict[str, Any]:
+    """List history files in current session via unified tool broker."""
+    broker = get_tool_broker()
+    return await broker.list_history_files(session_id=session_id, user_id=user_id)
+
+
+@tool
+async def index_file_to_ragix(
+    file_id: str,
+    user_id: str,
+    session_id: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Trigger lazy index of a file to Ragix via unified tool broker."""
+    broker = get_tool_broker()
+    return await broker.index_file_to_ragix(
+        session_id=session_id,
+        file_id=file_id,
+        user_id=user_id,
+    )
+
+
+@tool
+async def fetch_file_excerpt(
+    file_id: str,
+    user_id: str,
+    query: Optional[str] = None,
+    locator: Optional[str] = None,
+    max_chars: int = 2000,
+) -> Dict[str, Any]:
+    """Fetch a targeted file excerpt via unified tool broker."""
+    broker = get_tool_broker()
+    return await broker.fetch_file_excerpt(
+        file_id=file_id,
+        user_id=user_id,
+        query=query,
+        locator=locator,
+        max_chars=max_chars,
+    )
+
+
 # Export list for easy importing
-knowledge_tools = [query_knowledge, progressive_query, enrich_with_context]
+knowledge_tools = [
+    query_knowledge,
+    progressive_query,
+    enrich_with_context,
+    list_history_files,
+    index_file_to_ragix,
+    fetch_file_excerpt,
+]

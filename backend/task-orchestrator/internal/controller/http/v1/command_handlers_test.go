@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -92,6 +93,288 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 			t.Fatalf("tasks handler leaks runtime DTO import")
 		}
 	})
+
+	t.Run("inherit file_ids from session history when omitted", func(t *testing.T) {
+		taskID := "task-prev-1"
+		payload := `{"attachments":[{"file_id":"file_hist_1","filename":"hist.pdf","size":12,"mime_type":"application/pdf"}]}`
+		readStore := &fakeReadModelStore{
+			ready: true,
+			sessionTasks: []ucdto.TaskRow{
+				{TaskID: taskID},
+			},
+			sessionEvents: []ucdto.EventRow{
+				{TaskID: &taskID, Payload: &payload, Timestamp: time.Now().UTC()},
+			},
+		}
+		runtime := &fakeCommandRuntime{runID: "run-2"}
+		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
+			"task_type":"main",
+			"input":{"query":"hello","context":{"template_id":"tpl-1"}}
+		}`)
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		if len(runtime.lastCmd.Input.FileIDs) != 1 || runtime.lastCmd.Input.FileIDs[0] != "file_hist_1" {
+			t.Fatalf("expected inherited file_ids to include file_hist_1, got %#v", runtime.lastCmd.Input.FileIDs)
+		}
+		if len(runtime.lastCmd.Input.EffectiveFileIDs) != 1 || runtime.lastCmd.Input.EffectiveFileIDs[0] != "file_hist_1" {
+			t.Fatalf("expected effective_file_ids to include file_hist_1, got %#v", runtime.lastCmd.Input.EffectiveFileIDs)
+		}
+	})
+
+	t.Run("file_policy explicit_only keeps explicit file_ids only", func(t *testing.T) {
+		taskID := "task-prev-2"
+		payload := `{"attachments":[{"file_id":"file_hist_1","filename":"hist.pdf","size":12,"mime_type":"application/pdf"}]}`
+		readStore := &fakeReadModelStore{
+			ready: true,
+			sessionTasks: []ucdto.TaskRow{
+				{TaskID: taskID},
+			},
+			sessionEvents: []ucdto.EventRow{
+				{TaskID: &taskID, Payload: &payload, Timestamp: time.Now().UTC()},
+			},
+		}
+		runtime := &fakeCommandRuntime{runID: "run-explicit"}
+		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
+			"task_type":"main",
+			"input":{
+				"query":"hello",
+				"context":{"template_id":"tpl-1"},
+				"file_policy":"explicit_only",
+				"file_ids":["file_explicit_1"]
+			}
+		}`)
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		if len(runtime.lastCmd.Input.EffectiveFileIDs) != 1 || runtime.lastCmd.Input.EffectiveFileIDs[0] != "file_explicit_1" {
+			t.Fatalf("expected explicit-only effective_file_ids, got %#v", runtime.lastCmd.Input.EffectiveFileIDs)
+		}
+		fileResolution, ok := runtime.lastCmd.Input.ContextEnvelope["file_resolution"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected file_resolution in context_envelope, got %#v", runtime.lastCmd.Input.ContextEnvelope)
+		}
+		if fileResolution["policy"] != "explicit_only" {
+			t.Fatalf("expected policy explicit_only, got %#v", fileResolution["policy"])
+		}
+	})
+
+	t.Run("file_policy exclude removes explicit from inherited file_ids", func(t *testing.T) {
+		taskID := "task-prev-3"
+		payload := `{"attachments":[{"file_id":"file_hist_1","filename":"hist.pdf","size":12,"mime_type":"application/pdf"},{"file_id":"file_hist_2","filename":"hist2.pdf","size":16,"mime_type":"application/pdf"}]}`
+		readStore := &fakeReadModelStore{
+			ready: true,
+			sessionTasks: []ucdto.TaskRow{
+				{TaskID: taskID},
+			},
+			sessionEvents: []ucdto.EventRow{
+				{TaskID: &taskID, Payload: &payload, Timestamp: time.Now().UTC()},
+			},
+		}
+		runtime := &fakeCommandRuntime{runID: "run-exclude"}
+		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
+			"task_type":"main",
+			"input":{
+				"query":"hello",
+				"context":{"template_id":"tpl-1"},
+				"file_policy":"exclude",
+				"file_ids":["file_hist_1"]
+			}
+		}`)
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		if len(runtime.lastCmd.Input.EffectiveFileIDs) != 1 || runtime.lastCmd.Input.EffectiveFileIDs[0] != "file_hist_2" {
+			t.Fatalf("expected exclude result [file_hist_2], got %#v", runtime.lastCmd.Input.EffectiveFileIDs)
+		}
+	})
+
+	t.Run("build context_envelope with history files cards and policy", func(t *testing.T) {
+		taskID := "task-prev-4"
+		payload := `{"attachments":[{"file_id":"file_hist_9","filename":"hist9.pdf","size":9,"mime_type":"application/pdf"}]}`
+		readStore := &fakeReadModelStore{
+			ready: true,
+			sessionTasks: []ucdto.TaskRow{
+				{TaskID: taskID},
+			},
+			sessionEvents: []ucdto.EventRow{
+				{TaskID: &taskID, Payload: &payload, Timestamp: time.Now().UTC()},
+			},
+			workspace: map[string]any{
+				"status":  "active",
+				"version": int64(3),
+				"cards": []any{
+					map[string]any{"id": "c1", "title": "Card 1", "type": "qa"},
+				},
+			},
+		}
+		runtime := &fakeCommandRuntime{runID: "run-envelope"}
+		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
+			"task_type":"main",
+			"input":{
+				"query":"给文件制卡",
+				"context":{"template_id":"tpl-1"},
+				"conversation_history":[{"role":"user","content":"之前问题"},{"role":"assistant","content":"之前回答"}]
+			}
+		}`)
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		if runtime.lastCmd.Input.ContextEnvelope["schema_version"] != "context-envelope.v1" {
+			t.Fatalf("expected schema_version context-envelope.v1, got %#v", runtime.lastCmd.Input.ContextEnvelope["schema_version"])
+		}
+		artifacts, ok := runtime.lastCmd.Input.ContextEnvelope["artifacts"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected artifacts section, got %#v", runtime.lastCmd.Input.ContextEnvelope["artifacts"])
+		}
+		files, ok := artifacts["files"].([]map[string]any)
+		if !ok {
+			t.Fatalf("expected artifacts.files []map[string]any, got %#v", artifacts["files"])
+		}
+		if len(files) != 1 || files[0]["file_id"] != "file_hist_9" {
+			t.Fatalf("expected file_hist_9 in artifacts.files, got %#v", files)
+		}
+		response := map[string]any{}
+		if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		respFileIDs, ok := response["file_ids"].([]any)
+		if !ok || len(respFileIDs) != 1 || respFileIDs[0] != "file_hist_9" {
+			t.Fatalf("expected response file_ids [file_hist_9], got %#v", response["file_ids"])
+		}
+	})
+
+	t.Run("context_envelope compatibility normalizes malformed sections and preserves extensions", func(t *testing.T) {
+		readStore := &fakeReadModelStore{ready: true}
+		runtime := &fakeCommandRuntime{runID: "run-compat"}
+		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
+			"task_type":"main",
+			"input":{
+				"query":"hello",
+				"context":{"template_id":"tpl-1"},
+				"context_envelope":{
+					"schema_version":"",
+					"history":"invalid",
+					"tool_capabilities":"invalid",
+					"ext_hint":{"keep_me":true}
+				}
+			}
+		}`)
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		if runtime.lastCmd.Input.ContextEnvelope["schema_version"] != "context-envelope.v1" {
+			t.Fatalf("expected normalized schema_version, got %#v", runtime.lastCmd.Input.ContextEnvelope["schema_version"])
+		}
+		if _, ok := runtime.lastCmd.Input.ContextEnvelope["history"].(map[string]any); !ok {
+			t.Fatalf("expected normalized history map, got %#v", runtime.lastCmd.Input.ContextEnvelope["history"])
+		}
+		if _, ok := runtime.lastCmd.Input.ContextEnvelope["compatibility"].(map[string]any); !ok {
+			t.Fatalf("expected compatibility section, got %#v", runtime.lastCmd.Input.ContextEnvelope["compatibility"])
+		}
+		if _, ok := runtime.lastCmd.Input.ContextEnvelope["ext_hint"].(map[string]any); !ok {
+			t.Fatalf("expected ext_hint to be preserved, got %#v", runtime.lastCmd.Input.ContextEnvelope["ext_hint"])
+		}
+	})
+
+	t.Run("workspace lifecycle applies ttl_expired when workspace is stale", func(t *testing.T) {
+		staleAt := time.Now().UTC().Add(-96 * time.Hour).Format(time.RFC3339)
+		readStore := &fakeReadModelStore{
+			ready: true,
+			workspace: map[string]any{
+				"status":     "active",
+				"updated_at": staleAt,
+				"version":    int64(2),
+				"cards":      []any{},
+			},
+		}
+		runtime := &fakeCommandRuntime{runID: "run-lifecycle"}
+		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
+			"task_type":"main",
+			"input":{"query":"hello","context":{"template_id":"tpl-1"}}
+		}`)
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		artifacts, ok := runtime.lastCmd.Input.ContextEnvelope["artifacts"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected artifacts section, got %#v", runtime.lastCmd.Input.ContextEnvelope["artifacts"])
+		}
+		workspace, ok := artifacts["workspace"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected artifacts.workspace section, got %#v", artifacts["workspace"])
+		}
+		if workspace["lifecycle_state"] != "ttl_expired" {
+			t.Fatalf("expected lifecycle_state ttl_expired, got %#v", workspace["lifecycle_state"])
+		}
+	})
+
+	t.Run("planner trace is persisted at task entry decision points", func(t *testing.T) {
+		readStore := &fakeReadModelStore{ready: true}
+		runtime := &fakeCommandRuntime{runID: "run-trace"}
+		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
+			"task_type":"main",
+			"input":{
+				"query":"hello",
+				"context":{"template_id":"tpl-1"},
+				"file_ids":["file_explicit_1"]
+			}
+		}`)
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		traceEvents := []capturedEventInsert{}
+		for _, ev := range readStore.insertedEvents {
+			if ev.eventType == "PLANNER_TRACE" {
+				traceEvents = append(traceEvents, ev)
+			}
+		}
+		if len(traceEvents) < 3 {
+			t.Fatalf("expected at least 3 planner trace events, got %d", len(traceEvents))
+		}
+		var payload map[string]any
+		if err := json.Unmarshal([]byte(traceEvents[0].payload), &payload); err != nil {
+			t.Fatalf("decode planner trace payload: %v", err)
+		}
+		if payload["trace_version"] != "planner_trace.v1" {
+			t.Fatalf("expected planner_trace.v1, got %#v", payload["trace_version"])
+		}
+	})
 }
 
 func TestHandleSessionControlRoutesRemoved(t *testing.T) {
@@ -124,14 +407,61 @@ func TestHandleTaskControlRequiresIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestHandleTaskPlannerTrace(t *testing.T) {
+	taskID := "task-trace-1"
+	streamID := "planner_trace:task-trace-1:001"
+	payload := `{"trace_version":"planner_trace.v1","record":{"action":"resolve_effective_file_ids","outcome":"effective=2"}}`
+	readStore := &fakeReadModelStore{
+		ready: true,
+		workflowEvents: []ucdto.EventRow{
+			{
+				ID:        1,
+				TaskID:    &taskID,
+				Type:      "PLANNER_TRACE",
+				Message:   ptrString("resolve_effective_file_ids"),
+				Payload:   &payload,
+				StreamID:  &streamID,
+				Timestamp: time.Now().UTC(),
+			},
+		},
+	}
+	s := newCommandTestServerWithReadStore(newFakeCommandStore(), &fakeCommandRuntime{}, true, readStore)
+	req := newJSONRequest(http.MethodGet, "/api/v1/tasks/task-trace-1/planner-trace", "")
+	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["task_id"] != taskID {
+		t.Fatalf("expected task_id %s, got %#v", taskID, body["task_id"])
+	}
+	records, ok := body["planner_trace"].([]any)
+	if !ok || len(records) != 1 {
+		t.Fatalf("expected one planner_trace record, got %#v", body["planner_trace"])
+	}
+}
+
 func newCommandTestServer(store *fakeCommandStore, runtime *fakeCommandRuntime, temporalEnabled bool) *Server {
+	return newCommandTestServerWithReadStore(store, runtime, temporalEnabled, nil)
+}
+
+func newCommandTestServerWithReadStore(store *fakeCommandStore, runtime *fakeCommandRuntime, temporalEnabled bool, readStore *fakeReadModelStore) *Server {
+	if readStore == nil {
+		readStore = &fakeReadModelStore{ready: true}
+	}
 	repo := persistence.NewInMemoryTaskRepository()
 	publisher := persistence.NewInMemoryEventPublisher()
 	taskService := usecase.NewTaskService(repo, publisher, nil)
 	commandService := usecase.NewCommandService(taskService, store, runtime)
 
 	enabled := &fakeWorkflowRuntime{enabled: temporalEnabled}
-	readModel := usecase.NewReadModelService(&fakeReadModelStore{ready: true})
+	readModel := usecase.NewReadModelService(readStore)
 	s := &Server{
 		mux:                http.NewServeMux(),
 		taskService:        taskService,
@@ -188,9 +518,11 @@ type fakeCommandRuntime struct {
 	startErr  error
 	signalErr error
 	cancelErr error
+	lastCmd   ucdto.CreateTaskCommand
 }
 
 func (f *fakeCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd ucdto.CreateTaskCommand) (string, error) {
+	f.lastCmd = cmd
 	if f.startErr != nil {
 		return "", f.startErr
 	}
@@ -231,7 +563,23 @@ func (f *fakeWorkflowRuntime) SignalWorkflow(ctx context.Context, taskID, signal
 }
 
 type fakeReadModelStore struct {
-	ready bool
+	ready          bool
+	sessionTasks   []ucdto.TaskRow
+	sessionEvents  []ucdto.EventRow
+	workspace      map[string]any
+	workflowEvents []ucdto.EventRow
+	insertedEvents []capturedEventInsert
+}
+
+type capturedEventInsert struct {
+	sessionID string
+	taskID    string
+	workflow  string
+	eventType string
+	message   string
+	payload   string
+	streamID  string
+	ts        time.Time
 }
 
 func (f *fakeReadModelStore) Ready() bool { return f.ready }
@@ -248,15 +596,18 @@ func (f *fakeReadModelStore) DeleteSession(ctx context.Context, sessionID, userI
 	return 0, nil
 }
 func (f *fakeReadModelStore) ListSessionTasks(ctx context.Context, sessionID, userID string) ([]ucdto.TaskRow, error) {
-	return nil, nil
+	return f.sessionTasks, nil
 }
 func (f *fakeReadModelStore) ListSessionEvents(ctx context.Context, sessionID string, limit, offset int) ([]ucdto.EventRow, error) {
-	return nil, nil
+	return f.sessionEvents, nil
 }
 func (f *fakeReadModelStore) ListWorkflowEvents(ctx context.Context, workflowID string, limit, offset int) ([]ucdto.EventRow, error) {
-	return nil, nil
+	return f.workflowEvents, nil
 }
 func (f *fakeReadModelStore) LoadWorkspace(ctx context.Context, sessionID string) (map[string]any, error) {
+	if f.workspace != nil {
+		return f.workspace, nil
+	}
 	return map[string]any{}, nil
 }
 func (f *fakeReadModelStore) SaveWorkspace(ctx context.Context, sessionID string, workspace map[string]any) error {
@@ -290,8 +641,20 @@ func (f *fakeReadModelStore) UpsertUserTemplatePreference(ctx context.Context, u
 	return nil
 }
 func (f *fakeReadModelStore) InsertEvent(ctx context.Context, sessionID, taskID, workflowID, eventType, message, payload, streamID string, ts time.Time) error {
+	f.insertedEvents = append(f.insertedEvents, capturedEventInsert{
+		sessionID: sessionID,
+		taskID:    taskID,
+		workflow:  workflowID,
+		eventType: eventType,
+		message:   message,
+		payload:   payload,
+		streamID:  streamID,
+		ts:        ts,
+	})
 	return nil
 }
+
+func ptrString(v string) *string { return &v }
 func (f *fakeReadModelStore) InsertLLMUsage(ctx context.Context, row ucdto.UsageLedgerRow) (bool, error) {
 	return true, nil
 }

@@ -25,7 +25,10 @@ type CreateTaskInput struct {
 	Query               string
 	ConversationHistory []ConversationMessage
 	Context             TemplateContext
+	FilePolicy          string
+	ContextEnvelope     map[string]any
 	FileIDs             []string
+	EffectiveFileIDs    []string
 	TargetCount         int
 	DifficultyLevel     string
 	TemplateID          string

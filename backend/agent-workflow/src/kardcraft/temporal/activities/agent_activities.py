@@ -225,8 +225,14 @@ class AgentActivities:
                         "max_iterations_reached",
                         "missing_learning_units",
                     }
+                    recoverable_error_phrases = (
+                        "no relevant context",
+                        "no other sources were available",
+                        "insufficient context",
+                    )
                     if (
                         normalized_error in recoverable_decisions
+                        or any(phrase in normalized_error for phrase in recoverable_error_phrases)
                         or bool(pending_questions)
                     ):
                         cleaned_result["status"] = "need_user_input"

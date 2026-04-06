@@ -25,7 +25,10 @@ type CreateTaskInput struct {
 	Query               string                `json:"query,omitempty"`
 	ConversationHistory []ConversationMessage `json:"conversation_history,omitempty"`
 	Context             CreateTaskContext     `json:"context,omitempty"`
+	FilePolicy          string                `json:"file_policy,omitempty"`
+	ContextEnvelope     map[string]any        `json:"context_envelope,omitempty"`
 	FileIDs             []string              `json:"file_ids,omitempty"`
+	EffectiveFileIDs    []string              `json:"effective_file_ids,omitempty"`
 	Attachments         []Attachment          `json:"attachments,omitempty"`
 	TargetCount         int                   `json:"target_count,omitempty"`
 	DifficultyLevel     string                `json:"difficulty_level,omitempty"`

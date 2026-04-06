@@ -25,7 +25,7 @@ WORKDIR /app
 RUN groupadd -r kardcraft && \
     useradd -r -g kardcraft -d /app -s /bin/false kardcraft && \
     apt-get update && \
-    apt-get install -y --no-install-recommends libpq5 ca-certificates && \
+    apt-get install -y --no-install-recommends libpq5 ca-certificates libxcb1 && \
     rm -rf /var/lib/apt/lists/* /var/cache/apt/* && \
     mkdir -p /app/storage /app/tmp /app/logs && \
     chown -R kardcraft:kardcraft /app

@@ -118,6 +118,7 @@ async def _assess_and_enrich_context(
     user_knowledge = state.get("user_knowledge", "")
     subject_domain = state.get("subject_domain", "general")
     file_ids = state.get("file_ids")
+    normalized_file_ids = [str(fid).strip() for fid in (file_ids or []) if str(fid).strip()]
     iteration = state.get("iteration_count", 0)
     max_iterations = state.get("max_iterations", 3)
 
@@ -133,7 +134,7 @@ async def _assess_and_enrich_context(
 
     # File-driven hard signal: fetch at least one query directly tied to user intent
     # before any LLM-generated retrieval query planning.
-    if file_ids and user_id and not retrieved_context:
+    if normalized_file_ids and user_id and not retrieved_context:
         seed_queries: List[str] = []
         if user_input.strip():
             seed_queries.append(user_input.strip())
@@ -147,12 +148,19 @@ async def _assess_and_enrich_context(
                         "mode": "mix",
                         "top_k": 8,
                         "session_id": session_id,
-                        "file_ids": file_ids,
+                        "file_ids": normalized_file_ids,
                         "user_id": user_id,
                     }
                 )
             except Exception as exc:
                 logger.warning("Seed knowledge retrieval failed", query=query, error=str(exc))
+                continue
+
+            if not isinstance(kg_result, dict):
+                logger.warning(
+                    "Seed knowledge retrieval returned non-dict result",
+                    result_type=type(kg_result).__name__,
+                )
                 continue
 
             rag_queries.append(
@@ -195,6 +203,8 @@ async def _assess_and_enrich_context(
         user_message=assessment_message,
     )
     assessment = safe_parse_llm_json(assessment_raw, default={})
+    if not isinstance(assessment, dict):
+        assessment = {}
     is_sufficient = bool(assessment.get("is_sufficient", False))
 
     if is_sufficient:
@@ -222,12 +232,19 @@ async def _assess_and_enrich_context(
                     "mode": "mix",
                     "top_k": 5,
                     "session_id": session_id,
-                    "file_ids": state.get("file_ids"),
+                    "file_ids": normalized_file_ids,
                     "user_id": user_id,
                 }
             )
         except Exception as exc:
             logger.warning("Knowledge retrieval failed", query=query, error=str(exc))
+            continue
+
+        if not isinstance(kg_result, dict):
+            logger.warning(
+                "Knowledge retrieval returned non-dict result",
+                result_type=type(kg_result).__name__,
+            )
             continue
 
         rag_queries.append(
@@ -268,7 +285,7 @@ async def _assess_and_enrich_context(
                 "store": "web_search",
             }
         )
-        if web_result.get("results"):
+        if isinstance(web_result, dict) and web_result.get("results"):
             web_content = "\n\n".join(
                 [
                     f"## {item.get('title', 'Untitled')}\n{item.get('content', '')}"
@@ -473,8 +490,14 @@ async def generate_syllabus(
             session_id=session_id,
             user_id=user_id,
         )
-        retrieved_context = context_result["retrieved_context"]
-        rag_queries = context_result["rag_queries"]
+        if not isinstance(context_result, dict):
+            logger.warning(
+                "Context enrichment returned non-dict result; keep existing context",
+                result_type=type(context_result).__name__,
+            )
+        else:
+            retrieved_context = list(context_result.get("retrieved_context") or retrieved_context)
+            rag_queries = list(context_result.get("rag_queries") or rag_queries)
     except Exception as exc:
         logger.warning("Context enrichment failed, continuing with existing context", error=str(exc))
 

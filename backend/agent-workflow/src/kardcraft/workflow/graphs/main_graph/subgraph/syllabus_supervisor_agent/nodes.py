@@ -78,7 +78,9 @@ async def run_syllabus_supervisor(
     prompt = resolve_prompt(state.get("language"))
     decision = await run_react_structured(
         prompt=prompt,
-        tools=[invoke_syllabus_agent],
+        # Keep this decision step pure-read. Do not allow model to re-invoke
+        # syllabus generation with possibly mutated args (e.g., empty file_ids).
+        tools=[],
         response_schema=SyllabusDecision,
         user_payload={
             "learning_units_count": len(learning_units),
