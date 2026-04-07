@@ -2,32 +2,55 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Dict
 
-from kardcraft.llm.client import chat_complete
 from kardcraft.tools.clarification_tools import generate_clarification_questions
-from kardcraft.utils.llm_json import safe_parse_llm_json
 
-from .state import ClarificationGraphState
+from .state import State
+from .utils import (
+    DEFAULT_MISSING,
+    assess_information_sufficiency,
+    normalize_pending_questions,
+)
 
-DEFAULT_MISSING = ["learning_goal", "scope", "source_material"]
 
+async def run_clarification(state: State) -> Dict[str, object]:
+    session_id = str(state.get("session_id") or "").strip() or "unknown_session"
+    try:
+        round_index = int(state.get("round_index") or 1)
+    except Exception:
+        round_index = 1
 
-async def run_clarification(state: ClarificationGraphState) -> Dict[str, Any]:
+    asked_questions = [
+        str(x).strip() for x in (state.get("asked_questions") or []) if str(x).strip()
+    ]
     pending = state.get("pending_questions") or []
     if pending:
+        normalized_pending = normalize_pending_questions(
+            pending,
+            session_id=session_id,
+            round_index=round_index,
+            asked_questions=asked_questions,
+        )
         return {
             "status": "need_user_input",
+            "clarification_state": "collecting",
+            "termination_reason": None,
             "reason": "pending_questions_exist",
             "missing_info": [],
-            "pending_questions": pending,
+            "pending_questions": normalized_pending,
+            "message": (
+                normalized_pending[0]["question_text"]
+                if normalized_pending
+                else "Additional user input is required."
+            ),
         }
 
     user_input = str(state.get("user_input") or "").strip()
     message_knowledge = str(state.get("message_knowledge") or "").strip()
     file_count = len(state.get("file_ids") or [])
 
-    decision = await _assess_information_sufficiency(
+    decision = await assess_information_sufficiency(
         user_input=user_input,
         message_knowledge=message_knowledge,
         file_count=file_count,
@@ -35,14 +58,19 @@ async def run_clarification(state: ClarificationGraphState) -> Dict[str, Any]:
 
     is_sufficient = bool(decision.get("is_sufficient"))
     reason = str(decision.get("reason") or "clarification_decision")
-    missing_info = [str(x).strip() for x in (decision.get("missing_info") or []) if str(x).strip()]
+    missing_info = [
+        str(x).strip() for x in (decision.get("missing_info") or []) if str(x).strip()
+    ]
 
     if is_sufficient:
         return {
-            "status": "sufficient",
+            "status": "success",
+            "clarification_state": "resolved",
+            "termination_reason": None,
             "reason": reason,
             "missing_info": [],
             "pending_questions": [],
+            "message": "",
         }
 
     if not missing_info:
@@ -56,66 +84,30 @@ async def run_clarification(state: ClarificationGraphState) -> Dict[str, Any]:
             "context_summary": user_input,
         }
     )
+
+    normalized_pending = normalize_pending_questions(
+        questions,
+        session_id=session_id,
+        round_index=round_index,
+        asked_questions=asked_questions,
+    )
+    if not normalized_pending:
+        return {
+            "status": "failed",
+            "clarification_state": "exhausted",
+            "termination_reason": "clarification_generation_failed",
+            "reason": "clarification_generation_failed",
+            "missing_info": missing_info,
+            "pending_questions": [],
+            "message": "Unable to generate actionable clarification questions.",
+        }
+
     return {
         "status": "need_user_input",
+        "clarification_state": "collecting",
+        "termination_reason": None,
         "reason": reason,
         "missing_info": missing_info,
-        "pending_questions": questions,
+        "pending_questions": normalized_pending,
+        "message": normalized_pending[0]["question_text"],
     }
-
-
-async def _assess_information_sufficiency(
-    *,
-    user_input: str,
-    message_knowledge: str,
-    file_count: int,
-) -> Dict[str, Any]:
-    system_prompt = (
-        "You are a multilingual clarification judge. "
-        "Decide whether input is sufficient for accurate flashcard generation. "
-        "Return JSON only: "
-        "{\"is_sufficient\": bool, \"missing_info\": [string], \"reason\": string}."
-    )
-    user_prompt = (
-        f"user_input:\n{user_input}\n\n"
-        f"message_knowledge:\n{message_knowledge}\n\n"
-        f"file_count:{file_count}\n"
-    )
-
-    try:
-        response = await chat_complete(
-            intent="classify",
-            temperature=0.0,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        content = ""
-        if response and getattr(response, "choices", None):
-            msg = response.choices[0].message
-            content = getattr(msg, "content", "") or ""
-        parsed = safe_parse_llm_json(
-            content,
-            default={
-                "is_sufficient": False,
-                "missing_info": list(DEFAULT_MISSING),
-                "reason": "model_parse_fallback",
-            },
-        )
-        if not isinstance(parsed, dict):
-            parsed = {}
-        is_sufficient = bool(parsed.get("is_sufficient"))
-        missing_info = [str(x).strip() for x in (parsed.get("missing_info") or []) if str(x).strip()]
-        reason = str(parsed.get("reason") or "model_decision")
-        return {
-            "is_sufficient": is_sufficient,
-            "missing_info": [] if is_sufficient else (missing_info or list(DEFAULT_MISSING)),
-            "reason": reason,
-        }
-    except Exception:
-        return {
-            "is_sufficient": False,
-            "missing_info": list(DEFAULT_MISSING),
-            "reason": "model_unavailable",
-        }

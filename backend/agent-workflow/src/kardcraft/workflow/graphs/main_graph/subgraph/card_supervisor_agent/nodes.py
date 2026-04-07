@@ -10,7 +10,7 @@ from langchain_core.tools import tool
 from langgraph.runtime import Runtime
 
 from kardcraft.llm.client import chat_complete
-from kardcraft.tools.knowledge_tools import query_knowledge
+from kardcraft.tools.knowledge_tools import fetch_file_excerpt, query_knowledge
 from kardcraft.utils.llm_json import safe_parse_llm_json
 from kardcraft.workflow.graphs.main_graph.state import Context
 
@@ -63,13 +63,52 @@ async def _generate_cards_with_llm(payload: Dict[str, Any]) -> List[Dict[str, An
         preferred_model = available_models[0]
 
     evidence_blocks: List[Dict[str, str]] = []
+    has_uploaded_files = bool(file_ids and user_id)
     for unit in units[:8]:
         if not isinstance(unit, dict):
             continue
         title = str(unit.get("title") or "").strip()
         summary = str(unit.get("content_summary") or unit.get("description") or "").strip()
         evidence = ""
-        if file_ids and title:
+        if has_uploaded_files:
+            rag_query = "\n".join([x for x in [user_input, title, summary] if x]).strip()
+            if rag_query and user_id:
+                for file_id in file_ids[:2]:
+                    try:
+                        excerpt = await fetch_file_excerpt.ainvoke(
+                            {
+                                "file_id": file_id,
+                                "user_id": user_id,
+                                "query": rag_query,
+                                "max_chars": 1400,
+                            }
+                        )
+                        excerpt_text = str(excerpt.get("excerpt") or "").strip()
+                        if len(excerpt_text) > len(evidence):
+                            evidence = excerpt_text[:1600]
+                    except Exception:
+                        continue
+
+            # Fallback to ragix only when direct file excerpt misses.
+            if rag_query and not evidence:
+                try:
+                    rag = await query_knowledge.ainvoke(
+                        {
+                            "query": rag_query,
+                            "mode": "mix",
+                            "top_k": 5,
+                            "session_id": session_id,
+                            "file_ids": file_ids,
+                            "user_id": user_id,
+                        }
+                    )
+                    evidence = str(rag.get("content") or "").strip()[:1600]
+                except Exception:
+                    evidence = ""
+            if not evidence:
+                # When files exist, drop units without file-grounded evidence.
+                continue
+        elif title:
             rag_query = "\n".join([x for x in [user_input, title, summary] if x]).strip()
             if rag_query:
                 try:
@@ -94,6 +133,10 @@ async def _generate_cards_with_llm(payload: Dict[str, Any]) -> List[Dict[str, An
                 "evidence": evidence,
             }
         )
+
+    if has_uploaded_files and not evidence_blocks:
+        # Hard stop: do not generate cards detached from uploaded file content.
+        return []
 
     system_prompt = (
         "You are a multilingual flashcard generator. "
@@ -643,6 +686,23 @@ async def run_card_supervisor(
             }
 
     final_cards = approved_cards if approved_cards else [c for c in best_effort_cards if isinstance(c, dict)]
+    if not final_cards:
+        return {
+            "status": "failed",
+            "reason": "missing_file_grounded_evidence",
+            "approved_cards": [],
+            "quality_report": last_report,
+            "qa_loop_report": {
+                "max_iterations": max_iterations,
+                "iterations_used": max_iterations,
+                "best_score": best_score,
+                "final_score": final_score,
+                "exit_reason": "no_cards_generated",
+                "review_findings": review_findings_log,
+                "judge_scores": judge_scores_log,
+                "fix_actions": fix_actions_log,
+            },
+        }
     return {
         "status": "quality_pass",
         "reason": "max_iterations_reached_best_effort",

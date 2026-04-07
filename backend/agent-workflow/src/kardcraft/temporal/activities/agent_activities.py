@@ -133,6 +133,7 @@ class AgentActivities:
             "template_id": template_id,
             "template_version": template_version,
             "selected_template_profile": template_profile or None,
+            "clarification_responses": input_payload.get("clarification_responses") or {},
         }
 
         # 增强的progress callback，确保定期heartbeat
@@ -213,40 +214,18 @@ class AgentActivities:
                 self._deep_clean_result(result.result) if result.result else {}
             )
             if isinstance(cleaned_result, dict):
+                self._validate_clarification_contract(cleaned_result)
                 workflow_error = str(cleaned_result.get("error") or "").strip()
                 if workflow_error:
-                    normalized_error = workflow_error.lower()
-                    pending_questions = cleaned_result.get("pending_questions") or []
-                    recoverable_decisions = {
-                        "syllabus_decision",
-                        "evidence_decision",
-                        "clarification_decision",
-                        "need_user_input",
-                        "max_iterations_reached",
-                        "missing_learning_units",
-                    }
-                    recoverable_error_phrases = (
-                        "no relevant context",
-                        "no other sources were available",
-                        "insufficient context",
-                    )
-                    if (
-                        normalized_error in recoverable_decisions
-                        or any(phrase in normalized_error for phrase in recoverable_error_phrases)
-                        or bool(pending_questions)
-                    ):
+                    if self._is_need_user_input_result(cleaned_result):
                         cleaned_result["status"] = "need_user_input"
-                        question = str(cleaned_result.get("question") or "").strip()
-                        first_pending = ""
-                        if pending_questions and isinstance(pending_questions, list):
-                            for item in pending_questions:
-                                candidate = str(item or "").strip()
-                                if candidate:
-                                    first_pending = candidate
-                                    break
                         if not str(cleaned_result.get("message") or "").strip():
                             cleaned_result["message"] = (
-                                question or first_pending or workflow_error
+                                str(cleaned_result.get("question") or "").strip()
+                                or self._extract_first_pending_question(
+                                    cleaned_result.get("pending_questions")
+                                )
+                                or workflow_error
                             )
                     else:
                         raise ValueError(f"Workflow returned error state: {workflow_error}")
@@ -255,86 +234,16 @@ class AgentActivities:
             approved_cards = cleaned_result.get("approved_cards", [])
             saved_card_ids = cleaned_result.get("saved_card_ids", [])
             intent_type = cleaned_result.get("intent_type")
-            raw_status = str(cleaned_result.get("status") or "").strip().lower()
             status = (
-                "need_user_input"
-                if raw_status in {"need_user_input", "waiting_user_input"}
-                else "success"
+                "need_user_input" if self._is_need_user_input_result(cleaned_result) else "success"
             )
-            message = (
-                str(
-                    cleaned_result.get("message")
-                    or cleaned_result.get("question")
-                    or ""
-                ).strip()
-                if status == "need_user_input"
-                else "Workflow completed successfully"
+            message = self._resolve_outcome_message(
+                cleaned_result=cleaned_result,
+                status=status,
+                final_cards=final_cards,
+                approved_cards=approved_cards,
+                saved_card_ids=saved_card_ids,
             )
-            if status == "need_user_input" and not message:
-                message = "Additional user input is required to continue."
-
-            if final_cards:
-                message = f"Generated {len(final_cards)} flashcards"
-            elif approved_cards:
-                message = f"Generated and approved {len(approved_cards)} flashcards"
-            elif saved_card_ids:
-                message = f"Successfully saved {len(saved_card_ids)} cards"
-            else:
-                # 检查是否提取到了概念
-                knowledge_nodes = cleaned_result.get("knowledge_nodes", [])
-                selected_cards = cleaned_result.get("selected_cards", [])
-                candidate_cards = cleaned_result.get("candidate_cards", [])
-
-                if not knowledge_nodes or len(knowledge_nodes) == 0:
-                    # 没有提取到概念，返回更有意义的提示
-                    message = "抱歉，我无法从您的输入中提取到任何概念。请提供更详细的学习内容，例如一段文本、教程或主题的详细描述，这样我才能帮您生成闪卡。"
-                elif not selected_cards or len(selected_cards) == 0:
-                    # 提取到了概念但没有生成卡片
-                    message = f"我已提取到 {len(knowledge_nodes)} 个概念，但未能生成合格的闪卡。请尝试提供更详细的内容或调整难度设置。"
-                else:
-                    # 尝试从结果中提取文本内容
-                    text_candidates = [
-                        "output",
-                        "text",
-                        "response",
-                        "content",
-                        "result",
-                        "answer",
-                        "message",
-                    ]
-                    for key in text_candidates:
-                        if key in cleaned_result:
-                            val = cleaned_result[key]
-                            if isinstance(val, str) and val.strip():
-                                lower_val = val.strip().lower()
-                                if lower_val in [
-                                    "task completed",
-                                    "all done",
-                                    "done",
-                                    "completed",
-                                    "success",
-                                ]:
-                                    continue
-                                if len(val.strip()) > 10:
-                                    message = val.strip()
-                                    break
-                            elif isinstance(val, dict):
-                                for subkey in text_candidates:
-                                    if (
-                                        subkey in val
-                                        and isinstance(val[subkey], str)
-                                        and val[subkey].strip()
-                                    ):
-                                        subval = val[subkey].strip()
-                                        if len(subval) > 10:
-                                            message = subval
-                                            break
-                                if message != "Workflow completed successfully":
-                                    break
-
-                # Fallback: 如果以上都没有设置 message
-                if message == "Workflow completed successfully" or not message:
-                    message = "工作流执行完成，但没有生成任何结果。"
 
             if intent_type:
                 message = f"[{intent_type}] {message}"
@@ -716,6 +625,94 @@ class AgentActivities:
                 },
             }
         )
+
+    def _extract_first_pending_question(self, pending_questions: Any) -> str:
+        if not isinstance(pending_questions, list):
+            return ""
+        for item in pending_questions:
+            if not isinstance(item, dict):
+                continue
+            candidate = str(item.get("question_text") or "").strip()
+            if candidate:
+                return candidate
+        return ""
+
+    def _is_need_user_input_result(self, cleaned_result: Dict[str, Any]) -> bool:
+        raw_status = str(cleaned_result.get("status") or "").strip().lower()
+        return raw_status == "need_user_input"
+
+    def _resolve_outcome_message(
+        self,
+        *,
+        cleaned_result: Dict[str, Any],
+        status: str,
+        final_cards: Any,
+        approved_cards: Any,
+        saved_card_ids: Any,
+    ) -> str:
+        if status == "need_user_input":
+            return (
+                str(cleaned_result.get("message") or "").strip()
+                or self._extract_first_pending_question(cleaned_result.get("pending_questions"))
+                or "Additional user input is required to continue."
+            )
+
+        if final_cards:
+            return f"Generated {len(final_cards)} flashcards"
+        if approved_cards:
+            return f"Generated and approved {len(approved_cards)} flashcards"
+        if saved_card_ids:
+            return f"Successfully saved {len(saved_card_ids)} cards"
+
+        message = str(cleaned_result.get("message") or "").strip()
+        if message and message.lower() not in {"task completed", "all done", "done", "completed", "success"}:
+            return message
+        return "Workflow completed successfully"
+
+    def _validate_clarification_contract(self, cleaned_result: Dict[str, Any]) -> None:
+        status = str(cleaned_result.get("status") or "").strip().lower()
+        if status not in {"", "success", "need_user_input", "failed"}:
+            raise ValueError(f"Invalid status in workflow result: {status}")
+        if status != "need_user_input":
+            return
+
+        clarification_state = str(cleaned_result.get("clarification_state") or "").strip().lower()
+        if clarification_state not in {"collecting", "resolved", "exhausted"}:
+            raise ValueError("need_user_input result must include valid clarification_state")
+
+        pending_questions = cleaned_result.get("pending_questions")
+        if not isinstance(pending_questions, list):
+            raise ValueError("need_user_input result requires pending_questions as list")
+
+        if clarification_state == "collecting" and len(pending_questions) == 0:
+            raise ValueError("collecting clarification_state requires non-empty pending_questions")
+
+        if clarification_state == "exhausted":
+            termination_reason = str(cleaned_result.get("termination_reason") or "").strip().lower()
+            if termination_reason != "exhausted":
+                raise ValueError("exhausted clarification_state requires termination_reason=exhausted")
+
+        for idx, item in enumerate(pending_questions):
+            if not isinstance(item, dict):
+                raise ValueError(f"pending_questions[{idx}] must be an object")
+            question_id = str(item.get("id") or "").strip()
+            question_text = str(item.get("question_text") or "").strip()
+            info_type = str(item.get("info_type") or "").strip()
+            required = item.get("required")
+            input_type = str(item.get("input_type") or "").strip()
+            options = item.get("options")
+            if not question_id:
+                raise ValueError(f"pending_questions[{idx}].id is required")
+            if not question_text:
+                raise ValueError(f"pending_questions[{idx}].question_text is required")
+            if not info_type:
+                raise ValueError(f"pending_questions[{idx}].info_type is required")
+            if not isinstance(required, bool):
+                raise ValueError(f"pending_questions[{idx}].required must be boolean")
+            if input_type not in {"free_text", "single_select", "multi_select", "file_upload"}:
+                raise ValueError(f"pending_questions[{idx}].input_type is invalid")
+            if not isinstance(options, list):
+                raise ValueError(f"pending_questions[{idx}].options must be an array")
 
     def _deep_clean_result(self, data: Any, depth: int = 0, max_depth: int = 10) -> Any:
         """

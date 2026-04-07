@@ -270,27 +270,17 @@ async def run_evidence_supervisor(
 
     user_input = str(state.get("user_input") or "").strip()
     strategy_trace: List[str] = []
+    has_uploaded_files = bool(state.get("file_ids") or [])
     rag_content = ""
     rag_refs: List[Dict[str, Any]] = []
     first = learning_units[0]
     rag_query = f"{user_input}\n{first.get('title', '')}\n{first.get('content_summary', '')}".strip()
-    strategy_trace.append("search_ragix")
-    rag_result = await query_ragix_evidence.ainvoke(
-        {
-            "query": rag_query,
-            "top_k": 8,
-            "session_id": context.session_id if context else None,
-            "file_ids": state.get("file_ids") or [],
-            "user_id": context.user_id if context else None,
-        }
-    )
-    rag_content = str(rag_result.get("content") or "").strip()
-    rag_refs = rag_result.get("refs") or []
-
     excerpt_result: Dict[str, Any] = {}
     excerpt_content = ""
     excerpt_refs: List[Dict[str, Any]] = []
-    if not rag_content:
+    # File-driven path: always try direct file excerpt first so downstream cards are grounded
+    # in uploaded file content, not generic retrieval fallback.
+    if has_uploaded_files:
         strategy_trace.append("fetch_file_excerpt")
         excerpt_result = await fetch_history_file_excerpts.ainvoke(
             {
@@ -305,9 +295,22 @@ async def run_evidence_supervisor(
         excerpt_content = str(excerpt_result.get("content") or "").strip()
         excerpt_refs = excerpt_result.get("refs") or []
 
+    strategy_trace.append("search_ragix")
+    rag_result = await query_ragix_evidence.ainvoke(
+        {
+            "query": rag_query,
+            "top_k": 8,
+            "session_id": context.session_id if context else None,
+            "file_ids": state.get("file_ids") or [],
+            "user_id": context.user_id if context else None,
+        }
+    )
+    rag_content = str(rag_result.get("content") or "").strip()
+    rag_refs = rag_result.get("refs") or []
+
     lazy_index_result: Dict[str, Any] = {}
     lazy_index_content = ""
-    if not rag_content and not excerpt_content and (state.get("file_ids") or []):
+    if not rag_content and not excerpt_content and has_uploaded_files:
         strategy_trace.append("lazy_index_retry")
         lazy_index_result = await lazy_index_and_retry_ragix.ainvoke(
             {
@@ -323,36 +326,22 @@ async def run_evidence_supervisor(
 
     deep_result: Dict[str, Any] = {}
     deep_content = ""
-    if not rag_content and not excerpt_content and not lazy_index_content:
+    # If user has uploaded files, do not use deep research to fabricate/replace missing
+    # file evidence. Force an explicit evidence-missing outcome instead.
+    if not has_uploaded_files and not rag_content and not excerpt_content and not lazy_index_content:
         strategy_trace.append("deep_research")
         deep_result = await invoke_deep_research.ainvoke({"query": user_input})
         deep_content = str(deep_result.get("content") or "").strip()
 
     content = rag_content or excerpt_content or lazy_index_content or deep_content
 
-    prompt = resolve_prompt(state.get("language"))
-    decision = await run_react_structured(
-        prompt=prompt,
-        tools=[invoke_deep_research, query_ragix_evidence, fetch_history_file_excerpts, lazy_index_and_retry_ragix],
-        response_schema=EvidenceDecision,
-        user_payload={
-            "has_ragix_content": bool(rag_content),
-            "has_excerpt_content": bool(excerpt_content),
-            "has_lazy_index_content": bool(lazy_index_content),
-            "has_deep_research_content": bool(deep_content),
-            "required_output": "Decide evidence_ready/need_user_input/failed.",
-        },
-        name="evidence_supervisor_react",
-    )
-
-    status = str(decision.get("status") or "").strip()
-    if status not in {"evidence_ready", "need_user_input", "failed"}:
-        status = "failed"
-    # Business-safe constraint: cannot be evidence_ready without any evidence payload.
-    if status == "evidence_ready" and not content:
-        status = "failed"
-    elif content and status != "failed":
-        status = "evidence_ready"
+    # Deterministic gating:
+    # - Any non-empty evidence content => evidence_ready
+    # - No content => need_user_input
+    #
+    # This avoids LLM decision instability overriding concrete evidence.
+    decision: Dict[str, Any] = {"status": "need_user_input", "reason": "insufficient_evidence"}
+    status = "evidence_ready" if content else "need_user_input"
 
     evidence_items = deep_result.get("evidence_items") or []
     if rag_content and not evidence_items:
@@ -387,11 +376,13 @@ async def run_evidence_supervisor(
     pending_questions: List[Dict[str, Any]] = []
     if not content and status != "failed":
         status = "need_user_input"
+    if has_uploaded_files and not (excerpt_content or lazy_index_content or rag_content):
+        status = "need_user_input"
     if status == "need_user_input" and not pending_questions:
         pending_questions = [
             {
                 "question_id": 1,
-                "question_text": "当前无法从检索结果中提取足够证据。请补充主题范围、关键知识点，或上传更完整文件。",
+                "question_text": "当前未能从已上传文件提取到可用证据，请重传文件或稍后重试。",
                 "info_type": "evidence_context",
                 "is_required": True,
                 "suggested_answers": [],

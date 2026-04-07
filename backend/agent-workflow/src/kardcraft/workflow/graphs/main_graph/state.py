@@ -49,6 +49,15 @@ class State(TypedDict, total=False):
     classification_confidence: Optional[float]
     preflight_status: Optional[str]     # pass_through | need_user_input | skipped
     preflight_reason: Optional[str]
+    status: Optional[str]               # success | need_user_input | failed
+    message: Optional[str]
+    question: Optional[str]
+    clarification_state: Optional[str]  # collecting | resolved | exhausted
+    termination_reason: Optional[str]
+    clarification_round: Optional[int]
+    max_rounds: Optional[int]
+    clarification_responses: Dict[str, str]
+    asked_questions: List[str]
 
     # Stage statuses
     syllabus_status: Optional[str]       # outline_ready | need_user_input | failed
