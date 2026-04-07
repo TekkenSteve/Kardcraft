@@ -88,22 +88,25 @@ class LightRAGRESTClient:
                 return response.json()  
             except httpx.HTTPStatusError as e:
                 status_code = e.response.status_code if e.response is not None else None
-                if status_code is not None and 400 <= status_code < 500:
+                detail = ""
+                try:
+                    detail = e.response.text if e.response is not None else ""
+                except Exception:
                     detail = ""
-                    try:
-                        detail = e.response.text
-                    except Exception:
-                        detail = ""
+                if status_code is not None and 400 <= status_code < 500:
                     raise RuntimeError(
                         f"LightRAG request failed: {method} {endpoint} "
                         f"status={status_code} detail={detail[:500]}"
                     ) from e
                 if attempt == self.config.max_retries - 1:
-                    raise
+                    raise RuntimeError(
+                        f"LightRAG request failed after retries: {method} {endpoint} "
+                        f"status={status_code} detail={detail[:500]}"
+                    ) from e
                 await asyncio.sleep(self.config.retry_delay * (attempt + 1))
             except Exception as e:  
                 if attempt == self.config.max_retries - 1:  
-                    raise  
+                    raise  # re-raise original exception type
                 await asyncio.sleep(self.config.retry_delay * (attempt + 1))
 
     # ==================== 文档管理 API ====================  

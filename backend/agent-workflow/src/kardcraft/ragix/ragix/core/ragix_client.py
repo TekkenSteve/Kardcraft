@@ -185,6 +185,15 @@ class RagixClient:
             return
 
         workspace = session_id or "default"
+        client = self._get_client(session_id)
+
+        # If workspace data was purged by upstream eviction, invalidate local index cache.
+        if await self._workspace_appears_empty(client, session_id):
+            prefix = f"{workspace}:"
+            stale_keys = [key for key in self._indexed_files if key.startswith(prefix)]
+            for key in stale_keys:
+                self._indexed_files.discard(key)
+
         indexed_new = False
         for file_id in file_ids:
             cache_key = f"{workspace}:{user_id}:{file_id}"
@@ -199,10 +208,34 @@ class RagixClient:
 
         if indexed_new:
             try:
-                client = self._get_client(session_id)
                 await client.clear_cache(workspace=session_id)
             except Exception as e:
                 logger.warning(f"Failed to clear LightRAG cache after indexing: {e}")
+
+    async def _workspace_appears_empty(
+        self,
+        client: LightRAGRESTClient,
+        session_id: Optional[str],
+    ) -> bool:
+        try:
+            counts = await client.get_document_status_counts(workspace=session_id)
+            if not isinstance(counts, dict):
+                return False
+
+            # Preferred shapes from LightRAG APIs.
+            for key in ("total", "total_count", "count"):
+                raw = counts.get(key)
+                if isinstance(raw, int):
+                    return raw <= 0
+
+            # Fallback: sum all integer status counters.
+            int_values = [v for v in counts.values() if isinstance(v, int)]
+            if int_values:
+                return sum(int_values) <= 0
+        except Exception:
+            # Fail-open: keep cache when status probe is unavailable.
+            return False
+        return False
 
     async def shutdown(self) -> None:
         await self.container.shutdown()

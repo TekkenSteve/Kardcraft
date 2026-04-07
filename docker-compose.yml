@@ -143,7 +143,7 @@ services:
 
   # Milvus向量数据库
   milvus:
-    image: milvusdb/milvus:v2.3.0
+    image: milvusdb/milvus:v2.5.5
     container_name: kardcraft-milvus
     restart: always
     ports:
@@ -163,28 +163,35 @@ services:
     networks:
       - kardcraft-network
 
-  # LightRAG Server
+  # LightRAG multi-tenant gateway (official API-compatible entry)
   lightrag:
+    build:
+      context: ./backend/lightrag/multitenant_server
+      dockerfile: Dockerfile
     container_name: kardcraft-lightrag
-    image: ghcr.io/hkuds/lightrag:latest
-    # build:
-    #   context: .
-    #   dockerfile: Dockerfile
-    #   tags:
-    #     - ghcr.io/hkuds/lightrag:latest
     ports:
       - "${LIGHTRAG_HOST_PORT:-9621}:9621"
+    environment:
+      - LIGHTRAG_PROCESS_CMD=/app/.venv/bin/lightrag-server
+      - LIGHTRAG_PROCESS_STARTUP_TIMEOUT_SEC=420
+      - LIGHTRAG_TEMPLATE_ENV_FILE=/app/.env
+      - LIGHTRAG_WORKSPACES_ROOT=/data/lightrag_workspaces
+      - LIGHTRAG_GLOBAL_MAX_INFLIGHT=${LIGHTRAG_GLOBAL_MAX_INFLIGHT:-128}
+      - LIGHTRAG_PER_WORKSPACE_MAX_INFLIGHT=${LIGHTRAG_PER_WORKSPACE_MAX_INFLIGHT:-16}
+      - LIGHTRAG_POOL_SIZE_PER_WORKSPACE=${LIGHTRAG_POOL_SIZE_PER_WORKSPACE:-4}
+      - LIGHTRAG_MAX_WORKSPACE_COUNT=${LIGHTRAG_MAX_WORKSPACE_COUNT:-1}
+      - LIGHTRAG_WORKSPACE_IDLE_TTL_SEC=${LIGHTRAG_WORKSPACE_IDLE_TTL_SEC:-1800}
+      - LIGHTRAG_BORROW_TIMEOUT_SEC=${LIGHTRAG_BORROW_TIMEOUT_SEC:-10}
     volumes:
-      - ./data/rag_storage:/app/data/rag_storage
-      - ./data/inputs:/app/data/inputs
+      - ./.env.lightrag:/app/.env:ro
+      - ./data/lightrag_workspaces:/data/lightrag_workspaces
       - ./config.ini:/app/config.ini
-      - ./.env.lightrag:/app/.env
-    env_file:
-      - .env.lightrag
     restart: always
     depends_on:
-      - neo4j
-      - milvus
+      neo4j:
+        condition: service_healthy
+      milvus:
+        condition: service_started
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:

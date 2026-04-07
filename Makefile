@@ -2,7 +2,7 @@
 # Kardcraft Makefile
 # ============================================================================
 
-.PHONY: help build build-all test test-all up down logs clean protobuf protobuf-lint protobuf-check
+.PHONY: help build build-all test test-all up down logs clean protobuf protobuf-lint protobuf-check verify-lightrag-isolation verify-lightrag-isolation-stress
 
 # 默认目标
 help:
@@ -29,6 +29,8 @@ help:
 	@echo "  make protobuf      生成protobuf代码"
 	@echo "  make protobuf-lint 校验protobuf schema"
 	@echo "  make protobuf-check 校验protobuf生成产物是否最新"
+	@echo "  make verify-lightrag-isolation 验证LightRAG多租户隔离"
+	@echo "  make verify-lightrag-isolation-stress 多轮验证LightRAG多租户隔离"
 	@echo "  make clean         清理构建文件"
 
 # ============================================================================
@@ -117,6 +119,14 @@ protobuf-check:
 	@echo "检查protobuf生成产物是否最新..."
 	./backend/protobuf/generate.sh
 	git diff --exit-code -- backend/task-orchestrator/internal/proto backend/file-storage/pkg/grpc/pb backend/agent-workflow/src/kardcraft
+
+verify-lightrag-isolation:
+	@echo "验证LightRAG多租户隔离..."
+	./scripts/verify_lightrag_isolation.sh
+
+verify-lightrag-isolation-stress:
+	@echo "多轮验证LightRAG多租户隔离..."
+	LIGHTRAG_VERIFY_ROUNDS=$${LIGHTRAG_VERIFY_ROUNDS:-10} ./scripts/verify_lightrag_isolation.sh
 
 clean:
 	@echo "清理构建文件..."
