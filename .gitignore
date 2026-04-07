@@ -30,7 +30,7 @@ env.bak/
 venv.bak/
 
 # UV package manager
-uv.lock
+# uv.lock
 .python-version
 
 # IDE and editors
