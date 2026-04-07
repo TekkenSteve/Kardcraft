@@ -50,4 +50,4 @@ config.local.yaml
 
 # Test data
 testdata/
-storage/
+# storage/
