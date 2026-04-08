@@ -58,8 +58,7 @@ async def _shutdown() -> None:
     await pool.close_all()
 
 
-@app.get("/health")
-async def health() -> dict:
+def _gateway_health_payload() -> dict:
     return {
         "status": "ok",
         "service": "lightrag-multitenant-gateway",
@@ -69,7 +68,12 @@ async def health() -> dict:
     }
 
 
-@app.get("/__pool/stats")
+@app.get("/gateway/health")
+async def gateway_health() -> dict:
+    return _gateway_health_payload()
+
+
+@app.get("/gateway/pool/stats")
 async def pool_stats() -> dict:
     return await pool.stats()
 
@@ -78,7 +82,7 @@ async def pool_stats() -> dict:
 async def proxy(full_path: str, request: Request) -> Response:
     path = f"/{full_path}"
 
-    if path in {"/health", "/__pool/stats"}:
+    if path in {"/gateway/health", "/gateway/pool/stats"}:
         raise HTTPException(status_code=404, detail="Not found")
 
     workspace = _resolve_workspace(request)

@@ -30,8 +30,14 @@ class LightRAGRESTClient:
                 timeout=self.config.timeout  
             )  
               
-            # 测试连接  
-            await self._client.get("/health")  
+            # Prefer gateway health for multitenant gateway deployments.
+            # Fallback to /health for direct lightrag-server deployments.
+            gateway_resp = await self._client.get("/gateway/health")
+            if gateway_resp.status_code == 404:
+                fallback_resp = await self._client.get("/health")
+                fallback_resp.raise_for_status()
+            else:
+                gateway_resp.raise_for_status()
             self._initialized = True  
             logger.info(f"Connected to LightRAG server at {self.config.base_url}")  
             return True  
@@ -41,7 +47,7 @@ class LightRAGRESTClient:
             return False  
 
     async def get_health(self) -> Dict[str, Any]:
-        """Get server health status (/health)."""
+        """Get runtime health status from /health."""
         if not self._initialized:
             ok = await self.initialize()
             if not ok:
@@ -49,6 +55,30 @@ class LightRAGRESTClient:
 
         assert self._client is not None
         response = await self._client.get("/health")
+        response.raise_for_status()
+        return response.json()
+
+    async def get_gateway_health(self) -> Dict[str, Any]:
+        """Get gateway health status from /gateway/health."""
+        if not self._initialized:
+            ok = await self.initialize()
+            if not ok:
+                raise RuntimeError("Client not initialized")
+
+        assert self._client is not None
+        response = await self._client.get("/gateway/health")
+        response.raise_for_status()
+        return response.json()
+
+    async def get_gateway_pool_stats(self) -> Dict[str, Any]:
+        """Get gateway pool stats from /gateway/pool/stats."""
+        if not self._initialized:
+            ok = await self.initialize()
+            if not ok:
+                raise RuntimeError("Client not initialized")
+
+        assert self._client is not None
+        response = await self._client.get("/gateway/pool/stats")
         response.raise_for_status()
         return response.json()
       

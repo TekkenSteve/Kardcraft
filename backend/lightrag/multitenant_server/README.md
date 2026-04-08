@@ -14,8 +14,9 @@ For each workspace, it starts and reuses an official `lightrag-server` process.
 
 ## Endpoints
 
-- `GET /health` : gateway health.
-- `GET /__pool/stats` : pool statistics.
+- `GET /gateway/health` : gateway health.
+- `GET /gateway/pool/stats` : pool statistics.
+- `GET /health` : proxied upstream runtime health for the resolved workspace.
 - `ANY /{path:path}` : proxied to the resolved workspace runtime with original method/path/query/body.
 
 ## Environment variables
