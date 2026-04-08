@@ -22,6 +22,7 @@ For each workspace, it starts and reuses an official `lightrag-server` process.
 
 - `LIGHTRAG_MT_HOST` (default `0.0.0.0`)
 - `LIGHTRAG_MT_PORT` (default `9621`)
+- `LIGHTRAG_MT_LOG_LEVEL` (default `info`)
 - `LIGHTRAG_UPSTREAM_TIMEOUT_SEC` (default `300`)
 - `LIGHTRAG_PROCESS_CMD` (default `lightrag-server`)
 - `LIGHTRAG_PROCESS_BIND_HOST` (default `127.0.0.1`)

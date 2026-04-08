@@ -8,6 +8,7 @@ from dataclasses import dataclass
 class Settings:
     listen_host: str = os.getenv("LIGHTRAG_MT_HOST", "0.0.0.0")
     listen_port: int = int(os.getenv("LIGHTRAG_MT_PORT", "9621"))
+    log_level: str = os.getenv("LIGHTRAG_MT_LOG_LEVEL", "info").lower()
 
     upstream_timeout_sec: float = float(os.getenv("LIGHTRAG_UPSTREAM_TIMEOUT_SEC", "300"))
     process_cmd: str = os.getenv("LIGHTRAG_PROCESS_CMD", "lightrag-server")

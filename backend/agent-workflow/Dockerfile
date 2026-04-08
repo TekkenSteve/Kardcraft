@@ -9,7 +9,7 @@ FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS builder
 WORKDIR /app
 
 # 仅复制依赖定义 - 最大化缓存命中率
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock ./
 # 依赖定义（缓存层）
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-dev --no-install-project --quiet
