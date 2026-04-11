@@ -2,6 +2,8 @@ package handlers
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -843,7 +845,9 @@ func persistWorkspaceLifecycleAuditEvent(
 	if strings.TrimSpace(taskID) == "" {
 		taskID = fmt.Sprintf("task_audit_%d", time.Now().UTC().UnixNano())
 	}
-	streamID := fmt.Sprintf("workspace_lifecycle:%s:%d", taskID, time.Now().UTC().UnixNano())
+	rawStreamID := fmt.Sprintf("workspace_lifecycle:%s:%d", taskID, time.Now().UTC().UnixNano())
+	sum := sha1.Sum([]byte(rawStreamID))
+	streamID := "workspace_lifecycle:" + hex.EncodeToString(sum[:])
 	if err := deps.ReadModel.InsertEvent(
 		ctx,
 		sessionID,

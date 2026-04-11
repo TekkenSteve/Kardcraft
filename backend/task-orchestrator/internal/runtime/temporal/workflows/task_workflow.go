@@ -230,10 +230,9 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 				state.CancelledBy = sig.RequestBy
 				state.CancelledAt = sig.Timestamp
 			})
-			selector.AddFuture(activityFuture, func(f workflow.Future) {
-				activityDone = true
-				activityErr = f.Get(activityCtx, &result)
-			})
+			// Paused means user explicitly wants execution to stop progressing.
+			// Do not consume activity completion while paused; resume/cancel controls
+			// when workflow state may continue forward.
 			selector.Select(ctx)
 			continue
 		}

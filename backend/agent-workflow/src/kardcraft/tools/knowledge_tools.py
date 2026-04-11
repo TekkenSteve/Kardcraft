@@ -66,7 +66,8 @@ async def query_knowledge(
     logger.info(
         "query_knowledge tool called",
         query=query[:100],
-        session_id=bool(session_id),
+        session_present=bool(session_id),
+        session_id=(session_id or "default"),
         file_count=len(file_ids) if file_ids else 0,
         mode=mode,
     )

@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import hashlib
-import re
+import os
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from langgraph.runtime import Runtime
 
@@ -13,269 +12,48 @@ from kardcraft.card_templates import (
     TemplatePreparationError,
     prepare_template_context_for_main_graph,
 )
-from kardcraft.llm.client import chat_complete
+from kardcraft.tools.knowledge_tools import query_knowledge
+from kardcraft.utils.document_registry import build_incremental_document_registry
 from kardcraft.utils.language import detect_preferred_language_with_llm
-from kardcraft.utils.llm_json import safe_parse_llm_json
+from kardcraft.utils.logger import logger
+from kardcraft.utils.main_graph_helpers import (
+    collect_asked_question_texts,
+    determine_query_scope,
+    extract_first_question,
+    extract_pending_question_ids,
+    information_gain,
+    information_gain_score,
+    is_file_tree_path_enabled,
+    normalize_clarification_responses,
+    normalize_pending_questions_strict,
+    scope_budget,
+    select_candidate_nodes,
+    separate_content_and_task,
+    should_trigger_preflight,
+    validate_pending_questions_strict,
+)
+from kardcraft.workflow.graphs.main_graph.rollout_gate import rollout_enabled_for_user
 from kardcraft.workflow.graphs.clarification_graph.tool import clarify
-from kardcraft.workflow.graphs.main_graph.state import Context, State
+from kardcraft.workflow.graphs.main_graph.prompt import build_node_query
+from kardcraft.workflow.graphs.main_graph.state import (
+    EVIDENCE_STORE_SCHEMA_VERSION,
+    Context,
+    State,
+)
 from kardcraft.workflow.graphs.main_graph.subgraph.card_supervisor_agent import (
     card_supervisor_agent,
 )
-from kardcraft.workflow.graphs.main_graph.subgraph.evidence_supervisor_agent import (
-    evidence_supervisor_agent,
-)
 from kardcraft.workflow.graphs.main_graph.subgraph.intent_classifier_agent import intent_classifier
-from kardcraft.workflow.graphs.main_graph.subgraph.syllabus_supervisor_agent import (
-    syllabus_supervisor_agent,
-)
 
-SOC_PRECHECK_INTENTS = {"create_cards"}
-SOC_PREFLIGHT_CONFIDENCE_THRESHOLD = 0.75
 SOC_MAX_ROUNDS = 3
 SOC_MIN_INFORMATION_GAIN = 0.05
 
-
-def _extract_first_question(pending_questions: list[dict[str, Any]]) -> str:
-    for item in pending_questions:
-        if not isinstance(item, dict):
-            continue
-        text = str(item.get("question_text") or "").strip()
-        if text:
-            return text
-    return ""
+FILE_TREE_PATH_MODEL_ENV = "KARD_FILE_TREE_PAGEINDEX_MODEL"
+QA_SAFETY_CAP_ENV = "KARD_QA_SAFETY_CAP"
 
 
-def _normalize_text(value: Any) -> str:
-    text = str(value or "").strip().lower()
-    if not text:
-        return ""
-    text = re.sub(r"\s+", " ", text)
-    return text
-
-
-def _build_question_id(session_id: str, question_text: str, round_index: int) -> str:
-    normalized_question = _normalize_text(question_text)
-    seed = f"{session_id}|{normalized_question}|{int(round_index)}"
-    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
-    return f"q_{digest}"
-
-
-def _token_set(value: str) -> set[str]:
-    return {tok for tok in _normalize_text(value).split(" ") if tok}
-
-
-def _information_gain_score(responses: dict[str, str], base_context: str) -> float:
-    merged_response = " ".join(str(v).strip() for v in responses.values() if str(v).strip())
-    response_tokens = _token_set(merged_response)
-    if not response_tokens:
-        return 0.0
-    base_tokens = _token_set(base_context)
-    new_tokens = response_tokens - base_tokens
-    return float(len(new_tokens) / max(1, len(response_tokens)))
-
-
-def _extract_pending_question_ids(pending_questions: list[dict[str, Any]]) -> set[str]:
-    ids: set[str] = set()
-    for item in pending_questions:
-        if not isinstance(item, dict):
-            continue
-        question_id = str(item.get("id") or "").strip()
-        if question_id:
-            ids.add(question_id)
-    return ids
-
-
-def _collect_asked_question_texts(existing: Any, pending_questions: list[dict[str, Any]]) -> list[str]:
-    asked: list[str] = []
-    if isinstance(existing, list):
-        asked.extend([str(x).strip() for x in existing if str(x).strip()])
-    for item in pending_questions:
-        if not isinstance(item, dict):
-            continue
-        text = str(item.get("question_text") or "").strip()
-        if text:
-            asked.append(text)
-    deduped: list[str] = []
-    for text in asked:
-        if text not in deduped:
-            deduped.append(text)
-    return deduped
-
-
-def _normalize_clarification_responses(raw: Any) -> tuple[dict[str, str], str]:
-    if raw is None:
-        return {}, ""
-    if not isinstance(raw, dict):
-        return {}, "clarification_responses must be an object"
-
-    normalized: dict[str, str] = {}
-    for key, value in raw.items():
-        question_id = str(key or "").strip()
-        if not question_id:
-            return {}, "clarification_responses contains empty question id"
-        if not isinstance(value, str):
-            return {}, f"clarification_responses[{question_id}] must be a string"
-        answer = value.strip()
-        if not answer:
-            return {}, f"clarification_responses[{question_id}] must be a non-empty string"
-        normalized[question_id] = answer
-    return normalized, ""
-
-
-def _validate_pending_questions_strict(pending_questions: Any) -> tuple[list[dict[str, Any]], str]:
-    if not isinstance(pending_questions, list):
-        return [], "pending_questions must be a list"
-    normalized: list[dict[str, Any]] = []
-    for idx, item in enumerate(pending_questions):
-        if not isinstance(item, dict):
-            return [], f"pending_questions[{idx}] must be an object"
-        question_id = str(item.get("id") or "").strip()
-        question_text = str(item.get("question_text") or "").strip()
-        info_type = str(item.get("info_type") or "").strip()
-        required = item.get("required")
-        input_type = str(item.get("input_type") or "").strip()
-        options = item.get("options")
-        if not question_id:
-            return [], f"pending_questions[{idx}].id is required"
-        if not question_text:
-            return [], f"pending_questions[{idx}].question_text is required"
-        if not info_type:
-            return [], f"pending_questions[{idx}].info_type is required"
-        if not isinstance(required, bool):
-            return [], f"pending_questions[{idx}].required must be boolean"
-        if input_type not in {"free_text", "single_select", "multi_select", "file_upload"}:
-            return [], f"pending_questions[{idx}].input_type is invalid"
-        if not isinstance(options, list):
-            return [], f"pending_questions[{idx}].options must be an array"
-        normalized.append(
-            {
-                "id": question_id,
-                "question_text": question_text,
-                "info_type": info_type,
-                "required": required,
-                "input_type": input_type,
-                "options": [str(x).strip() for x in options if str(x).strip()],
-            }
-        )
-    return normalized, ""
-
-
-def _normalize_pending_questions_strict(
-    pending_questions: Any,
-    *,
-    session_id: str,
-    round_index: int,
-) -> list[dict[str, Any]]:
-    if not isinstance(pending_questions, list):
-        return []
-    normalized: list[dict[str, Any]] = []
-    for item in pending_questions:
-        if isinstance(item, str):
-            text = item.strip()
-            if not text:
-                continue
-            normalized.append(
-                {
-                    "id": _build_question_id(session_id, text, round_index),
-                    "question_text": text,
-                    "info_type": "general",
-                    "required": True,
-                    "input_type": "free_text",
-                    "options": [],
-                }
-            )
-            continue
-        if not isinstance(item, dict):
-            continue
-        question_text = str(
-            item.get("question_text")
-            or item.get("question")
-            or item.get("text")
-            or item.get("content")
-            or ""
-        ).strip()
-        if not question_text:
-            continue
-        raw_id = str(item.get("id") or item.get("question_id") or "").strip()
-        question_id = raw_id or _build_question_id(session_id, question_text, round_index)
-        info_type = str(item.get("info_type") or "general").strip() or "general"
-        raw_required = item.get("required")
-        if isinstance(raw_required, bool):
-            required = raw_required
-        elif "is_required" in item:
-            required = bool(item.get("is_required"))
-        else:
-            required = True
-        input_type = str(item.get("input_type") or "").strip().lower()
-        if input_type not in {"free_text", "single_select", "multi_select", "file_upload"}:
-            input_type = "free_text"
-        raw_options = item.get("options")
-        if not isinstance(raw_options, list):
-            raw_options = item.get("suggested_answers")
-        options = [str(x).strip() for x in (raw_options or []) if str(x).strip()]
-        normalized.append(
-            {
-                "id": question_id,
-                "question_text": question_text,
-                "info_type": info_type,
-                "required": required,
-                "input_type": input_type,
-                "options": options,
-            }
-        )
-    return normalized[:2]
-
-
-def _should_trigger_preflight(state: State) -> tuple[bool, str]:
-    intent_type = str(state.get("intent_type") or "").strip().lower()
-    if intent_type not in SOC_PRECHECK_INTENTS:
-        return False, "intent_not_targeted"
-
-    file_ids = [str(x).strip() for x in (state.get("file_ids") or []) if str(x).strip()]
-    if file_ids:
-        return False, "has_files"
-
-    message_knowledge = str(state.get("message_knowledge") or "").strip()
-    if message_knowledge:
-        return False, "has_inline_knowledge"
-
-    driven_mode = str(state.get("driven_mode") or "").strip().lower()
-    confidence = float(state.get("classification_confidence") or 0.0)
-    low_confidence = confidence < SOC_PREFLIGHT_CONFIDENCE_THRESHOLD
-    topic_driven = driven_mode == "topic_driven"
-    if not low_confidence and not topic_driven:
-        return False, "signals_sufficient"
-    return True, "topic_or_low_confidence"
-
-
-async def separate_content_and_task(user_input: str) -> Dict[str, str]:
-    """Split message into source content and task demand using LLM."""
-    prompt = (
-        "Please split the user input into JSON:\n"
-        "{\"message_knowledge\": \"Knowledge material\", \"topic\": \"Task requirement\"}\n"
-        "If knowledge material is missing, message_knowledge can be empty."
-    )
-    try:
-        response = await chat_complete(
-            intent="extract",
-            temperature=0.0,
-            messages=[
-                {"role": "system", "content": prompt},
-                {"role": "user", "content": user_input},
-            ],
-        )
-        content = ""
-        if response and getattr(response, "choices", None):
-            msg = response.choices[0].message
-            content = getattr(msg, "content", "") or ""
-        parsed = safe_parse_llm_json(content, default={})
-        if not isinstance(parsed, dict):
-            parsed = {}
-        source = str(parsed.get("message_knowledge") or "").strip()
-        topic = str(parsed.get("topic") or "").strip() or user_input
-        return {"message_knowledge": source, "topic": topic}
-    except Exception:
-        return {"message_knowledge": user_input, "topic": user_input}
+def _normalize_query_key(text: str) -> str:
+    return " ".join(str(text or "").strip().lower().split())
 
 
 async def initialize_processing(
@@ -290,6 +68,8 @@ async def initialize_processing(
     user_id = runtime.context.user_id
     if not session_id:
         return {"error": "missing_session_id"}
+
+    rollout = rollout_enabled_for_user(user_id)
 
     try:
         prepared_template = await prepare_template_context_for_main_graph(
@@ -331,6 +111,14 @@ async def initialize_processing(
         "template_validation": prepared_template.template_validation,
         "preflight_status": None,
         "preflight_reason": None,
+        "query_scope": None,
+        "file_tree_path_active": bool(
+            [x for x in (state.get("file_ids") or []) if str(x).strip()]
+        )
+        and is_file_tree_path_enabled(user_id),
+        "retrieval_budget": {},
+        "document_tree_status": None,
+        "document_tree_error": None,
         "clarification_state": None,
         "termination_reason": None,
         "clarification_round": 0,
@@ -338,12 +126,35 @@ async def initialize_processing(
         "clarification_responses": {},
         "asked_questions": [],
         "pending_questions": [],
+        "document_trees": [],
+        "tree_registry": {},
+        "candidate_nodes": [],
+        "selected_nodes": [],
+        "evidence_items": [],
+        "evidence_store": {
+            "schema_version": EVIDENCE_STORE_SCHEMA_VERSION,
+            "items": [],
+            "index": {},
+            "reason_code_counts": {},
+            "duplicate_query_ratio": 0.0,
+            "hit_rate": 0.0,
+        },
+        "coverage_state": {
+            "coverage_rate": 0.0,
+            "covered_node_ids": [],
+            "total_node_count": 0,
+        },
+        "evidence_loop_report": {},
+        "evidence_retry_count": 0,
         "learning_units": [],
+        "syllabus_outline": [],
+        "outline_sources": [],
         "approved_cards": [],
         "final_cards": [],
         "saved_card_ids": [],
         "quality_report": {},
         "qa_loop_report": {},
+        "evidence_skillrouter_rollout": rollout,
     }
 
 
@@ -390,7 +201,7 @@ async def run_socratic_preflight(
 ) -> Dict[str, Any]:
     """Strict v2 preflight with deterministic multi-round clarification control."""
     pending_questions_raw = state.get("pending_questions") or []
-    pending_questions, pending_error = _validate_pending_questions_strict(pending_questions_raw)
+    pending_questions, pending_error = validate_pending_questions_strict(pending_questions_raw)
     if pending_error and pending_questions_raw:
         return {
             "error": pending_error,
@@ -402,7 +213,7 @@ async def run_socratic_preflight(
         }
 
     raw_responses = state.get("clarification_responses")
-    clarification_responses, response_error = _normalize_clarification_responses(raw_responses)
+    clarification_responses, response_error = normalize_clarification_responses(raw_responses)
     if response_error:
         return {
             "error": response_error,
@@ -419,7 +230,7 @@ async def run_socratic_preflight(
         max_rounds = SOC_MAX_ROUNDS
 
     if pending_questions and not clarification_responses:
-        question = _extract_first_question(pending_questions)
+        question = extract_first_question(pending_questions)
         return {
             "preflight_status": "need_user_input",
             "preflight_reason": "pending_questions_exist",
@@ -433,7 +244,7 @@ async def run_socratic_preflight(
             "message": question or "Additional user input is required to continue.",
         }
 
-    should_trigger, reason = _should_trigger_preflight(state)
+    should_trigger, reason = should_trigger_preflight(state)
     has_reassessment_input = bool(clarification_responses)
     if not should_trigger and not has_reassessment_input:
         return {
@@ -445,7 +256,7 @@ async def run_socratic_preflight(
         }
 
     if clarification_responses and pending_questions:
-        allowed_ids = _extract_pending_question_ids(pending_questions)
+        allowed_ids = extract_pending_question_ids(pending_questions)
         unknown_keys = sorted(set(clarification_responses.keys()) - allowed_ids)
         if unknown_keys:
             return {
@@ -459,13 +270,13 @@ async def run_socratic_preflight(
 
     message_knowledge = str(state.get("message_knowledge") or "").strip()
     user_input = str(state.get("user_input") or "").strip()
-    asked_questions = _collect_asked_question_texts(
+    asked_questions = collect_asked_question_texts(
         state.get("asked_questions"),
         pending_questions,
     )
 
     if clarification_responses and pending_questions:
-        if _information_gain_score(clarification_responses, message_knowledge) < SOC_MIN_INFORMATION_GAIN:
+        if information_gain_score(clarification_responses, message_knowledge) < SOC_MIN_INFORMATION_GAIN:
             return {
                 "preflight_status": "need_user_input",
                 "preflight_reason": "low_information_gain",
@@ -505,7 +316,7 @@ async def run_socratic_preflight(
     )
     status = str(clarification.get("status") or "").strip().lower()
     pending_questions_raw = clarification.get("pending_questions") or []
-    pending_questions, pending_error = _validate_pending_questions_strict(pending_questions_raw)
+    pending_questions, pending_error = validate_pending_questions_strict(pending_questions_raw)
     if pending_error:
         return {
             "error": pending_error,
@@ -531,8 +342,8 @@ async def run_socratic_preflight(
                 "clarification_responses": clarification_responses,
                 "asked_questions": asked_questions,
             }
-        question = _extract_first_question(pending_questions)
-        updated_asked = _collect_asked_question_texts(asked_questions, pending_questions)
+        question = extract_first_question(pending_questions)
+        updated_asked = collect_asked_question_texts(asked_questions, pending_questions)
         return {
             "preflight_status": "need_user_input",
             "preflight_reason": str(clarification.get("reason") or "preflight_clarification"),
@@ -573,130 +384,415 @@ async def run_socratic_preflight(
     }
 
 
-async def run_syllabus_supervisor(
+async def run_document_tree_planner(
     state: State,
     runtime: Runtime[Context],
 ) -> Dict[str, Any]:
-    context = runtime.context
-    result = await syllabus_supervisor_agent.ainvoke(
-        {
-            "user_input": state.get("user_input"),
-            "message_knowledge": state.get("message_knowledge"),
-            "file_ids": state.get("file_ids") or [],
-            "subject_domain": state.get("subject_domain"),
-            "task_complexity": state.get("task_complexity"),
-            "difficulty_level": state.get("difficulty_level"),
-            "language": state.get("language"),
-        },
-        context=context,
+    if not bool(state.get("file_tree_path_active")):
+        return {
+            "document_tree_status": "skipped",
+            "document_tree_error": None,
+            "document_trees": [],
+            "tree_registry": {},
+            "candidate_nodes": [],
+        }
+
+    file_ids = [str(x).strip() for x in (state.get("file_ids") or []) if str(x).strip()]
+    if not file_ids:
+        return {
+            "error": "missing_file_ids",
+            "document_tree_status": "failed",
+            "document_trees": [],
+            "tree_registry": {},
+            "candidate_nodes": [],
+        }
+
+    user_id = str((runtime.context.user_id if runtime.context else "") or "").strip()
+    if not user_id:
+        return {
+            "error": "missing_user_id",
+            "document_tree_status": "failed",
+            "document_trees": [],
+            "tree_registry": {},
+            "candidate_nodes": [],
+        }
+
+    model = str(os.getenv(FILE_TREE_PATH_MODEL_ENV) or "").strip() or None
+    session_id = str((runtime.context.session_id if runtime.context else "") or "").strip()
+    raw_scope = str(state.get("query_scope") or "").strip().lower()
+    try:
+        query_scope = raw_scope or await determine_query_scope(
+            str(state.get("user_input") or ""),
+            has_files=bool(file_ids),
+        )
+        retrieval_budget = state.get("retrieval_budget") or scope_budget(query_scope)
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "evidence_status": "failed",
+            "error": f"query_scope_resolution_failed:{str(exc)}",
+            "document_tree_status": "failed",
+            "message": "无法确定检索范围，请重试。",
+            "document_trees": [],
+            "tree_registry": {},
+            "candidate_nodes": [],
+        }
+    logger.info(
+        "file tree scope resolved in planner",
+        session_id=session_id or "default",
+        user_id=user_id,
+        query_scope=query_scope,
+        budget=retrieval_budget,
+        file_count=len(file_ids),
     )
-    supervisor_status = str(result.get("status") or "failed").strip().lower()
-    normalized_pending = _normalize_pending_questions_strict(
-        result.get("pending_questions") or [],
-        session_id=str(context.session_id or ""),
-        round_index=int(state.get("clarification_round") or 1),
+    try:
+        registry_result = await build_incremental_document_registry(
+            session_id=session_id,
+            user_id=user_id,
+            file_ids=file_ids,
+            user_input=str(state.get("user_input") or ""),
+            message_knowledge=str(state.get("message_knowledge") or ""),
+            conversation_history=list((getattr(runtime.context, "conversation_history", []) if runtime.context else []) or []),
+            model=model,
+        )
+    except Exception as exc:
+        logger.warning(
+            "document tree build failed, fallback to ragix summary in syllabus",
+            session_id=session_id or "default",
+            user_id=user_id,
+            error=str(exc),
+        )
+        return {
+            "status": "failed",
+            "evidence_status": "failed",
+            "error": f"document_tree_build_failed:{str(exc)}",
+            "document_tree_status": "fallback_to_ragix_summary",
+            "document_tree_error": f"document_tree_build_failed:{str(exc)}",
+            "query_scope": query_scope,
+            "retrieval_budget": retrieval_budget,
+            "document_trees": [],
+            "tree_registry": {},
+            "candidate_nodes": [],
+        }
+    failed_files = list(registry_result.get("failed_files") or [])
+    if failed_files:
+        first_failed = failed_files[0]
+        logger.warning(
+            "document tree partial failure, fallback to ragix summary in syllabus",
+            session_id=session_id or "default",
+            user_id=user_id,
+            file_id=str(first_failed.get("file_id") or ""),
+        )
+        return {
+            "status": "failed",
+            "evidence_status": "failed",
+            "error": f"document_tree_build_failed:{str(first_failed.get('file_id') or '')}",
+            "document_tree_status": "fallback_to_ragix_summary",
+            "document_tree_error": f"document_tree_build_failed:{str(first_failed.get('file_id') or '')}",
+            "query_scope": query_scope,
+            "retrieval_budget": retrieval_budget,
+            "document_trees": [],
+            "tree_registry": {},
+            "candidate_nodes": [],
+        }
+    document_trees = list(registry_result.get("document_trees") or [])
+    tree_registry = dict(registry_result.get("tree_registry") or {})
+    candidate_nodes = select_candidate_nodes(
+        document_trees=document_trees,
+        user_input=str(state.get("user_input") or ""),
+        query_scope=query_scope,
+        retrieval_budget=retrieval_budget,
     )
-    payload: Dict[str, Any] = {
-        "syllabus_status": result.get("status", "failed"),
-        "learning_units": result.get("learning_units") or [],
-        "pending_questions": normalized_pending,
-        "clarification_responses": result.get("clarification_responses") or {},
-        "error": state.get("error") if result.get("status") != "failed" else result.get("reason"),
+
+    if not candidate_nodes:
+        return {
+            "document_tree_status": "empty_candidates",
+            "document_tree_error": None,
+            "document_trees": document_trees,
+            "tree_registry": tree_registry,
+            "candidate_nodes": [],
+            "evidence_status": "need_user_input",
+            "message": "未找到可用于制卡的文档结构节点，请重试或重新上传文件。",
+            "query_scope": query_scope,
+            "retrieval_budget": retrieval_budget,
+        }
+    return {
+        "document_tree_status": "ready",
+        "document_tree_error": None,
+        "document_trees": document_trees,
+        "tree_registry": tree_registry,
+        "candidate_nodes": candidate_nodes,
+        "query_scope": query_scope,
+        "retrieval_budget": retrieval_budget,
     }
-    if supervisor_status == "need_user_input":
-        payload.update(
-            {
-                "status": "need_user_input",
-                "clarification_state": "collecting",
-                "termination_reason": None,
-                "preflight_status": "need_user_input",
-                "preflight_reason": str(result.get("reason") or "syllabus_need_user_input"),
-                "message": _extract_first_question(normalized_pending)
-                or "Additional user input is required to continue.",
-            }
-        )
-    elif supervisor_status == "failed":
-        payload.update(
-            {
-                "status": "failed",
-                "clarification_state": "exhausted",
-                "termination_reason": str(result.get("reason") or "syllabus_failed"),
-            }
-        )
-    else:
-        payload.update(
-            {
-                "status": "success",
-                "clarification_state": state.get("clarification_state") or "resolved",
-                "termination_reason": None,
-            }
-        )
-    return payload
 
 
-async def run_evidence_supervisor(
+async def run_evidence_loop(
     state: State,
     runtime: Runtime[Context],
 ) -> Dict[str, Any]:
-    context = runtime.context
-    result = await evidence_supervisor_agent.ainvoke(
-        {
-            "user_input": state.get("user_input"),
-            "message_knowledge": state.get("message_knowledge"),
-            "synthesized_knowledge": state.get("synthesized_knowledge") or "",
-            "file_ids": state.get("file_ids") or [],
-            "subject_domain": state.get("subject_domain"),
-            "difficulty_level": state.get("difficulty_level"),
-            "target_count": state.get("target_count") or 10,
-            "learning_units": state.get("learning_units") or [],
-            "language": state.get("language"),
-        },
-        context=context,
-    )
-    supervisor_status = str(result.get("status") or "failed").strip().lower()
-    normalized_pending = _normalize_pending_questions_strict(
-        result.get("pending_questions") or [],
-        session_id=str(context.session_id or ""),
-        round_index=int(state.get("clarification_round") or 1),
-    )
-    research_content = str((result.get("research_results") or {}).get("content") or "").strip()
+    candidates = list(state.get("candidate_nodes") or [])
+    if not candidates:
+        return {
+            "evidence_status": "need_user_input",
+            "pending_questions": [],
+            "evidence_items": [],
+            "selected_nodes": [],
+            "evidence_loop_report": {
+                "rag_calls": 0,
+                "stop_reason": "no_candidate_nodes",
+                "candidate_nodes": 0,
+                "selected_nodes": 0,
+            },
+        }
 
-    payload: Dict[str, Any] = {
-        "evidence_status": result.get("status", "failed"),
-        "pending_questions": normalized_pending,
-        "research_results": result.get("research_results") or {},
-        "error": state.get("error") if result.get("status") != "failed" else result.get("reason"),
+    query_scope = str(state.get("query_scope") or "").strip().lower()
+    if not query_scope:
+        return {
+            "evidence_status": "failed",
+            "pending_questions": [],
+            "evidence_items": [],
+            "selected_nodes": [],
+            "evidence_loop_report": {
+                "rag_calls": 0,
+                "stop_reason": "missing_query_scope",
+                "candidate_nodes": len(candidates),
+                "selected_nodes": 0,
+            },
+            "error": "missing_query_scope",
+        }
+    budget = dict(state.get("retrieval_budget") or scope_budget(query_scope))
+    max_nodes_per_round = int(budget.get("max_nodes_per_round") or 2)
+    max_rag_calls = int(budget.get("max_rag_calls") or 6)
+    min_gain = float(budget.get("min_information_gain") or 0.05)
+    low_gain_limit = int(budget.get("consecutive_low_gain_limit") or 2)
+    top_k = 4 if query_scope == "title_only" else 6
+
+    session_id = str((runtime.context.session_id if runtime.context else "") or "").strip() or None
+    user_id = str((runtime.context.user_id if runtime.context else "") or "").strip() or None
+    file_ids = [str(x).strip() for x in (state.get("file_ids") or []) if str(x).strip()]
+    user_input = str(state.get("user_input") or "").strip()
+    file_tree_path_active = bool(state.get("file_tree_path_active"))
+    query_mode = "mix"
+
+    rag_calls = 0
+    low_gain_rounds = 0
+    cursor = 0
+    stop_reason = "budget_exhausted"
+    rewrite_used = False
+    selected_nodes: List[Dict[str, Any]] = []
+    evidence_items: List[Dict[str, Any]] = []
+    gains: List[float] = []
+    aggregated_knowledge = ""
+    seen_query_keys: set[str] = set()
+    duplicate_queries = 0
+    hit_count = 0
+    miss_count = 0
+    retrieval_events: List[Dict[str, Any]] = []
+
+    while cursor < len(candidates) and rag_calls < max_rag_calls:
+        round_nodes = candidates[cursor : cursor + max_nodes_per_round]
+        cursor += max_nodes_per_round
+        if not round_nodes:
+            break
+
+        for node in round_nodes:
+            if rag_calls >= max_rag_calls:
+                stop_reason = "max_rag_calls_reached"
+                break
+            query = build_node_query(
+                user_input,
+                node,
+                include_user_input=True,
+            )
+            if not query:
+                continue
+            query_key = _normalize_query_key(query)
+            if query_key in seen_query_keys:
+                duplicate_queries += 1
+                retrieval_events.append({"query": query, "reason_code": "duplicate"})
+                continue
+            seen_query_keys.add(query_key)
+            rag_calls += 1
+            result = await query_knowledge.ainvoke(
+                {
+                    "query": query,
+                    "mode": query_mode,
+                    "top_k": top_k,
+                    "session_id": session_id,
+                    "file_ids": file_ids,
+                    "user_id": user_id,
+                }
+            )
+            content = str(result.get("content") or "").strip()
+            refs = result.get("refs") or []
+            gain = information_gain(content, aggregated_knowledge)
+            gains.append(round(gain, 4))
+            if content:
+                hit_count += 1
+                retrieval_events.append({"query": query, "reason_code": "hit"})
+                selected_nodes.append(node)
+                evidence_items.append(
+                    {
+                        "query": query,
+                        "content": content[:2000],
+                        "refs": refs,
+                        "node": node,
+                        "information_gain": gain,
+                        "reason_codes": ["hit"],
+                    }
+                )
+                aggregated_knowledge = f"{aggregated_knowledge}\n\n{content[:2000]}".strip()
+            else:
+                miss_count += 1
+                retrieval_events.append({"query": query, "reason_code": "miss"})
+            if gain < min_gain:
+                low_gain_rounds += 1
+            else:
+                low_gain_rounds = 0
+
+            if query_scope == "title_only" and evidence_items:
+                stop_reason = "title_only_sufficient"
+                break
+            if low_gain_rounds >= low_gain_limit:
+                stop_reason = "low_information_gain"
+                break
+
+        if stop_reason in {"title_only_sufficient", "low_information_gain", "max_rag_calls_reached"}:
+            break
+
+    if not evidence_items and rag_calls < max_rag_calls:
+        rewrite_used = not file_tree_path_active
+        fallback_node = candidates[0] if candidates else {}
+        if file_tree_path_active:
+            fallback_query = build_node_query(
+                user_input,
+                fallback_node,
+                include_user_input=True,
+            )
+            if not fallback_query:
+                fallback_query = (
+                    "Extract concrete key facts, definitions, and core concepts from the uploaded file "
+                    "for flashcard generation."
+                )
+        else:
+            fallback_query = (
+                f"Document title only: {user_input}" if query_scope == "title_only" else f"Key points for card generation: {user_input}"
+            )
+        if not fallback_query:
+            fallback_query = user_input
+        rag_calls += 1
+        fallback = await query_knowledge.ainvoke(
+            {
+                "query": fallback_query,
+                "mode": query_mode,
+                "top_k": top_k,
+                "session_id": session_id,
+                "file_ids": file_ids,
+                "user_id": user_id,
+            }
+        )
+        fallback_content = str(fallback.get("content") or "").strip()
+        if fallback_content:
+            hit_count += 1
+            retrieval_events.append({"query": fallback_query, "reason_code": "hit"})
+            evidence_items.append(
+                {
+                    "query": fallback_query,
+                    "content": fallback_content[:2000],
+                    "refs": fallback.get("refs") or [],
+                    "node": None,
+                    "information_gain": information_gain(fallback_content, aggregated_knowledge),
+                    "reason_codes": ["hit"],
+                }
+            )
+            aggregated_knowledge = f"{aggregated_knowledge}\n\n{fallback_content[:2000]}".strip()
+            stop_reason = "fallback_rewrite_hit"
+        else:
+            miss_count += 1
+            retrieval_events.append({"query": fallback_query, "reason_code": "miss"})
+            stop_reason = "fallback_rewrite_miss"
+
+    if evidence_items and stop_reason == "budget_exhausted":
+        stop_reason = "evidence_sufficient"
+
+    status = "evidence_ready" if evidence_items else "need_user_input"
+    pending_questions: List[Dict[str, Any]] = []
+    if status != "evidence_ready":
+        pending_questions = [
+            {
+                "question_id": 1,
+                "question_text": "No valid information has been extracted currently. Please provide a more specific scope or re-upload the file.",
+                "info_type": "evidence_context",
+                "is_required": True,
+                "suggested_answers": [],
+            }
+        ]
+
+    report = {
+        "scope": query_scope,
+        "rag_calls": rag_calls,
+        "candidate_nodes": len(candidates),
+        "selected_nodes": len(selected_nodes),
+        "information_gain_trace": gains,
+        "stop_reason": stop_reason,
+        "rewrite_used": rewrite_used,
+        "evidence_hit_rate": round(hit_count / max(1, rag_calls), 4),
+        "duplicate_query_count": duplicate_queries,
+        "duplicate_query_ratio": round(duplicate_queries / max(1, (rag_calls + duplicate_queries)), 4),
+        "coverage_rate": round(len(selected_nodes) / max(1, len(candidates)), 4),
+        "reason_code_counts": {
+            "hit": hit_count,
+            "miss": miss_count,
+            "duplicate": duplicate_queries,
+            "coverage_gap": max(0, len(candidates) - len(selected_nodes)),
+        },
+        "retrieval_events": retrieval_events[:50],
     }
-    if supervisor_status == "need_user_input":
-        payload.update(
-            {
-                "status": "need_user_input",
-                "clarification_state": "collecting",
-                "termination_reason": None,
-                "message": _extract_first_question(normalized_pending)
-                or "Additional user input is required to continue.",
-            }
-        )
-    elif supervisor_status == "failed":
-        payload.update(
-            {
-                "status": "failed",
-                "clarification_state": "exhausted",
-                "termination_reason": str(result.get("reason") or "evidence_failed"),
-            }
-        )
-    else:
-        payload.update(
-            {
-                "status": "success",
-                "clarification_state": state.get("clarification_state") or "resolved",
-                "termination_reason": None,
-            }
-        )
-    if research_content:
-        payload["synthesized_knowledge"] = research_content
-        payload["message_knowledge"] = research_content
-    return payload
+    logger.info(
+        "evidence loop completed",
+        session_id=session_id or "default",
+        report=report,
+    )
+    return {
+        "evidence_status": status,
+        "pending_questions": pending_questions,
+        "selected_nodes": selected_nodes,
+        "evidence_items": evidence_items,
+        "evidence_store": {
+            "schema_version": EVIDENCE_STORE_SCHEMA_VERSION,
+            "items": evidence_items,
+            "index": {
+                _normalize_query_key(str(item.get("query") or "")): str(item.get("query") or "")
+                for item in evidence_items
+                if isinstance(item, dict) and str(item.get("query") or "").strip()
+            },
+            "reason_code_counts": report.get("reason_code_counts", {}),
+            "duplicate_query_ratio": report.get("duplicate_query_ratio", 0.0),
+            "hit_rate": report.get("evidence_hit_rate", 0.0),
+        },
+        "coverage_state": {
+            "coverage_rate": report.get("coverage_rate", 0.0),
+            "covered_node_ids": [
+                str(node.get("node_id") or "").strip()
+                for node in selected_nodes
+                if isinstance(node, dict) and str(node.get("node_id") or "").strip()
+            ],
+            "total_node_count": len(candidates),
+        },
+        "evidence_loop_report": report,
+        "synthesized_knowledge": aggregated_knowledge[:8000],
+        "message_knowledge": aggregated_knowledge[:8000],
+        "research_results": {"content": aggregated_knowledge[:8000], "evidence_items": evidence_items},
+    }
+
+
+async def run_evidence_builder(
+    state: State,
+    runtime: Runtime[Context],
+) -> Dict[str, Any]:
+    """Single retrieval entrypoint for evidence construction."""
+    return await run_evidence_loop(state, runtime)
 
 
 async def run_card_supervisor(
@@ -704,18 +800,26 @@ async def run_card_supervisor(
     runtime: Runtime[Context],
 ) -> Dict[str, Any]:
     context = runtime.context
+    file_tree_path_active = bool(state.get("file_tree_path_active"))
+    current_retry_count = int(state.get("evidence_retry_count") or 0)
+    qa_safety_cap = max(3, min(20, int(os.getenv(QA_SAFETY_CAP_ENV, "8"))))
     result = await card_supervisor_agent.ainvoke(
         {
             "user_input": state.get("user_input"),
             "message_knowledge": state.get("message_knowledge"),
             "subject_domain": state.get("subject_domain"),
-            "learning_units": state.get("learning_units") or [],
+            "learning_units": [] if file_tree_path_active else (state.get("learning_units") or []),
+            "query_scope": state.get("query_scope"),
+            "evidence_items": state.get("evidence_items") or [],
+            "document_trees": state.get("document_trees") or [],
             "template_profiles": state.get("template_profiles") or [],
             "template_default_profile": state.get("template_default_profile"),
             "selected_template_profile": state.get("selected_template_profile"),
             "file_ids": state.get("file_ids") or [],
             "judge_score_threshold": 90,
-            "max_qa_iterations": 8,
+            "max_qa_iterations": qa_safety_cap,
+            "min_evidence_coverage": 0.60,
+            "min_gain_delta": 0.02,
             "language": state.get("language"),
         },
         context=context,
@@ -723,14 +827,40 @@ async def run_card_supervisor(
 
     approved = result.get("approved_cards") or []
     status = result.get("status", "failed")
-    return {
+    failure_reason = str(result.get("reason") or "").strip()
+    workflow_status = "success" if status == "quality_pass" else "failed"
+    payload = {
+        "status": workflow_status,
         "card_status": status,
         "approved_cards": approved,
-        "final_cards": approved if status in {"quality_pass", "need_user_review"} else [],
+        "final_cards": approved if status == "quality_pass" else [],
         "quality_report": result.get("quality_report") or {},
         "qa_loop_report": result.get("qa_loop_report") or {},
-        "error": state.get("error") if status != "failed" else result.get("reason"),
+        "error": state.get("error") if status == "quality_pass" else failure_reason,
     }
+    retryable_file_tree_failure = file_tree_path_active and failure_reason in {
+        "missing_file_tree_evidence_items",
+        "missing_file_tree_evidence",
+    }
+    if retryable_file_tree_failure and current_retry_count < 1:
+        base_budget = dict(state.get("retrieval_budget") or {})
+        if not base_budget:
+            query_scope = str(state.get("query_scope") or "focused").strip().lower() or "focused"
+            base_budget = scope_budget(query_scope)
+        expanded_budget = dict(base_budget)
+        expanded_budget["max_rag_calls"] = int(expanded_budget.get("max_rag_calls") or 6) + 4
+        expanded_budget["max_nodes_per_round"] = int(expanded_budget.get("max_nodes_per_round") or 2) + 1
+        expanded_budget["consecutive_low_gain_limit"] = int(expanded_budget.get("consecutive_low_gain_limit") or 2) + 1
+        payload["evidence_retry_count"] = current_retry_count + 1
+        payload["retrieval_budget"] = expanded_budget
+        logger.warning(
+            "card supervisor requested evidence retry",
+            session_id=str((context.session_id if context else "") or "") or "default",
+            reason=failure_reason,
+            retry_count=current_retry_count + 1,
+            expanded_budget=expanded_budget,
+        )
+    return payload
 
 
 async def finalize_processing(
@@ -748,15 +878,31 @@ async def finalize_processing(
     if not workspace_id:
         raise ValueError("workspace_id missing in runtime context")
 
-    cards = list(state.get("final_cards") or state.get("approved_cards") or [])
+    explicit_status = str(state.get("status") or "").strip().lower()
+    card_status = str(state.get("card_status") or "").strip().lower()
+    workflow_error = str(state.get("error") or "").strip()
+
+    if explicit_status == "need_user_input":
+        final_status = "need_user_input"
+    elif explicit_status == "failed" or workflow_error:
+        final_status = "failed"
+    elif card_status:
+        final_status = "success" if card_status == "quality_pass" else "failed"
+    else:
+        final_status = "success"
+
+    cards = list(state.get("final_cards") or [])
     saved_card_ids = list(state.get("saved_card_ids") or [])
 
-    if cards and not saved_card_ids:
+    if final_status == "success" and cards and not saved_card_ids:
         saved_card_ids = await save_cards_to_workspace(
             cards,
             workspace_id=workspace_id,
             owner=str((context.user_id if context else "") or ""),
         )
+    elif final_status != "success":
+        cards = []
+        saved_card_ids = []
 
     if langfuse.enabled:
         try:
@@ -764,7 +910,20 @@ async def finalize_processing(
         except Exception:
             pass
 
+    final_message = str(state.get("message") or "").strip()
+    if not final_message:
+        if final_status == "failed":
+            final_message = str(state.get("error") or "").strip() or "Workflow failed"
+        elif final_status == "need_user_input":
+            final_message = "Additional user input is required to continue."
+        elif cards:
+            final_message = f"Generated {len(cards)} flashcards"
+        else:
+            final_message = "Workflow completed successfully"
+
     return {
+        "status": final_status,
+        "message": final_message,
         "final_cards": cards,
         "approved_cards": cards,
         "saved_card_ids": saved_card_ids,

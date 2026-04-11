@@ -1,109 +1,123 @@
-import tiktoken
-import openai
-import logging
 import os
+import textwrap
 from datetime import datetime
-import time
 import json
-import PyPDF2
 import copy
 import asyncio
+import concurrent.futures
+import uuid
 import pymupdf
+import re
 from io import BytesIO
-import logging
-import yaml
-from pathlib import Path
 from types import SimpleNamespace as config
 
-CHATGPT_API_KEY = os.getenv("CHATGPT_API_KEY")
+from kardcraft.llm import chat_complete
+from kardcraft.llm.client import token_counter
+from kardcraft.llm.context import (
+    LLMRuntimeContext,
+    get_runtime_context,
+    reset_runtime_context,
+    set_runtime_context,
+)
+from kardcraft.utils.logger import logger
 
 def count_tokens(text, model=None):
     if not text:
         return 0
-    enc = tiktoken.encoding_for_model(model)
-    tokens = enc.encode(text)
-    return len(tokens)
-
-def ChatGPT_API_with_finish_reason(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
-    max_retries = 10
-    client = openai.OpenAI(api_key=api_key)
-    for i in range(max_retries):
-        try:
-            if chat_history:
-                messages = chat_history
-                messages.append({"role": "user", "content": prompt})
-            else:
-                messages = [{"role": "user", "content": prompt}]
-            
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0,
-            )
-            if response.choices[0].finish_reason == "length":
-                return response.choices[0].message.content, "max_output_reached"
-            else:
-                return response.choices[0].message.content, "finished"
-
-        except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
-            if i < max_retries - 1:
-                time.sleep(1)  # Wait for 1秒 before retrying
-            else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"
+    return token_counter(model=model, text=text)
 
 
+def _normalize_model_name(model):
+    if not model:
+        return None
+    return str(model).removeprefix("litellm/").strip() or None
 
-def ChatGPT_API(model, prompt, api_key=CHATGPT_API_KEY, chat_history=None):
-    max_retries = 10
-    client = openai.OpenAI(api_key=api_key)
-    for i in range(max_retries):
-        try:
-            if chat_history:
-                messages = chat_history
-                messages.append({"role": "user", "content": prompt})
-            else:
-                messages = [{"role": "user", "content": prompt}]
-            
-            response = client.chat.completions.create(
-                model=model,
-                messages=messages,
-                temperature=0,
-            )
-   
-            return response.choices[0].message.content
-        except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
-            if i < max_retries - 1:
-                time.sleep(1)  # Wait for 1秒 before retrying
-            else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"
-            
 
-async def ChatGPT_API_async(model, prompt, api_key=CHATGPT_API_KEY):
-    max_retries = 10
-    messages = [{"role": "user", "content": prompt}]
-    for i in range(max_retries):
-        try:
-            async with openai.AsyncOpenAI(api_key=api_key) as client:
-                response = await client.chat.completions.create(
-                    model=model,
+async def _noop_usage_emitter(_payload):
+    return None
+
+
+def _ensure_pageindex_runtime_context():
+    existing = get_runtime_context()
+    if existing is not None:
+        return None
+    request_id = uuid.uuid4().hex
+    return set_runtime_context(
+        LLMRuntimeContext(
+            task_id=f"pageindex-{request_id}",
+            session_id=f"pageindex-{request_id}",
+            user_id="pageindex",
+            usage_emitter=_noop_usage_emitter,
+        )
+    )
+
+
+async def _chat_complete_with_retry(messages, model, max_retries=10):
+    normalized_model = _normalize_model_name(model)
+    ctx_token = _ensure_pageindex_runtime_context()
+    try:
+        for attempt in range(max_retries):
+            try:
+                kwargs = dict(
                     messages=messages,
+                    intent="chat",
                     temperature=0,
+                    max_attempts=1,
                 )
-                return response.choices[0].message.content
-        except Exception as e:
-            print('************* Retrying *************')
-            logging.error(f"Error: {e}")
-            if i < max_retries - 1:
-                await asyncio.sleep(1)  # Wait for 1s before retrying
-            else:
-                logging.error('Max retries reached for prompt: ' + prompt)
-                return "Error"  
+                if normalized_model:
+                    kwargs["model"] = normalized_model
+                return await chat_complete(**kwargs)
+            except Exception as exc:
+                if attempt >= max_retries - 1:
+                    raise
+                logger.warning(
+                    "pageindex llm retry",
+                    attempt=attempt + 1,
+                    max_retries=max_retries,
+                    error=str(exc),
+                    model=normalized_model,
+                )
+                await asyncio.sleep(1)
+    finally:
+        if ctx_token is not None:
+            reset_runtime_context(ctx_token)
+
+
+def llm_completion(model, prompt, chat_history=None, return_finish_reason=False):
+    messages = list(chat_history) + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
+
+    async def _run():
+        return await _chat_complete_with_retry(messages=messages, model=model, max_retries=10)
+
+    try:
+        try:
+            _loop = asyncio.get_running_loop()
+        except RuntimeError:
+            response = asyncio.run(_run())
+        else:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                response = pool.submit(asyncio.run, _run()).result()
+        content = response.choices[0].message.content
+        if return_finish_reason:
+            finish_reason = "max_output_reached" if response.choices[0].finish_reason == "length" else "finished"
+            return content, finish_reason
+        return content
+    except Exception as exc:
+        logger.error("pageindex llm completion failed", error=str(exc))
+        if return_finish_reason:
+            return "", "error"
+        return ""
+
+
+
+async def llm_acompletion(model, prompt):
+    messages = [{"role": "user", "content": prompt}]
+    try:
+        response = await _chat_complete_with_retry(messages=messages, model=model, max_retries=10)
+        return response.choices[0].message.content
+    except Exception as exc:
+        logger.error("pageindex llm acompletion failed", error=str(exc))
+        return ""
             
             
 def get_json_content(response):
@@ -140,17 +154,17 @@ def extract_json(content):
         # Attempt to parse and return the JSON object
         return json.loads(json_content)
     except json.JSONDecodeError as e:
-        logging.error(f"Failed to extract JSON: {e}")
+        logger.error("pageindex extract json failed", error=str(e))
         # Try to clean up the content further if initial parsing fails
         try:
             # Remove any trailing commas before closing brackets/braces
             json_content = json_content.replace(',]', ']').replace(',}', '}')
             return json.loads(json_content)
         except:
-            logging.error("Failed to parse JSON even after cleanup")
+            logger.error("pageindex extract json cleanup parse failed")
             return {}
     except Exception as e:
-        logging.error(f"Unexpected error while extracting JSON: {e}")
+        logger.error("pageindex extract json unexpected error", error=str(e))
         return {}
 
 def write_node_id(data, node_id=0):
@@ -243,30 +257,39 @@ def get_last_node(structure):
 
 
 def extract_text_from_pdf(pdf_path):
-    pdf_reader = PyPDF2.PdfReader(pdf_path)
-    ###return text not list 
-    text=""
-    for page_num in range(len(pdf_reader.pages)):
-        page = pdf_reader.pages[page_num]
-        text+=page.extract_text()
+    text = ""
+    doc = _open_pdf_document(pdf_path)
+    try:
+        for page in doc:
+            text += page.get_text()
+    finally:
+        doc.close()
     return text
 
 def get_pdf_title(pdf_path):
-    pdf_reader = PyPDF2.PdfReader(pdf_path)
-    meta = pdf_reader.metadata
-    title = meta.title if meta and meta.title else 'Untitled'
-    return title
+    doc = _open_pdf_document(pdf_path)
+    try:
+        meta = doc.metadata or {}
+        title = meta.get("title")
+        return title if title else "Untitled"
+    finally:
+        doc.close()
 
 def get_text_of_pages(pdf_path, start_page, end_page, tag=True):
-    pdf_reader = PyPDF2.PdfReader(pdf_path)
     text = ""
-    for page_num in range(start_page-1, end_page):
-        page = pdf_reader.pages[page_num]
-        page_text = page.extract_text()
-        if tag:
-            text += f"<start_index_{page_num+1}>\n{page_text}\n<end_index_{page_num+1}>\n"
-        else:
-            text += page_text
+    doc = _open_pdf_document(pdf_path)
+    try:
+        total = doc.page_count
+        start = max(start_page - 1, 0)
+        end = min(end_page, total)
+        for page_num in range(start, end):
+            page_text = doc.load_page(page_num).get_text()
+            if tag:
+                text += f"<start_index_{page_num+1}>\n{page_text}\n<end_index_{page_num+1}>\n"
+            else:
+                text += page_text
+    finally:
+        doc.close()
     return text
 
 def get_first_start_page_from_text(text):
@@ -292,15 +315,24 @@ def sanitize_filename(filename, replacement='-'):
     # Null can't be represented in strings, so we only handle '/'.
     return filename.replace('/', replacement)
 
+
+def _open_pdf_document(pdf_path):
+    if isinstance(pdf_path, BytesIO):
+        return pymupdf.open(stream=pdf_path.getvalue(), filetype="pdf")
+    return pymupdf.open(pdf_path)
+
+
 def get_pdf_name(pdf_path):
     # Extract PDF name
     if isinstance(pdf_path, str):
         pdf_name = os.path.basename(pdf_path)
     elif isinstance(pdf_path, BytesIO):
-        pdf_reader = PyPDF2.PdfReader(pdf_path)
-        meta = pdf_reader.metadata
-        pdf_name = meta.title if meta and meta.title else 'Untitled'
-        pdf_name = sanitize_filename(pdf_name)
+        stream_name = os.path.basename(str(getattr(pdf_path, "name", "") or "").strip())
+        if stream_name:
+            pdf_name = sanitize_filename(stream_name)
+        else:
+            pdf_name = get_pdf_title(pdf_path)
+            pdf_name = sanitize_filename(pdf_name)
     return pdf_name
 
 
@@ -408,31 +440,17 @@ def add_preface_if_needed(data):
 
 
 
-def get_page_tokens(pdf_path, model="gpt-4o-2024-11-20", pdf_parser="PyPDF2"):
-    enc = tiktoken.encoding_for_model(model)
-    if pdf_parser == "PyPDF2":
-        pdf_reader = PyPDF2.PdfReader(pdf_path)
-        page_list = []
-        for page_num in range(len(pdf_reader.pages)):
-            page = pdf_reader.pages[page_num]
-            page_text = page.extract_text()
-            token_length = len(enc.encode(page_text))
-            page_list.append((page_text, token_length))
-        return page_list
-    elif pdf_parser == "PyMuPDF":
-        if isinstance(pdf_path, BytesIO):
-            pdf_stream = pdf_path
-            doc = pymupdf.open(stream=pdf_stream, filetype="pdf")
-        elif isinstance(pdf_path, str) and os.path.isfile(pdf_path) and pdf_path.lower().endswith(".pdf"):
-            doc = pymupdf.open(pdf_path)
+def get_page_tokens(pdf_path, model=None):
+    doc = _open_pdf_document(pdf_path)
+    try:
         page_list = []
         for page in doc:
             page_text = page.get_text()
-            token_length = len(enc.encode(page_text))
+            token_length = token_counter(model=model, text=page_text)
             page_list.append((page_text, token_length))
         return page_list
-    else:
-        raise ValueError(f"Unsupported PDF parser: {pdf_parser}")
+    finally:
+        doc.close()
 
         
 
@@ -449,9 +467,11 @@ def get_text_of_pdf_pages_with_labels(pdf_pages, start_page, end_page):
     return text
 
 def get_number_of_pages(pdf_path):
-    pdf_reader = PyPDF2.PdfReader(pdf_path)
-    num = len(pdf_reader.pages)
-    return num
+    doc = _open_pdf_document(pdf_path)
+    try:
+        return doc.page_count
+    finally:
+        doc.close()
 
 
 
@@ -531,7 +551,7 @@ def remove_structure_text(data):
 def check_token_limit(structure, limit=110000):
     list = structure_to_list(structure)
     for node in list:
-        num_tokens = count_tokens(node['text'], model='gpt-4o')
+        num_tokens = count_tokens(node['text'], model=None)
         if num_tokens > limit:
             print(f"Node ID: {node['node_id']} has {num_tokens} tokens")
             print("Start Index:", node['start_index'])
@@ -607,7 +627,7 @@ async def generate_node_summary(node, model=None):
     
     Directly return the description, do not include any other text.
     """
-    response = await ChatGPT_API_async(model, prompt)
+    response = await llm_acompletion(model, prompt)
     return response
 
 
@@ -652,7 +672,7 @@ def generate_doc_description(structure, model=None):
     
     Directly return the description, do not include any other text.
     """
-    response = ChatGPT_API(model, prompt)
+    response = llm_completion(model, prompt)
     return response
 
 
@@ -676,16 +696,24 @@ def format_structure(structure, order=None):
     return structure
 
 
-class ConfigLoader:
-    def __init__(self, default_path: str = None):
-        if default_path is None:
-            default_path = Path(__file__).parent / "config.yaml"
-        self._default_dict = self._load_yaml(default_path)
+DEFAULT_PAGEINDEX_CONFIG = {
+    "model": None,
+    "toc_check_page_num": 12,
+    "max_page_num_each_node": 10,
+    "max_token_num_each_node": 60000,
+    "if_add_node_id": "yes",
+    "if_add_node_summary": "no",
+    "if_add_doc_description": "no",
+    "if_add_node_text": "no",
+}
 
-    @staticmethod
-    def _load_yaml(path):
-        with open(path, "r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
+
+class ConfigLoader:
+    def __init__(self, defaults: dict | None = None):
+        base = dict(DEFAULT_PAGEINDEX_CONFIG)
+        if isinstance(defaults, dict):
+            base.update(defaults)
+        self._default_dict = base
 
     def _validate_keys(self, user_dict):
         unknown_keys = set(user_dict) - set(self._default_dict)
@@ -708,3 +736,27 @@ class ConfigLoader:
         self._validate_keys(user_dict)
         merged = {**self._default_dict, **user_dict}
         return config(**merged)
+
+def create_node_mapping(tree):
+    """Create a flat dict mapping node_id to node for quick lookup."""
+    mapping = {}
+    def _traverse(nodes):
+        for node in nodes:
+            if node.get('node_id'):
+                mapping[node['node_id']] = node
+            if node.get('nodes'):
+                _traverse(node['nodes'])
+    _traverse(tree)
+    return mapping
+
+def print_tree(tree, indent=0):
+    for node in tree:
+        summary = node.get('summary') or node.get('prefix_summary', '')
+        summary_str = f"  —  {summary[:60]}..." if summary else ""
+        print('  ' * indent + f"[{node.get('node_id', '?')}] {node.get('title', '')}{summary_str}")
+        if node.get('nodes'):
+            print_tree(node['nodes'], indent + 1)
+
+def print_wrapped(text, width=100):
+    for line in text.splitlines():
+        print(textwrap.fill(line, width=width))

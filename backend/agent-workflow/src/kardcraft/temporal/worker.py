@@ -27,7 +27,6 @@ async def main():
     logger.info("Initializing services for Temporal Worker...")
 
     redis_client = RedisClient()
-    await redis_client.initialize_async()
 
     # Initialize Workflow Manager
     workflow_manager = WorkflowManager(

@@ -34,6 +34,10 @@ class AgentActivities:
         # Node lifecycle phase cache: key=task_id:node_name, value=started|completed|failed
         self._node_phase: Dict[str, str] = {}
 
+    async def _ensure_redis_ready(self) -> None:
+        # Ensure Redis initializes in the same event loop that executes activities.
+        await self.redis_client.initialize_async()
+
     @activity.defn(name="execute_agent_workflow")
     async def execute_agent_workflow(
         self, input_data: Dict[str, Any]
@@ -56,6 +60,7 @@ class AgentActivities:
 
         if not task_id or not user_id:
             raise ValueError("task_id and user_id are required")
+        await self._ensure_redis_ready()
 
         # 必须字段解析（Lower Bound）
         input_payload = input_data.get("input")
@@ -215,6 +220,7 @@ class AgentActivities:
             )
             if isinstance(cleaned_result, dict):
                 self._validate_clarification_contract(cleaned_result)
+                raw_status = str(cleaned_result.get("status") or "").strip().lower()
                 workflow_error = str(cleaned_result.get("error") or "").strip()
                 if workflow_error:
                     if self._is_need_user_input_result(cleaned_result):
@@ -227,6 +233,11 @@ class AgentActivities:
                                 )
                                 or workflow_error
                             )
+                    elif raw_status == "failed":
+                        # Business-level failures (e.g. quality threshold not met)
+                        # should be returned as failed outcomes, not raised as activity exceptions.
+                        if not str(cleaned_result.get("message") or "").strip():
+                            cleaned_result["message"] = workflow_error
                     else:
                         raise ValueError(f"Workflow returned error state: {workflow_error}")
 
@@ -234,9 +245,11 @@ class AgentActivities:
             approved_cards = cleaned_result.get("approved_cards", [])
             saved_card_ids = cleaned_result.get("saved_card_ids", [])
             intent_type = cleaned_result.get("intent_type")
-            status = (
-                "need_user_input" if self._is_need_user_input_result(cleaned_result) else "success"
-            )
+            raw_status = str(cleaned_result.get("status") or "").strip().lower()
+            if raw_status in {"success", "need_user_input", "failed"}:
+                status = raw_status
+            else:
+                status = "need_user_input" if self._is_need_user_input_result(cleaned_result) else "success"
             message = self._resolve_outcome_message(
                 cleaned_result=cleaned_result,
                 status=status,
@@ -311,14 +324,14 @@ class AgentActivities:
             # Emit terminal realtime events so frontend status/timeline can converge without page refresh.
             await self._publish_terminal_events(
                 task_id=task_id,
-                event_type="WORKFLOW_COMPLETED",
+                event_type="WORKFLOW_FAILED" if status == "failed" else "WORKFLOW_COMPLETED",
                 message=message,
                 session_id=session_id,
             )
 
             return {
                 "schema_version": "task-outcome",
-                "status": "success",
+                "status": status,
                 "task_id": task_id,
                 "user_id": user_id,
                 "session_id": session_id,
@@ -332,6 +345,44 @@ class AgentActivities:
                 "saved_card_ids": saved_card_ids,
             }
 
+        except asyncio.CancelledError:
+            activity.logger.info(
+                f"Agent workflow cancelled by user/system task_id={task_id}"
+            )
+            try:
+                await asyncio.shield(
+                    self._publish_terminal_events(
+                        task_id=task_id,
+                        event_type="WORKFLOW_CANCELLED",
+                        message="Workflow cancelled",
+                        session_id=session_id,
+                    )
+                )
+            except Exception:
+                pass
+            return {
+                "schema_version": "task-outcome",
+                "status": "cancelled",
+                "task_id": task_id,
+                "user_id": user_id,
+                "session_id": session_id,
+                "message": "Workflow cancelled",
+                "metadata": {},
+                "result": {
+                    "workflow_completed": False,
+                    "task_id": task_id,
+                    "user_id": user_id,
+                    "workflow_type": task_type,
+                    "status": "cancelled",
+                    "message": "Workflow cancelled",
+                    "timestamp": datetime.utcnow().isoformat(),
+                },
+                "checkpoint_id": task_id,
+                "execution_time_ms": 0,
+                "workflow_type": task_type,
+                "final_cards": [],
+                "saved_card_ids": [],
+            }
         except Exception as e:
             activity.logger.error(f"Agent workflow failed: {e}", exc_info=True)
             # Best-effort terminal event on failures; do not swallow original exception.
@@ -362,6 +413,7 @@ class AgentActivities:
 
         if not task_id or not checkpoint_id:
             raise ValueError("task_id and checkpoint_id are required")
+        await self._ensure_redis_ready()
 
         async def progress_callback(event_data: Dict[str, Any]):
             await self._publish_progress_event(task_id, event_data)
@@ -417,6 +469,15 @@ class AgentActivities:
                 "execution_time_ms": execution_time_ms,
             }
 
+        except asyncio.CancelledError:
+            activity.logger.info(f"Agent workflow resume cancelled task_id={task_id}")
+            return {
+                "status": "cancelled",
+                "task_id": task_id,
+                "checkpoint_id": checkpoint_id,
+                "execution_time_ms": 0,
+                "message": "Workflow resume cancelled",
+            }
         except Exception as e:
             activity.logger.error(f"Agent workflow resume failed: {e}", exc_info=True)
             raise
@@ -443,6 +504,7 @@ class AgentActivities:
         activity.logger.info(
             f"Publishing workflow event: {event_type} for task {task_id}"
         )
+        await self._ensure_redis_ready()
 
         try:
             # 发布到 Redis Stream 供 SSE 使用
@@ -655,6 +717,12 @@ class AgentActivities:
                 str(cleaned_result.get("message") or "").strip()
                 or self._extract_first_pending_question(cleaned_result.get("pending_questions"))
                 or "Additional user input is required to continue."
+            )
+        if status == "failed":
+            return (
+                str(cleaned_result.get("message") or "").strip()
+                or str(cleaned_result.get("error") or "").strip()
+                or "Workflow failed"
             )
 
         if final_cards:

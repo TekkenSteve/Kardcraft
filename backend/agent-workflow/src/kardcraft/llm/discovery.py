@@ -48,7 +48,7 @@ INTENT_MODELS = {
         "openai": "gpt-4o",
         "anthropic": "claude-3-5-sonnet-20241022",
     },
-    # ===== 分类/识别类 =====
+    # ===== Classification/Recognition Category =====
     "classify": {
         "openai": "gpt-4o-mini",
         "anthropic": "claude-3-haiku-20240307",
@@ -57,6 +57,16 @@ INTENT_MODELS = {
     "extract": {
         "openai": "gpt-4o-mini",
         "anthropic": "claude-3-5-sonnet-20241022",
+    },
+    "query_understand": {
+        "openai": "gpt-4o-mini",
+        "anthropic": "claude-3-haiku-20240307",
+        "groq": "groq/llama-3.1-70b-versatile",
+    },
+    "query_rewrite": {
+        "openai": "gpt-4o-mini",
+        "anthropic": "claude-3-haiku-20240307",
+        "groq": "groq/llama-3.1-70b-versatile",
     },
     # ===== 检索/搜索类 =====
     "search": {
@@ -83,7 +93,7 @@ INTENT_MODELS = {
         "openai": "gpt-4o-mini",
         "anthropic": "claude-3-haiku-20240307",
     },
-    # ===== 特殊场景 =====
+    # ===== Special Scenarios =====
     "fast": {
         "openai": "gpt-4o-mini",
         "anthropic": "claude-3-haiku-20240307",
@@ -96,7 +106,7 @@ INTENT_MODELS = {
     },
 }
 
-# 意图 → 默认 temperature（生成类偏高，判定类偏低）
+# Intent → Default temperature (higher for generative type, lower for judgment type)
 INTENT_TEMPERATURES = {
     "chat": 0.4,
     "think": 0.3,
@@ -105,6 +115,8 @@ INTENT_TEMPERATURES = {
     "creative": 0.8,
     "classify": 0.0,
     "extract": 0.0,
+    "query_understand": 0.0,
+    "query_rewrite": 0.0,
     "search": 0.2,
     "retrieve": 0.1,
     "tool_call": 0.1,
@@ -236,7 +248,8 @@ def get_completion_config(
     生成 completion 调用配置（由 llm client facade 消费）。
     """
     model_name, resolved_temperature = get_model(intent, temperature)
-    return {"model": model_name, "temperature": resolved_temperature, **overrides}
+    sanitized_overrides = {k: v for k, v in overrides.items() if v is not None}
+    return {"model": model_name, "temperature": resolved_temperature, **sanitized_overrides}
 
 
 def get_embed_model() -> str:

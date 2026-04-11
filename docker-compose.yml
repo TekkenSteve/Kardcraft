@@ -293,10 +293,11 @@ services:
     networks:
       - kardcraft-network
     healthcheck:
-      test: [ "CMD", "cypher-shell", "-u", "neo4j", "-p", "neo4j123", "RETURN 1" ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD", "neo4j", "status"]
+      start_period: 40s
+      interval: 15s
+      timeout: 10s
+      retries: 3
 
   # Temporal服务
   temporal:

@@ -26,6 +26,15 @@ from .load import SkillMetadata, list_skills
 from .middleware import SkillsMiddleware, NoSkillsMiddleware, SkillsState, SkillsStateUpdate
 from .code import CodeMiddleware
 from .shell import ShellMiddleware
+from .router import (
+    SkillSelectorUnavailableError,
+    build_skill_guidance_text,
+    select_skills_for_task,
+    discover_skills,
+    disclose_skills,
+    replay_skill_selection,
+)
+from .selector_health import summarize_selector_health, selector_unavailable_threshold_ok
 
 __all__ = [
     "SkillMetadata",
@@ -36,6 +45,14 @@ __all__ = [
     "SkillsStateUpdate",
     "CodeMiddleware",
     "ShellMiddleware",
+    "build_skill_guidance_text",
+    "select_skills_for_task",
+    "discover_skills",
+    "disclose_skills",
+    "replay_skill_selection",
+    "SkillSelectorUnavailableError",
+    "summarize_selector_health",
+    "selector_unavailable_threshold_ok",
 ]
 
 __version__ = "1.0.0"

@@ -35,6 +35,7 @@ class RagixClient:
         )
         self._query_pipeline = QueryPipeline(QueryPipelineConfig())
         self._indexed_files: Set[str] = set()
+        self._file_title_cache: Dict[str, str] = {}
 
     async def initialize(self) -> None:
         if self._initialized:
@@ -72,6 +73,7 @@ class RagixClient:
             filename = metadata.custom_meta.get("original_filename")
         if not filename:
             filename = f"{file_id}"
+        self._record_file_title(session_id=session_id, user_id=user_id, file_id=file_id, title=filename)
 
         client = self._get_client(session_id)
         return await self._preprocess_and_insert(
@@ -149,6 +151,7 @@ class RagixClient:
         top_k: int = 10,
         mode: str = "mix",
         modes: Optional[List[str]] = None,
+        conversation_history: Optional[List[Dict[str, str]]] = None,
     ) -> Answer:
         """Query LightRAG (workspace isolated by session_id)"""
         if not self._initialized:
@@ -158,6 +161,11 @@ class RagixClient:
             await self._ensure_files_indexed(session_id, file_ids, user_id)
 
         client = self._get_client(session_id)
+        rewrite_hints = await self._build_rewrite_hints(
+            session_id=session_id,
+            user_id=user_id,
+            file_ids=file_ids,
+        )
         return await self._query_pipeline.query(
             client,
             question,
@@ -166,6 +174,8 @@ class RagixClient:
             modes=modes,
             top_k=top_k,
             include_references=True,
+            conversation_history=conversation_history,
+            rewrite_hints=rewrite_hints,
         )
 
     async def delete_session(self, session_id: str) -> bool:
@@ -193,6 +203,9 @@ class RagixClient:
             stale_keys = [key for key in self._indexed_files if key.startswith(prefix)]
             for key in stale_keys:
                 self._indexed_files.discard(key)
+            stale_title_keys = [key for key in self._file_title_cache if key.startswith(prefix)]
+            for key in stale_title_keys:
+                self._file_title_cache.pop(key, None)
 
         indexed_new = False
         for file_id in file_ids:
@@ -334,3 +347,78 @@ class RagixClient:
             if not busy and not pending:
                 return
             await asyncio.sleep(0.5)
+
+    def _record_file_title(
+        self,
+        *,
+        session_id: Optional[str],
+        user_id: str,
+        file_id: str,
+        title: str,
+    ) -> None:
+        workspace = session_id or "default"
+        normalized = str(title or "").strip()
+        if not normalized:
+            return
+        key = f"{workspace}:{user_id}:{file_id}"
+        self._file_title_cache[key] = normalized
+
+    async def _build_rewrite_hints(
+        self,
+        *,
+        session_id: Optional[str],
+        user_id: Optional[str],
+        file_ids: Optional[List[str]],
+    ) -> Dict[str, Any]:
+        workspace = session_id or "default"
+        hints: Dict[str, Any] = {"workspace": workspace}
+        if not user_id or not file_ids:
+            return hints
+
+        titles: List[str] = []
+        seen = set()
+        for file_id in file_ids:
+            key = f"{workspace}:{user_id}:{file_id}"
+            title = str(self._file_title_cache.get(key) or "").strip()
+            if not title:
+                continue
+            folded = title.casefold()
+            if folded in seen:
+                continue
+            seen.add(folded)
+            titles.append(title)
+
+        if not titles and user_id and session_id:
+            try:
+                from kardcraft.utils.file_storage_client import get_conversation_files
+
+                files = await get_conversation_files(user_id=user_id, session_id=session_id)
+                file_map = {str(item.file_id): item for item in files}
+                for file_id in file_ids:
+                    item = file_map.get(str(file_id))
+                    if item is None:
+                        continue
+                    title = (
+                        (item.custom_meta or {}).get("original_filename")
+                        or item.filename
+                    )
+                    normalized = str(title or "").strip()
+                    if not normalized:
+                        continue
+                    self._record_file_title(
+                        session_id=session_id,
+                        user_id=user_id,
+                        file_id=str(file_id),
+                        title=normalized,
+                    )
+                    folded = normalized.casefold()
+                    if folded in seen:
+                        continue
+                    seen.add(folded)
+                    titles.append(normalized)
+            except Exception as e:
+                logger.warning(f"Failed to load conversation file titles for rewrite hints: {e}")
+
+        if titles:
+            hints["uploaded_file_titles"] = titles
+        return hints

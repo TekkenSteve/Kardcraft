@@ -7,7 +7,10 @@ class CardSupervisorState(TypedDict, total=False):
     user_input: str
     message_knowledge: Optional[str]
     subject_domain: Optional[str]
+    query_scope: Optional[str]
     learning_units: List[Dict[str, Any]]
+    evidence_items: List[Dict[str, Any]]
+    document_trees: List[Dict[str, Any]]
     template_profiles: List[str]
     template_default_profile: Optional[str]
     selected_template_profile: Optional[str]

@@ -8,15 +8,25 @@ def route_after_preflight(state: State) -> str:
         return "finalize"
     if state.get("preflight_status") == "need_user_input":
         return "finalize"
+    if bool(state.get("file_tree_path_active")):
+        return "document_tree_planner"
+    return "syllabus_supervisor"
+
+
+def route_after_document_tree_planner(state: State) -> str:
+    if state.get("error"):
+        return "finalize"
     return "syllabus_supervisor"
 
 
 def route_after_syllabus(state: State) -> str:
     if state.get("error"):
         return "finalize"
-    status = state.get("syllabus_status")
+    status = str(state.get("syllabus_status") or "").strip().lower()
     if status == "outline_ready":
-        return "evidence_supervisor"
+        if state.get("evidence_items"):
+            return "card_supervisor"
+        return "evidence_builder"
     return "finalize"
 
 
@@ -30,5 +40,8 @@ def route_after_evidence(state: State) -> str:
 
 
 def route_after_card(state: State) -> str:
-    # all paths finalize, status only affects payload semantics
+    reason = str(state.get("error") or "").strip()
+    retry_count = int(state.get("evidence_retry_count") or 0)
+    if reason in {"missing_file_tree_evidence", "missing_file_tree_evidence_items"} and retry_count <= 1:
+        return "evidence_builder"
     return "finalize"
