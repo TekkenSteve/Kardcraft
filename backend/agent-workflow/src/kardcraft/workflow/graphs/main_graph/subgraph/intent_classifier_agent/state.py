@@ -13,13 +13,9 @@ class State(TypedDict):
 
     # Classification results
     intent_type: Optional[str]  # 'create_cards', 'optimize_cards', 'review_cards', 'analyze_content'
-    driven_mode: Optional[
-        str
-    ]  # 'content_driven' | 'topic_driven' - determined by classifier
+    driven_mode: Optional[str]  # 'content_driven' | 'topic_driven' - determined by classifier
     subject_domain: Optional[str]  # 'mathematics', 'languages', 'sciences', etc.
-    task_complexity: Optional[
-        str
-    ]  # 'simple', 'medium', 'complex' - based on input scale
+    task_complexity: Optional[str]  # 'simple', 'medium', 'complex' - based on input scale
     language: Optional[str]  # Preferred card/output language (e.g., 'zh', 'en', 'ja')
 
     # Error handling

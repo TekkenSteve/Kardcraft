@@ -17,7 +17,8 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY src/ ./src/
 
 # 阶段2: 运行时 (最小化基础镜像)
-FROM python:3.11-slim-bookworm AS runtime
+# FROM python:3.11-slim-bookworm AS runtime
+FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS runtime
 
 WORKDIR /app
 

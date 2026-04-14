@@ -297,7 +297,7 @@ services:
       start_period: 40s
       interval: 15s
       timeout: 10s
-      retries: 3
+      retries: 5
 
   # Temporal服务
   temporal:

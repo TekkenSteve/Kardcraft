@@ -1,4 +1,4 @@
-"""Nodes for card supervisor agent with adversarial QA loop."""
+"""Utility helpers for card generation agent."""
 
 from __future__ import annotations
 
@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, List
 
 from langchain_core.tools import tool
-from langgraph.runtime import Runtime
 
 from kardcraft.agent_skills import (
     SkillSelectorUnavailableError,
@@ -18,10 +17,7 @@ from kardcraft.llm.client import chat_complete
 from kardcraft.tools.knowledge_tools import query_knowledge
 from kardcraft.utils.llm_json import safe_parse_llm_json
 from kardcraft.utils.logger import logger
-from kardcraft.workflow.graphs.main_graph.state import Context
 
-from .quality_metrics import reason_code_coverage_rate
-from .state import CardSupervisorState
 
 FILE_TREE_SCOPES = {"title_only", "focused", "full_doc"}
 HARD_REASON_CODES = {
@@ -184,6 +180,26 @@ def _normalize_card(item: Dict[str, Any], default_model: str = "default") -> Dic
     }
 
 
+def _evidence_unit_id(node: Dict[str, Any], fallback: str) -> str:
+    node_id = str(node.get("node_id") or "").strip()
+    file_id = str(node.get("file_id") or "").strip()
+    if file_id and node_id:
+        return f"{file_id}:{node_id}"
+    if node_id:
+        return node_id
+    return fallback
+
+
+def _split_unit_id(value: str) -> tuple[str, str]:
+    text = str(value or "").strip()
+    if not text:
+        return "", ""
+    if ":" not in text:
+        return "", text
+    file_id, node_id = text.rsplit(":", 1)
+    return file_id.strip(), node_id.strip()
+
+
 async def _generate_cards_with_llm(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     units = payload.get("learning_units") or []
     evidence_items = payload.get("evidence_items") or []
@@ -221,7 +237,7 @@ async def _generate_cards_with_llm(payload: Dict[str, Any]) -> List[Dict[str, An
                 continue
             evidence_blocks.append(
                 {
-                    "unit_id": str(node.get("node_id") or f"node_{idx}"),
+                    "unit_id": _evidence_unit_id(node, f"node_{idx}"),
                     "title": title,
                     "summary": summary,
                     "evidence": evidence[:1800],
@@ -323,6 +339,7 @@ async def _generate_cards_with_llm(payload: Dict[str, Any]) -> List[Dict[str, An
         parsed = safe_parse_llm_json(content, default={"cards": []})
         cards_raw = parsed.get("cards") if isinstance(parsed, dict) else []
         cards: List[Dict[str, Any]] = []
+        dropped_by_policy = 0
         if isinstance(cards_raw, list):
             for item in cards_raw:
                 if not isinstance(item, dict):
@@ -333,15 +350,37 @@ async def _generate_cards_with_llm(payload: Dict[str, Any]) -> List[Dict[str, An
                     if model not in available_models:
                         normalized["model"] = preferred_model
                 if normalized:
-                    violations = _intent_rule_violations(
-                        normalized,
-                        query_scope=query_scope,
-                        doc_titles=document_titles,
-                        profile=profile,
-                    )
-                    if violations:
-                        continue
                     cards.append(normalized)
+                else:
+                    dropped_by_policy += 1
+        if cards:
+            hard_fail_count = 0
+            for card in cards:
+                violations = _intent_rule_violations(
+                    card,
+                    query_scope=query_scope,
+                    doc_titles=document_titles,
+                    profile=profile,
+                )
+                if violations:
+                    hard_fail_count += 1
+            logger.debug(
+                "card generation raw output summary",
+                evidence_block_count=len(evidence_blocks),
+                llm_card_count=len(cards_raw) if isinstance(cards_raw, list) else 0,
+                normalized_card_count=len(cards),
+                normalized_drop_count=dropped_by_policy,
+                hard_fail_precheck_count=hard_fail_count,
+                query_scope=query_scope,
+            )
+        else:
+            logger.warning(
+                "card generation produced zero normalized cards",
+                evidence_block_count=len(evidence_blocks),
+                llm_card_count=len(cards_raw) if isinstance(cards_raw, list) else 0,
+                normalized_drop_count=dropped_by_policy,
+                query_scope=query_scope,
+            )
         if query_scope == "title_only":
             cards = cards[:2]
         return cards
@@ -735,15 +774,140 @@ async def _quality_gate_with_llm(
 
 
 @tool
-async def run_card_iteration(payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Run one generate->refine->quality iteration."""
-    work_state = dict(payload)
+async def run_question_generation(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Generate question drafts scoped by selected evidence/units."""
+    work_state = dict(payload or {})
     try:
         raw_cards = work_state.get("raw_cards") or []
         if not raw_cards:
             raw_cards = await _generate_cards_with_llm(work_state)
+        question_drafts: List[Dict[str, Any]] = []
+        for card in raw_cards:
+            if not isinstance(card, dict):
+                continue
+            front = str(card.get("front") or "").strip()
+            if not front:
+                continue
+            question_drafts.append(
+                {
+                    "id": str(card.get("id") or ""),
+                    "front": front,
+                    "source_unit_id": card.get("source_unit_id"),
+                    "model": str(card.get("model") or ""),
+                    "suggested_question_type": str(card.get("suggested_question_type") or card.get("model") or ""),
+                    "tags": [str(t).strip() for t in (card.get("tags") or []) if str(t).strip()],
+                    "status": "question_draft",
+                }
+            )
+        logger.debug(
+            "question generation stage summary",
+            raw_cards_count=len(raw_cards),
+            question_drafts_count=len(question_drafts),
+            evidence_items_count=len(work_state.get("evidence_items") or []),
+            learning_units_count=len(work_state.get("learning_units") or []),
+        )
+        return {"raw_cards": raw_cards, "question_drafts": question_drafts}
+    except SkillSelectorUnavailableError:
+        return {"fatal_error": "selector_unavailable", "raw_cards": [], "question_drafts": []}
 
-        refined_cards = await _refine_cards_with_llm(raw_cards, work_state)
+
+@tool
+async def run_answer_generation(
+    question_drafts: List[Dict[str, Any]],
+    payload: Dict[str, Any],
+    raw_cards: List[Dict[str, Any]] | None = None,
+) -> Dict[str, Any]:
+    """Generate/resolve answer drafts for question drafts."""
+    work_state = dict(payload or {})
+    raw_by_id: Dict[str, Dict[str, Any]] = {}
+    for card in (raw_cards or []):
+        if not isinstance(card, dict):
+            continue
+        cid = str(card.get("id") or "").strip()
+        if cid:
+            raw_by_id[cid] = card
+    evidence_index = _build_evidence_index(work_state)
+    answer_drafts: List[Dict[str, Any]] = []
+    for draft in question_drafts or []:
+        if not isinstance(draft, dict):
+            continue
+        card_id = str(draft.get("id") or "").strip()
+        front = str(draft.get("front") or "").strip()
+        source_unit_id = str(draft.get("source_unit_id") or "").strip()
+        if not card_id or not front:
+            continue
+        back = str((raw_by_id.get(card_id) or {}).get("back") or "").strip()
+        if not back:
+            back = _pick_best_evidence(front, source_unit_id, evidence_index)
+        if not back:
+            continue
+        answer_drafts.append({"id": card_id, "back": back, "status": "answer_draft"})
+    return {"answer_drafts": answer_drafts}
+
+
+@tool
+async def run_card_assembly(
+    question_drafts: List[Dict[str, Any]],
+    answer_drafts: List[Dict[str, Any]],
+    payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Assemble finalized card objects from question/answer drafts."""
+    work_state = dict(payload or {})
+    available_models = [
+        str(item).strip()
+        for item in (work_state.get("template_profiles") or [])
+        if str(item).strip()
+    ]
+    preferred_model = str(
+        work_state.get("selected_template_profile")
+        or work_state.get("template_default_profile")
+        or "default"
+    )
+    if preferred_model not in available_models and available_models:
+        preferred_model = available_models[0]
+    answer_by_id = {
+        str(item.get("id") or "").strip(): str(item.get("back") or "").strip()
+        for item in (answer_drafts or [])
+        if isinstance(item, dict)
+    }
+    assembled_cards: List[Dict[str, Any]] = []
+    for draft in question_drafts or []:
+        if not isinstance(draft, dict):
+            continue
+        cid = str(draft.get("id") or "").strip()
+        front = str(draft.get("front") or "").strip()
+        back = str(answer_by_id.get(cid) or "").strip()
+        if not cid or not front or not back:
+            continue
+        normalized = _normalize_card(
+            {
+                "id": cid,
+                "front": front,
+                "back": back,
+                "model": draft.get("model") or preferred_model,
+                "suggested_question_type": draft.get("suggested_question_type") or draft.get("model") or preferred_model,
+                "tags": draft.get("tags") or [],
+                "source_unit_id": draft.get("source_unit_id"),
+                "status": "assembled",
+            },
+            default_model=preferred_model,
+        )
+        if normalized and available_models:
+            model = str(normalized.get("model") or "").strip()
+            if model not in available_models:
+                normalized["model"] = preferred_model
+                normalized["suggested_question_type"] = preferred_model
+        if normalized:
+            assembled_cards.append(normalized)
+    return {"assembled_cards": assembled_cards}
+
+
+@tool
+async def run_card_quality_pipeline(cards: List[Dict[str, Any]], payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Run refinement, typing, and quality gate on assembled cards."""
+    work_state = dict(payload or {})
+    try:
+        refined_cards = await _refine_cards_with_llm(cards, work_state)
         available_models = [
             str(item).strip()
             for item in (work_state.get("template_profiles") or [])
@@ -767,12 +931,9 @@ async def run_card_iteration(payload: Dict[str, Any]) -> Dict[str, Any]:
             document_titles=_collect_document_titles(work_state),
             subject_domain=str(work_state.get("subject_domain") or "general"),
         )
-
-        report = quality.get("quality_report") or {}
         return {
             "approved_cards": quality.get("approved_cards") or [],
-            "quality_report": report,
-            "raw_cards": raw_cards,
+            "quality_report": quality.get("quality_report") or {},
             "refined_cards": typed_cards,
         }
     except SkillSelectorUnavailableError:
@@ -780,28 +941,8 @@ async def run_card_iteration(payload: Dict[str, Any]) -> Dict[str, Any]:
             "fatal_error": "selector_unavailable",
             "approved_cards": [],
             "quality_report": {},
-            "raw_cards": [],
             "refined_cards": [],
         }
-
-
-@tool
-async def reviewer_readonly(report: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Read-only reviewer: extract issue list from quality report without editing cards."""
-    findings: List[Dict[str, Any]] = []
-    for item in (report.get("failed_cards") or []):
-        card = item.get("card") if isinstance(item, dict) else None
-        if not isinstance(card, dict):
-            continue
-        findings.append(
-            {
-                "card_id": card.get("id"),
-                "front": card.get("front"),
-                "reason_codes": item.get("reason_codes") or item.get("violations") or [],
-                "critical": bool(item.get("critical")),
-            }
-        )
-    return findings
 
 
 def _normalize_lookup_key(value: str) -> str:
@@ -839,144 +980,6 @@ def _pick_best_evidence(front: str, source_unit_id: str, evidence_index: Dict[st
     return str(next(iter(evidence_index.values()), "") or "").strip()
 
 
-@tool
-async def fixer_apply_repair(
-    failed_cards: List[Dict[str, Any]],
-    session_id: str | None,
-    user_id: str | None,
-    file_ids: List[str],
-    evidence_cache: Dict[str, str] | None = None,
-    evidence_index: Dict[str, str] | None = None,
-) -> List[Dict[str, Any]]:
-    """Fixer: backfill failed cards with existing evidence only."""
-    cache = evidence_cache if isinstance(evidence_cache, dict) else {}
-    support_index = evidence_index if isinstance(evidence_index, dict) else {}
-    seen_fronts: set[str] = set()
-    updated: List[Dict[str, Any]] = []
-    for item in failed_cards[:10]:
-        card = item.get("card") if isinstance(item, dict) else None
-        if not isinstance(card, dict):
-            continue
-        front = str(card.get("front") or "").strip()
-        if not front or front in seen_fronts:
-            continue
-        seen_fronts.add(front)
-        source_unit_id = str(card.get("source_unit_id") or "").strip()
-        cache_key = source_unit_id or str(card.get("id") or "").strip() or _normalize_lookup_key(front)
-        evidence = str(cache.get(cache_key) or "").strip()
-        if not evidence:
-            evidence = _pick_best_evidence(front, source_unit_id, support_index)
-        if evidence:
-            cache[cache_key] = evidence
-            back = str(card.get("back") or "").strip()
-            evidence_block = f"Evidence:\n{evidence[:1200]}".strip()
-            if evidence_block not in back:
-                card["back"] = f"{back}\n\n{evidence_block}".strip()
-        card["status"] = "repaired"
-        updated.append(card)
-    return updated
-
-
-@tool
-async def judge_score(report: Dict[str, Any]) -> Dict[str, Any]:
-    """Judge: model-based scoring (0-100), language-agnostic."""
-    system_prompt = (
-        "You are a strict QA judge for flashcards. "
-        "Score current card set quality from 0 to 100 based on report quality, defects and critical failures. "
-        "Return JSON only: "
-        "{\"score\": int, \"reason\": string, \"confidence\": number}."
-    )
-    report_text = json.dumps(report or {}, ensure_ascii=False, default=str)
-    if len(report_text) > 4000:
-        report_text = report_text[:4000]
-    user_prompt = f"quality_report:\n{report_text}"
-    try:
-        response = await chat_complete(
-            intent="fast",
-            temperature=0.0,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-        )
-        content = ""
-        if response and getattr(response, "choices", None):
-            msg = response.choices[0].message
-            content = getattr(msg, "content", "") or ""
-        parsed = safe_parse_llm_json(
-            content,
-            default={"score": 0, "reason": "model_parse_fallback", "confidence": 0.0},
-        )
-        if not isinstance(parsed, dict):
-            parsed = {}
-        score = int(parsed.get("score", 0) or 0)
-        score = max(0, min(100, score))
-        return {
-            "score": score,
-            "reason": str(parsed.get("reason") or "model_decision"),
-            "confidence": float(parsed.get("confidence", 0.0) or 0.0),
-        }
-    except Exception as exc:
-        detail = str(exc).replace("\n", " ")[:160]
-        return {
-            "score": 0,
-            "reason": f"model_unavailable:{type(exc).__name__}:{detail}",
-            "confidence": 0.0,
-        }
-
-
-def _score_from_quality_report(report: Dict[str, Any]) -> Dict[str, Any]:
-    checked = max(0, int(report.get("checked") or 0))
-    approved = max(0, int(report.get("approved") or 0))
-    critical = max(0, int(report.get("critical_failures") or 0))
-    if checked <= 0:
-        return {"score": 0, "reason": "empty_quality_report", "confidence": 1.0}
-    pass_rate = max(0.0, min(1.0, float(report.get("pass_rate") or (approved / checked))))
-    base_score = int(round(pass_rate * 100))
-    critical_penalty = critical * 20
-    score = max(0, min(100, base_score - critical_penalty))
-    reason = (
-        f"rule_based_quality_score:"
-        f"pass_rate={pass_rate:.2f},"
-        f"checked={checked},approved={approved},critical_failures={critical},"
-        f"penalty={critical_penalty}"
-    )
-    return {"score": score, "reason": reason, "confidence": 1.0}
-
-
-def _compute_evidence_coverage(cards: List[Dict[str, Any]], evidence_items: List[Dict[str, Any]]) -> float:
-    """计算卡片对证据的覆盖率，更宽松的计算方式"""
-    if not evidence_items:
-        return 1.0 if cards else 0.0  # 如果没有证据要求，有卡片就算100%
-    
-    all_units = set()
-    for item in evidence_items:
-        if not isinstance(item, dict):
-            continue
-        node = item.get("node") if isinstance(item.get("node"), dict) else {}
-        node_id = str(node.get("node_id") or "").strip()
-        if node_id:
-            all_units.add(node_id)
-    
-    if not all_units:
-        return 1.0 if cards else 0.0  # 如果没有可追踪的单元，有卡片就算100%
-    
-    covered_units = set()
-    for card in cards:
-        if not isinstance(card, dict):
-            continue
-        unit_id = str(card.get("source_unit_id") or "").strip()
-        if unit_id and unit_id in all_units:
-            covered_units.add(unit_id)
-    
-    # 如果有卡片但没有匹配到 source_unit_id，给予基础覆盖率
-    if not covered_units and cards:
-        # 基于卡片数量给予合理的覆盖率估算
-        return min(1.0, len(cards) / max(1, len(all_units)))
-    
-    return len(covered_units) / max(1, len(all_units))
-
-
 def _build_evidence_index(work_state: Dict[str, Any]) -> Dict[str, str]:
     index: Dict[str, str] = {}
     for item in (work_state.get("evidence_items") or []):
@@ -987,6 +990,7 @@ def _build_evidence_index(work_state: Dict[str, Any]) -> Dict[str, str]:
             continue
         node = item.get("node") if isinstance(item.get("node"), dict) else {}
         node_id = str(node.get("node_id") or "").strip()
+        file_id = str(node.get("file_id") or "").strip()
         keys = [
             str(item.get("query") or "").strip(),
             str(node.get("title") or "").strip(),
@@ -994,6 +998,14 @@ def _build_evidence_index(work_state: Dict[str, Any]) -> Dict[str, str]:
         ]
         if node_id:
             index[node_id] = content
+        if file_id and node_id:
+            index[f"{file_id}:{node_id}"] = content
+        source_unit_id = str(item.get("source_unit_id") or "").strip()
+        if source_unit_id:
+            index[source_unit_id] = content
+            _, source_node_id = _split_unit_id(source_unit_id)
+            if source_node_id:
+                index[source_node_id] = content
         for raw_key in keys:
             key = _normalize_lookup_key(raw_key)
             if key and key not in index:
@@ -1001,294 +1013,19 @@ def _build_evidence_index(work_state: Dict[str, Any]) -> Dict[str, str]:
     return index
 
 
-async def run_card_supervisor(
-    state: CardSupervisorState,
-    runtime: Runtime[Context],
-) -> Dict[str, Any]:
-    context = runtime.context
-    threshold = int(state.get("judge_score_threshold") or 90)
-    max_iterations = int(state.get("max_qa_iterations") or 5)
-    min_coverage = float(state.get("min_evidence_coverage") or 0.40)  # 降低到40%，更实际
-    min_gain_delta = float(state.get("min_gain_delta") or 0.02)
-    file_tree_input = bool(state.get("file_ids")) and str(state.get("query_scope") or "").strip().lower() in FILE_TREE_SCOPES
 
-    work_state: Dict[str, Any] = {
-        "user_id": context.user_id if context else None,
-        "session_id": context.session_id if context else None,
-        "user_input": state.get("user_input", ""),
-        "topic": state.get("user_input", ""),
-        "message_knowledge": state.get("message_knowledge", ""),
-        "subject_domain": state.get("subject_domain", "general"),
-        "query_scope": state.get("query_scope") or "focused",
-        "learning_units": state.get("learning_units") or [],
-        "evidence_items": state.get("evidence_items") or [],
-        "document_trees": state.get("document_trees") or [],
-        "template_profiles": state.get("template_profiles") or [],
-        "template_default_profile": state.get("template_default_profile"),
-        "selected_template_profile": state.get("selected_template_profile"),
-        "file_ids": state.get("file_ids") or [],
-    }
 
-    if file_tree_input:
-        # File-tree path must come from evidence_loop output only.
-        work_state["learning_units"] = []
-
-    if file_tree_input and not work_state["evidence_items"]:
-        return {
-            "status": "failed",
-            "reason": "missing_file_tree_evidence_items",
-            "approved_cards": [],
-            "quality_report": {},
-            "qa_loop_report": {
-                "max_iterations": max_iterations,
-                "iterations_used": 0,
-                "best_score": 0,
-                "final_score": 0,
-                "exit_reason": "missing_file_tree_evidence_items",
-                "review_findings": [],
-                "judge_scores": [],
-                "fix_actions": [],
-            },
-        }
-
-    if not file_tree_input and not work_state["learning_units"] and not work_state["evidence_items"]:
-        return {
-            "status": "failed",
-            "reason": "missing_evidence_inputs",
-            "approved_cards": [],
-            "quality_report": {},
-            "qa_loop_report": {
-                "max_iterations": max_iterations,
-                "iterations_used": 0,
-                "best_score": 0,
-                "final_score": 0,
-                "exit_reason": "missing_evidence_inputs",
-                "review_findings": [],
-                "judge_scores": [],
-                "fix_actions": [],
-            },
-        }
-
-    last_report: Dict[str, Any] = {}
-    approved_cards: List[Dict[str, Any]] = []
-    best_effort_cards: List[Dict[str, Any]] = []
-    best_score = 0
-    final_score = 0
-    review_findings_log: List[Dict[str, Any]] = []
-    judge_scores_log: List[Dict[str, Any]] = []
-    fix_actions_log: List[Dict[str, Any]] = []
-    evidence_cache: Dict[str, str] = {}
-    evidence_index = _build_evidence_index(work_state)
-    stagnant_rounds = 0
-    iterations_used = 0
-    exit_reason = "max_iterations_reached"
-    previous_score: int | None = None
-    previous_coverage: float | None = None
-    convergence_trace: List[Dict[str, Any]] = []
-
-    for iteration in range(1, max_iterations + 1):
-        iterations_used = iteration
-        iteration_result = await run_card_iteration.ainvoke({"payload": work_state})
-        if str(iteration_result.get("fatal_error") or "").strip() == "selector_unavailable":
-            return {
-                "status": "failed",
-                "reason": "selector_unavailable",
-                "approved_cards": [],
-                "quality_report": {},
-                "qa_loop_report": {
-                    "max_iterations": max_iterations,
-                    "iterations_used": iteration - 1,
-                    "best_score": best_score,
-                    "final_score": final_score,
-                    "exit_reason": "selector_unavailable",
-                    "review_findings": review_findings_log,
-                    "judge_scores": judge_scores_log,
-                    "fix_actions": fix_actions_log,
-                    "convergence_trace": convergence_trace,
-                },
-            }
-        report = iteration_result.get("quality_report") or {}
-        approved_cards = iteration_result.get("approved_cards") or []
-        best_effort_cards = (
-            iteration_result.get("refined_cards")
-            or iteration_result.get("raw_cards")
-            or best_effort_cards
-        )
-        last_report = report
-
-        findings = await reviewer_readonly.ainvoke({"report": report})
-        review_findings_log.append({"iteration": iteration, "findings": findings})
-
-        failed_cards = report.get("failed_cards") or []
-        repaired_cards: List[Dict[str, Any]] = await fixer_apply_repair.ainvoke(
-            {
-                "failed_cards": failed_cards,
-                "session_id": context.session_id if context else None,
-                "user_id": context.user_id if context else None,
-                "file_ids": state.get("file_ids") or [],
-                "evidence_cache": evidence_cache,
-                "evidence_index": evidence_index,
-            }
-        )
-        fix_actions_log.append(
-            {
-                "iteration": iteration,
-                "failed_cards": len(failed_cards),
-                "repaired_cards": len(repaired_cards),
-            }
-        )
-        
-        # 关键修复：合并通过的卡片和修复的卡片，而不是只用修复的
-        if repaired_cards:
-            # 保留已批准的卡片 + 修复后的卡片
-            combined_cards = list(approved_cards) if approved_cards else []
-            combined_cards.extend(repaired_cards)
-            work_state["raw_cards"] = combined_cards
-        elif approved_cards:
-            # 如果没有需要修复的，但有批准的卡片，继续用批准的卡片
-            work_state["raw_cards"] = list(approved_cards)
-
-        judged = _score_from_quality_report(report)
-        score = int(judged.get("score", 0) or 0)
-        final_score = score
-        best_score = max(best_score, score)
-        coverage = _compute_evidence_coverage(
-            approved_cards if approved_cards else best_effort_cards,
-            work_state.get("evidence_items") or [],
-        )
-        quality_delta = score if previous_score is None else (score - previous_score)
-        coverage_delta = coverage if previous_coverage is None else (coverage - previous_coverage)
-        normalized_gain = max(0.0, quality_delta / 100.0) + max(0.0, coverage_delta)
-        convergence_trace.append(
-            {
-                "iteration": iteration,
-                "score": score,
-                "quality_delta": quality_delta,
-                "coverage": round(coverage, 4),
-                "coverage_delta": round(coverage_delta, 4),
-                "normalized_gain": round(normalized_gain, 4),
-                "repaired_cards": len(repaired_cards),
-            }
-        )
-        judge_scores_log.append({"iteration": iteration, **judged})
-        if previous_score is not None and normalized_gain < min_gain_delta and not repaired_cards:
-            stagnant_rounds += 1
-        else:
-            stagnant_rounds = 0
-        previous_score = score
-        previous_coverage = coverage
-
-        # 提前退出条件：分数达标且覆盖率合理，或者分数很高
-        if score >= threshold and coverage >= min_coverage:
-            return {
-                "status": "quality_pass",
-                "reason": "judge_score_passed",
-                "approved_cards": approved_cards,
-                "quality_report": report,
-                "qa_loop_report": {
-                    "max_iterations": max_iterations,
-                    "iterations_used": iteration,
-                    "best_score": best_score,
-                    "final_score": final_score,
-                    "coverage": round(coverage, 4),
-                    "coverage_target": min_coverage,
-                    "exit_reason": "score_and_coverage_passed",
-                    "review_findings": review_findings_log,
-                    "judge_scores": judge_scores_log,
-                    "fix_actions": fix_actions_log,
-                    "convergence_trace": convergence_trace,
-                },
-            }
-        
-        # 新增：如果分数很高（>=95）且有批准的卡片，即使 coverage 稍低也接受
-        if score >= 95 and approved_cards and coverage >= min_coverage * 0.5:
-            return {
-                "status": "quality_pass",
-                "reason": "high_quality_score_passed",
-                "approved_cards": approved_cards,
-                "quality_report": report,
-                "qa_loop_report": {
-                    "max_iterations": max_iterations,
-                    "iterations_used": iteration,
-                    "best_score": best_score,
-                    "final_score": final_score,
-                    "coverage": round(coverage, 4),
-                    "coverage_target": min_coverage,
-                    "exit_reason": "high_quality_early_exit",
-                    "review_findings": review_findings_log,
-                    "judge_scores": judge_scores_log,
-                    "fix_actions": fix_actions_log,
-                    "convergence_trace": convergence_trace,
-                },
-            }
-        
-        if stagnant_rounds >= 2:
-            exit_reason = "converged_low_gain"
-            break
-
-    # 循环结束后的处理逻辑
-    final_cards = approved_cards if approved_cards else [c for c in best_effort_cards if isinstance(c, dict)]
-    final_coverage = _compute_evidence_coverage(final_cards, work_state.get("evidence_items") or [])
-    
-    # 如果完全没有卡片，返回失败
-    if not final_cards:
-        return {
-            "status": "failed",
-            "reason": "missing_file_tree_evidence" if file_tree_input else "missing_file_grounded_evidence",
-            "approved_cards": [],
-            "quality_report": last_report,
-            "qa_loop_report": {
-                "max_iterations": max_iterations,
-                "iterations_used": iterations_used,
-                "best_score": best_score,
-                "final_score": final_score,
-                "exit_reason": "no_cards_generated",
-                "review_findings": review_findings_log,
-                "judge_scores": judge_scores_log,
-                "fix_actions": fix_actions_log,
-                "convergence_trace": convergence_trace,
-            },
-        }
-    
-    # 如果分数达标，即使 coverage 不够，也返回成功（降级接受）
-    if final_score >= threshold:
-        return {
-            "status": "quality_pass",
-            "reason": "judge_score_passed_coverage_low" if final_coverage < min_coverage else "judge_score_passed",
-            "approved_cards": final_cards,
-            "quality_report": last_report,
-            "qa_loop_report": {
-                "max_iterations": max_iterations,
-                "iterations_used": iterations_used,
-                "best_score": best_score,
-                "final_score": final_score,
-                "coverage": round(final_coverage, 4),
-                "coverage_target": min_coverage,
-                "exit_reason": exit_reason,
-                "review_findings": review_findings_log,
-                "judge_scores": judge_scores_log,
-                "fix_actions": fix_actions_log,
-                "convergence_trace": convergence_trace,
-            },
-        }
-    
-    # 分数不达标，但有卡片，返回失败但保留卡片
-    return {
-        "status": "failed",
-        "reason": "quality_threshold_not_met",
-        "approved_cards": final_cards,  # 保留卡片，不要清空
-        "quality_report": last_report,
-        "qa_loop_report": {
-            "max_iterations": max_iterations,
-            "iterations_used": iterations_used,
-            "best_score": best_score,
-            "final_score": final_score,
-            "coverage": round(final_coverage, 4),
-            "coverage_target": min_coverage,
-            "exit_reason": exit_reason,
-            "review_findings": review_findings_log,
-            "judge_scores": judge_scores_log,
-            "fix_actions": fix_actions_log,
-            "convergence_trace": convergence_trace,
-        },
-    }
+def reason_code_coverage_rate(report: Dict[str, Any]) -> float:
+    failed_cards = report.get("failed_cards") if isinstance(report.get("failed_cards"), list) else []
+    if not failed_cards:
+        return 1.0
+    covered = 0
+    for item in failed_cards:
+        if not isinstance(item, dict):
+            continue
+        codes = item.get("reason_codes")
+        if not isinstance(codes, list):
+            continue
+        if any(str(code or "").strip() for code in codes):
+            covered += 1
+    return covered / max(1, len(failed_cards))

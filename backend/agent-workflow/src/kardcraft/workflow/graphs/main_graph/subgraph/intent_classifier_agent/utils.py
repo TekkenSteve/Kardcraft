@@ -35,7 +35,7 @@ def parse_dspy_classification_result(
         return classification
 
     except Exception as e:
-        logger.warning("DSPy结果解析失败，使用默认分类", error=str(e))
+        logger.warning("Ds py result parsing failed, using default classification", error=str(e))
         return {
             "intent_type": "create_cards",
             "driven_mode": inferred_mode,
@@ -53,7 +53,7 @@ def _infer_content_mode(user_input: str, file_ids: List[str]) -> str:
         return "content_driven"
     # Has actual text content in message → content_driven
     user_input = user_input or ""
-    # TODO: 先简单判断, 后续再优化
+    # TODO: Make a simple judgment first, and optimize later
     if user_input and len(user_input.strip()) > 50:
         return "content_driven"
     # Otherwise → topic_driven (just a topic/theme)
@@ -62,7 +62,7 @@ def _infer_content_mode(user_input: str, file_ids: List[str]) -> str:
 
 def prepare_file_info(file_ids: List[str]) -> str:
     """Prepare file information string for classification."""
-
+    # TODO: In the future, we can enhance this function to include file types, sizes, or even content summaries if available. For now, we just indicate the number of files uploaded.
     if file_ids:
         return f"User uploaded {len(file_ids)} files"
     return ""

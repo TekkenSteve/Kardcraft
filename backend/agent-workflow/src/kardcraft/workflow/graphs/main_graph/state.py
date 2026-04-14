@@ -90,6 +90,7 @@ class State(TypedDict, total=False):
     syllabus_status: Optional[str]       # outline_ready | need_user_input | failed
     evidence_status: Optional[str]       # evidence_ready | need_user_input | failed
     card_status: Optional[str]           # quality_pass | need_user_review | failed
+    card_scope_status: Optional[str]     # scope_ready | need_user_input | failed
 
     # Durable business outputs
     file_tree_path_active: Optional[bool]
@@ -99,6 +100,8 @@ class State(TypedDict, total=False):
     document_trees: List[Dict[str, Any]]
     tree_registry: Dict[str, Dict[str, Any]]
     candidate_nodes: List[Dict[str, Any]]
+    scoped_learning_units: List[Dict[str, Any]]
+    scope_chunks: List[Dict[str, Any]]
     selected_nodes: List[Dict[str, Any]]
     evidence_items: List[EvidenceItem]
     evidence_store: EvidenceStore
@@ -114,6 +117,7 @@ class State(TypedDict, total=False):
     saved_card_ids: List[str]
     quality_report: Dict[str, Any]
     qa_loop_report: Dict[str, Any]
+    card_scope_report: Dict[str, Any]
     evidence_skillrouter_rollout: Dict[str, Any]
 
     # Observability + errors

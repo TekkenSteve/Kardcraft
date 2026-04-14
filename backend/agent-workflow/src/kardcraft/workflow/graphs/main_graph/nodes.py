@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -12,7 +11,6 @@ from kardcraft.card_templates import (
     TemplatePreparationError,
     prepare_template_context_for_main_graph,
 )
-from kardcraft.tools.knowledge_tools import query_knowledge
 from kardcraft.utils.document_registry import build_incremental_document_registry
 from kardcraft.utils.language import detect_preferred_language_with_llm
 from kardcraft.utils.logger import logger
@@ -21,39 +19,98 @@ from kardcraft.utils.main_graph_helpers import (
     determine_query_scope,
     extract_first_question,
     extract_pending_question_ids,
-    information_gain,
     information_gain_score,
     is_file_tree_path_enabled,
     normalize_clarification_responses,
     normalize_pending_questions_strict,
     scope_budget,
-    select_candidate_nodes,
     separate_content_and_task,
     should_trigger_preflight,
     validate_pending_questions_strict,
 )
-from kardcraft.workflow.graphs.main_graph.rollout_gate import rollout_enabled_for_user
+from kardcraft.utils.rollout_gate import rollout_enabled_for_user
 from kardcraft.workflow.graphs.clarification_graph.tool import clarify
-from kardcraft.workflow.graphs.main_graph.prompt import build_node_query
 from kardcraft.workflow.graphs.main_graph.state import (
     EVIDENCE_STORE_SCHEMA_VERSION,
     Context,
     State,
 )
-from kardcraft.workflow.graphs.main_graph.subgraph.card_supervisor_agent import (
-    card_supervisor_agent,
+from kardcraft.workflow.graphs.main_graph.subgraph.card_aggregation_agent import (
+    card_aggregation_agent,
+)
+from kardcraft.workflow.graphs.main_graph.subgraph.card_scope_supervisor_agent import (
+    card_scope_supervisor_agent,
+)
+from kardcraft.workflow.graphs.main_graph.subgraph.evidence_react_agent import (
+    evidence_react_agent,
 )
 from kardcraft.workflow.graphs.main_graph.subgraph.intent_classifier_agent import intent_classifier
 
 SOC_MAX_ROUNDS = 3
 SOC_MIN_INFORMATION_GAIN = 0.05
 
-FILE_TREE_PATH_MODEL_ENV = "KARD_FILE_TREE_PAGEINDEX_MODEL"
-QA_SAFETY_CAP_ENV = "KARD_QA_SAFETY_CAP"
+
+def _history_preview(
+    history: List[Dict[str, Any]] | None,
+    *,
+    max_items: int = 8,
+    max_chars: int = 200,
+) -> List[Dict[str, Any]]:
+    items = list(history or [])
+    start = max(0, len(items) - max_items)
+    preview: List[Dict[str, Any]] = []
+    for idx, entry in enumerate(items[start:], start=start):
+        if not isinstance(entry, dict):
+            preview.append({"index": idx, "role": "unknown", "content_preview": str(entry)[:max_chars]})
+            continue
+        content = str(entry.get("content") or "").strip()
+        if len(content) > max_chars:
+            content = content[:max_chars] + "...[truncated]"
+        preview.append(
+            {
+                "index": idx,
+                "role": str(entry.get("role") or "unknown"),
+                "content_preview": content,
+            }
+        )
+    return preview
 
 
-def _normalize_query_key(text: str) -> str:
-    return " ".join(str(text or "").strip().lower().split())
+def _derive_final_status(state: State) -> tuple[str, str]:
+    explicit_status = str(state.get("status") or "").strip().lower()
+    workflow_error = str(state.get("error") or "").strip()
+    card_status = str(state.get("card_status") or "").strip().lower()
+    pending_questions = list(state.get("pending_questions") or [])
+    cards = list(state.get("final_cards") or [])
+
+    stage_statuses = {
+        "preflight_status": str(state.get("preflight_status") or "").strip().lower(),
+        "syllabus_status": str(state.get("syllabus_status") or "").strip().lower(),
+        "card_scope_status": str(state.get("card_scope_status") or "").strip().lower(),
+        "evidence_status": str(state.get("evidence_status") or "").strip().lower(),
+    }
+    failed_stages = [name for name, value in stage_statuses.items() if value == "failed"]
+    need_input_stages = [
+        name for name, value in stage_statuses.items() if value == "need_user_input"
+    ]
+
+    if explicit_status == "failed" or workflow_error:
+        return "failed", "explicit_failed_or_error"
+    if failed_stages:
+        return "failed", f"stage_failed:{','.join(failed_stages)}"
+    if explicit_status == "need_user_input":
+        return "need_user_input", "explicit_need_user_input"
+    if need_input_stages:
+        return "need_user_input", f"stage_need_user_input:{','.join(need_input_stages)}"
+    if pending_questions:
+        return "need_user_input", "pending_questions_present"
+    if card_status:
+        return ("success", "card_quality_pass") if card_status == "quality_pass" else ("failed", f"card_status:{card_status}")
+    if explicit_status == "success" and cards:
+        return "success", "explicit_success_with_cards"
+    if explicit_status == "success":
+        return "failed", "success_without_cards"
+    return "failed", "undetermined_terminal_state"
 
 
 async def initialize_processing(
@@ -129,6 +186,8 @@ async def initialize_processing(
         "document_trees": [],
         "tree_registry": {},
         "candidate_nodes": [],
+        "scoped_learning_units": [],
+        "scope_chunks": [],
         "selected_nodes": [],
         "evidence_items": [],
         "evidence_store": {
@@ -154,6 +213,8 @@ async def initialize_processing(
         "saved_card_ids": [],
         "quality_report": {},
         "qa_loop_report": {},
+        "card_scope_status": None,
+        "card_scope_report": {},
         "evidence_skillrouter_rollout": rollout,
     }
 
@@ -199,7 +260,7 @@ async def run_socratic_preflight(
     state: State,
     runtime: Runtime[Context],
 ) -> Dict[str, Any]:
-    """Strict v2 preflight with deterministic multi-round clarification control."""
+    """Strict preflight with deterministic multi-round clarification control."""
     pending_questions_raw = state.get("pending_questions") or []
     pending_questions, pending_error = validate_pending_questions_strict(pending_questions_raw)
     if pending_error and pending_questions_raw:
@@ -394,7 +455,6 @@ async def run_document_tree_planner(
             "document_tree_error": None,
             "document_trees": [],
             "tree_registry": {},
-            "candidate_nodes": [],
         }
 
     file_ids = [str(x).strip() for x in (state.get("file_ids") or []) if str(x).strip()]
@@ -404,7 +464,6 @@ async def run_document_tree_planner(
             "document_tree_status": "failed",
             "document_trees": [],
             "tree_registry": {},
-            "candidate_nodes": [],
         }
 
     user_id = str((runtime.context.user_id if runtime.context else "") or "").strip()
@@ -414,10 +473,8 @@ async def run_document_tree_planner(
             "document_tree_status": "failed",
             "document_trees": [],
             "tree_registry": {},
-            "candidate_nodes": [],
         }
 
-    model = str(os.getenv(FILE_TREE_PATH_MODEL_ENV) or "").strip() or None
     session_id = str((runtime.context.session_id if runtime.context else "") or "").strip()
     raw_scope = str(state.get("query_scope") or "").strip().lower()
     try:
@@ -432,10 +489,9 @@ async def run_document_tree_planner(
             "evidence_status": "failed",
             "error": f"query_scope_resolution_failed:{str(exc)}",
             "document_tree_status": "failed",
-            "message": "无法确定检索范围，请重试。",
+            "message": "Unable to determine the search range, please try again.",
             "document_trees": [],
             "tree_registry": {},
-            "candidate_nodes": [],
         }
     logger.info(
         "file tree scope resolved in planner",
@@ -445,6 +501,14 @@ async def run_document_tree_planner(
         budget=retrieval_budget,
         file_count=len(file_ids),
     )
+    history = list((getattr(runtime.context, "conversation_history", []) if runtime.context else []) or [])
+    logger.debug(
+        "document tree planner history context",
+        session_id=session_id or "default",
+        user_id=user_id,
+        history_count=len(history),
+        history_preview=_history_preview(history),
+    )
     try:
         registry_result = await build_incremental_document_registry(
             session_id=session_id,
@@ -452,8 +516,7 @@ async def run_document_tree_planner(
             file_ids=file_ids,
             user_input=str(state.get("user_input") or ""),
             message_knowledge=str(state.get("message_knowledge") or ""),
-            conversation_history=list((getattr(runtime.context, "conversation_history", []) if runtime.context else []) or []),
-            model=model,
+            conversation_history=history,
         )
     except Exception as exc:
         logger.warning(
@@ -472,7 +535,6 @@ async def run_document_tree_planner(
             "retrieval_budget": retrieval_budget,
             "document_trees": [],
             "tree_registry": {},
-            "candidate_nodes": [],
         }
     failed_files = list(registry_result.get("failed_files") or [])
     if failed_files:
@@ -493,298 +555,37 @@ async def run_document_tree_planner(
             "retrieval_budget": retrieval_budget,
             "document_trees": [],
             "tree_registry": {},
-            "candidate_nodes": [],
         }
     document_trees = list(registry_result.get("document_trees") or [])
     tree_registry = dict(registry_result.get("tree_registry") or {})
-    candidate_nodes = select_candidate_nodes(
-        document_trees=document_trees,
-        user_input=str(state.get("user_input") or ""),
-        query_scope=query_scope,
-        retrieval_budget=retrieval_budget,
-    )
-
-    if not candidate_nodes:
-        return {
-            "document_tree_status": "empty_candidates",
-            "document_tree_error": None,
-            "document_trees": document_trees,
-            "tree_registry": tree_registry,
-            "candidate_nodes": [],
-            "evidence_status": "need_user_input",
-            "message": "未找到可用于制卡的文档结构节点，请重试或重新上传文件。",
-            "query_scope": query_scope,
-            "retrieval_budget": retrieval_budget,
-        }
     return {
         "document_tree_status": "ready",
         "document_tree_error": None,
         "document_trees": document_trees,
         "tree_registry": tree_registry,
-        "candidate_nodes": candidate_nodes,
         "query_scope": query_scope,
         "retrieval_budget": retrieval_budget,
     }
 
 
-async def run_evidence_loop(
+async def run_card_scope_planner(
     state: State,
     runtime: Runtime[Context],
 ) -> Dict[str, Any]:
-    candidates = list(state.get("candidate_nodes") or [])
-    if not candidates:
-        return {
-            "evidence_status": "need_user_input",
-            "pending_questions": [],
-            "evidence_items": [],
-            "selected_nodes": [],
-            "evidence_loop_report": {
-                "rag_calls": 0,
-                "stop_reason": "no_candidate_nodes",
-                "candidate_nodes": 0,
-                "selected_nodes": 0,
-            },
-        }
-
-    query_scope = str(state.get("query_scope") or "").strip().lower()
-    if not query_scope:
-        return {
-            "evidence_status": "failed",
-            "pending_questions": [],
-            "evidence_items": [],
-            "selected_nodes": [],
-            "evidence_loop_report": {
-                "rag_calls": 0,
-                "stop_reason": "missing_query_scope",
-                "candidate_nodes": len(candidates),
-                "selected_nodes": 0,
-            },
-            "error": "missing_query_scope",
-        }
-    budget = dict(state.get("retrieval_budget") or scope_budget(query_scope))
-    max_nodes_per_round = int(budget.get("max_nodes_per_round") or 2)
-    max_rag_calls = int(budget.get("max_rag_calls") or 6)
-    min_gain = float(budget.get("min_information_gain") or 0.05)
-    low_gain_limit = int(budget.get("consecutive_low_gain_limit") or 2)
-    top_k = 4 if query_scope == "title_only" else 6
-
-    session_id = str((runtime.context.session_id if runtime.context else "") or "").strip() or None
-    user_id = str((runtime.context.user_id if runtime.context else "") or "").strip() or None
-    file_ids = [str(x).strip() for x in (state.get("file_ids") or []) if str(x).strip()]
-    user_input = str(state.get("user_input") or "").strip()
-    file_tree_path_active = bool(state.get("file_tree_path_active"))
-    query_mode = "mix"
-
-    rag_calls = 0
-    low_gain_rounds = 0
-    cursor = 0
-    stop_reason = "budget_exhausted"
-    rewrite_used = False
-    selected_nodes: List[Dict[str, Any]] = []
-    evidence_items: List[Dict[str, Any]] = []
-    gains: List[float] = []
-    aggregated_knowledge = ""
-    seen_query_keys: set[str] = set()
-    duplicate_queries = 0
-    hit_count = 0
-    miss_count = 0
-    retrieval_events: List[Dict[str, Any]] = []
-
-    while cursor < len(candidates) and rag_calls < max_rag_calls:
-        round_nodes = candidates[cursor : cursor + max_nodes_per_round]
-        cursor += max_nodes_per_round
-        if not round_nodes:
-            break
-
-        for node in round_nodes:
-            if rag_calls >= max_rag_calls:
-                stop_reason = "max_rag_calls_reached"
-                break
-            query = build_node_query(
-                user_input,
-                node,
-                include_user_input=True,
-            )
-            if not query:
-                continue
-            query_key = _normalize_query_key(query)
-            if query_key in seen_query_keys:
-                duplicate_queries += 1
-                retrieval_events.append({"query": query, "reason_code": "duplicate"})
-                continue
-            seen_query_keys.add(query_key)
-            rag_calls += 1
-            result = await query_knowledge.ainvoke(
-                {
-                    "query": query,
-                    "mode": query_mode,
-                    "top_k": top_k,
-                    "session_id": session_id,
-                    "file_ids": file_ids,
-                    "user_id": user_id,
-                }
-            )
-            content = str(result.get("content") or "").strip()
-            refs = result.get("refs") or []
-            gain = information_gain(content, aggregated_knowledge)
-            gains.append(round(gain, 4))
-            if content:
-                hit_count += 1
-                retrieval_events.append({"query": query, "reason_code": "hit"})
-                selected_nodes.append(node)
-                evidence_items.append(
-                    {
-                        "query": query,
-                        "content": content[:2000],
-                        "refs": refs,
-                        "node": node,
-                        "information_gain": gain,
-                        "reason_codes": ["hit"],
-                    }
-                )
-                aggregated_knowledge = f"{aggregated_knowledge}\n\n{content[:2000]}".strip()
-            else:
-                miss_count += 1
-                retrieval_events.append({"query": query, "reason_code": "miss"})
-            if gain < min_gain:
-                low_gain_rounds += 1
-            else:
-                low_gain_rounds = 0
-
-            if query_scope == "title_only" and evidence_items:
-                stop_reason = "title_only_sufficient"
-                break
-            if low_gain_rounds >= low_gain_limit:
-                stop_reason = "low_information_gain"
-                break
-
-        if stop_reason in {"title_only_sufficient", "low_information_gain", "max_rag_calls_reached"}:
-            break
-
-    if not evidence_items and rag_calls < max_rag_calls:
-        rewrite_used = not file_tree_path_active
-        fallback_node = candidates[0] if candidates else {}
-        if file_tree_path_active:
-            fallback_query = build_node_query(
-                user_input,
-                fallback_node,
-                include_user_input=True,
-            )
-            if not fallback_query:
-                fallback_query = (
-                    "Extract concrete key facts, definitions, and core concepts from the uploaded file "
-                    "for flashcard generation."
-                )
-        else:
-            fallback_query = (
-                f"Document title only: {user_input}" if query_scope == "title_only" else f"Key points for card generation: {user_input}"
-            )
-        if not fallback_query:
-            fallback_query = user_input
-        rag_calls += 1
-        fallback = await query_knowledge.ainvoke(
-            {
-                "query": fallback_query,
-                "mode": query_mode,
-                "top_k": top_k,
-                "session_id": session_id,
-                "file_ids": file_ids,
-                "user_id": user_id,
-            }
-        )
-        fallback_content = str(fallback.get("content") or "").strip()
-        if fallback_content:
-            hit_count += 1
-            retrieval_events.append({"query": fallback_query, "reason_code": "hit"})
-            evidence_items.append(
-                {
-                    "query": fallback_query,
-                    "content": fallback_content[:2000],
-                    "refs": fallback.get("refs") or [],
-                    "node": None,
-                    "information_gain": information_gain(fallback_content, aggregated_knowledge),
-                    "reason_codes": ["hit"],
-                }
-            )
-            aggregated_knowledge = f"{aggregated_knowledge}\n\n{fallback_content[:2000]}".strip()
-            stop_reason = "fallback_rewrite_hit"
-        else:
-            miss_count += 1
-            retrieval_events.append({"query": fallback_query, "reason_code": "miss"})
-            stop_reason = "fallback_rewrite_miss"
-
-    if evidence_items and stop_reason == "budget_exhausted":
-        stop_reason = "evidence_sufficient"
-
-    status = "evidence_ready" if evidence_items else "need_user_input"
-    pending_questions: List[Dict[str, Any]] = []
-    if status != "evidence_ready":
-        pending_questions = [
-            {
-                "question_id": 1,
-                "question_text": "No valid information has been extracted currently. Please provide a more specific scope or re-upload the file.",
-                "info_type": "evidence_context",
-                "is_required": True,
-                "suggested_answers": [],
-            }
-        ]
-
-    report = {
-        "scope": query_scope,
-        "rag_calls": rag_calls,
-        "candidate_nodes": len(candidates),
-        "selected_nodes": len(selected_nodes),
-        "information_gain_trace": gains,
-        "stop_reason": stop_reason,
-        "rewrite_used": rewrite_used,
-        "evidence_hit_rate": round(hit_count / max(1, rag_calls), 4),
-        "duplicate_query_count": duplicate_queries,
-        "duplicate_query_ratio": round(duplicate_queries / max(1, (rag_calls + duplicate_queries)), 4),
-        "coverage_rate": round(len(selected_nodes) / max(1, len(candidates)), 4),
-        "reason_code_counts": {
-            "hit": hit_count,
-            "miss": miss_count,
-            "duplicate": duplicate_queries,
-            "coverage_gap": max(0, len(candidates) - len(selected_nodes)),
+    return await card_scope_supervisor_agent.ainvoke(
+        {
+            "user_input": state.get("user_input"),
+            "file_ids": state.get("file_ids") or [],
+            "query_scope": state.get("query_scope"),
+            "retrieval_budget": state.get("retrieval_budget") or {},
+            "document_trees": state.get("document_trees") or [],
+            "candidate_nodes": state.get("candidate_nodes") or [],
+            "learning_units": state.get("learning_units") or [],
+            "evidence_items": state.get("evidence_items") or [],
+            "syllabus_status": state.get("syllabus_status"),
         },
-        "retrieval_events": retrieval_events[:50],
-    }
-    logger.info(
-        "evidence loop completed",
-        session_id=session_id or "default",
-        report=report,
+        context=runtime.context,
     )
-    return {
-        "evidence_status": status,
-        "pending_questions": pending_questions,
-        "selected_nodes": selected_nodes,
-        "evidence_items": evidence_items,
-        "evidence_store": {
-            "schema_version": EVIDENCE_STORE_SCHEMA_VERSION,
-            "items": evidence_items,
-            "index": {
-                _normalize_query_key(str(item.get("query") or "")): str(item.get("query") or "")
-                for item in evidence_items
-                if isinstance(item, dict) and str(item.get("query") or "").strip()
-            },
-            "reason_code_counts": report.get("reason_code_counts", {}),
-            "duplicate_query_ratio": report.get("duplicate_query_ratio", 0.0),
-            "hit_rate": report.get("evidence_hit_rate", 0.0),
-        },
-        "coverage_state": {
-            "coverage_rate": report.get("coverage_rate", 0.0),
-            "covered_node_ids": [
-                str(node.get("node_id") or "").strip()
-                for node in selected_nodes
-                if isinstance(node, dict) and str(node.get("node_id") or "").strip()
-            ],
-            "total_node_count": len(candidates),
-        },
-        "evidence_loop_report": report,
-        "synthesized_knowledge": aggregated_knowledge[:8000],
-        "message_knowledge": aggregated_knowledge[:8000],
-        "research_results": {"content": aggregated_knowledge[:8000], "evidence_items": evidence_items},
-    }
 
 
 async def run_evidence_builder(
@@ -792,23 +593,59 @@ async def run_evidence_builder(
     runtime: Runtime[Context],
 ) -> Dict[str, Any]:
     """Single retrieval entrypoint for evidence construction."""
-    return await run_evidence_loop(state, runtime)
+    history = list((getattr(runtime.context, "conversation_history", []) if runtime.context else []) or [])
+    logger.debug(
+        "evidence builder history context",
+        session_id=str((runtime.context.session_id if runtime.context else "") or "").strip() or "default",
+        user_id=str((runtime.context.user_id if runtime.context else "") or "").strip() or "unknown",
+        history_count=len(history),
+        history_preview=_history_preview(history),
+    )
+    return await evidence_react_agent.ainvoke(
+        {
+            "user_input": state.get("user_input"),
+            "query_scope": state.get("query_scope"),
+            "retrieval_budget": state.get("retrieval_budget") or {},
+            "candidate_nodes": state.get("candidate_nodes") or [],
+            "file_ids": state.get("file_ids") or [],
+            "file_tree_path_active": state.get("file_tree_path_active"),
+            "evidence_status": state.get("evidence_status"),
+            "pending_questions": state.get("pending_questions") or [],
+            "evidence_items": state.get("evidence_items") or [],
+            "selected_nodes": state.get("selected_nodes") or [],
+            "evidence_loop_report": state.get("evidence_loop_report") or {},
+            "evidence_store": state.get("evidence_store") or {
+                "schema_version": EVIDENCE_STORE_SCHEMA_VERSION,
+                "items": [],
+                "index": {},
+                "reason_code_counts": {},
+                "duplicate_query_ratio": 0.0,
+                "hit_rate": 0.0,
+            },
+            "coverage_state": state.get("coverage_state") or {
+                "coverage_rate": 0.0,
+                "covered_node_ids": [],
+                "total_node_count": 0,
+            },
+            "message_knowledge": state.get("message_knowledge"),
+        },
+        context=runtime.context,
+    )
 
 
-async def run_card_supervisor(
+async def run_card_pipeline(
     state: State,
     runtime: Runtime[Context],
 ) -> Dict[str, Any]:
-    context = runtime.context
     file_tree_path_active = bool(state.get("file_tree_path_active"))
-    current_retry_count = int(state.get("evidence_retry_count") or 0)
-    qa_safety_cap = max(3, min(20, int(os.getenv(QA_SAFETY_CAP_ENV, "8"))))
-    result = await card_supervisor_agent.ainvoke(
+    result = await card_aggregation_agent.ainvoke(
         {
             "user_input": state.get("user_input"),
             "message_knowledge": state.get("message_knowledge"),
             "subject_domain": state.get("subject_domain"),
-            "learning_units": [] if file_tree_path_active else (state.get("learning_units") or []),
+            "learning_units": [] if file_tree_path_active else (state.get("scoped_learning_units") or state.get("learning_units") or []),
+            "scoped_learning_units": state.get("scoped_learning_units") or [],
+            "scope_chunks": state.get("scope_chunks") or [],
             "query_scope": state.get("query_scope"),
             "evidence_items": state.get("evidence_items") or [],
             "document_trees": state.get("document_trees") or [],
@@ -816,13 +653,8 @@ async def run_card_supervisor(
             "template_default_profile": state.get("template_default_profile"),
             "selected_template_profile": state.get("selected_template_profile"),
             "file_ids": state.get("file_ids") or [],
-            "judge_score_threshold": 90,
-            "max_qa_iterations": qa_safety_cap,
-            "min_evidence_coverage": 0.60,
-            "min_gain_delta": 0.02,
-            "language": state.get("language"),
         },
-        context=context,
+        context=runtime.context,
     )
 
     approved = result.get("approved_cards") or []
@@ -838,28 +670,8 @@ async def run_card_supervisor(
         "qa_loop_report": result.get("qa_loop_report") or {},
         "error": state.get("error") if status == "quality_pass" else failure_reason,
     }
-    retryable_file_tree_failure = file_tree_path_active and failure_reason in {
-        "missing_file_tree_evidence_items",
-        "missing_file_tree_evidence",
-    }
-    if retryable_file_tree_failure and current_retry_count < 1:
-        base_budget = dict(state.get("retrieval_budget") or {})
-        if not base_budget:
-            query_scope = str(state.get("query_scope") or "focused").strip().lower() or "focused"
-            base_budget = scope_budget(query_scope)
-        expanded_budget = dict(base_budget)
-        expanded_budget["max_rag_calls"] = int(expanded_budget.get("max_rag_calls") or 6) + 4
-        expanded_budget["max_nodes_per_round"] = int(expanded_budget.get("max_nodes_per_round") or 2) + 1
-        expanded_budget["consecutive_low_gain_limit"] = int(expanded_budget.get("consecutive_low_gain_limit") or 2) + 1
-        payload["evidence_retry_count"] = current_retry_count + 1
-        payload["retrieval_budget"] = expanded_budget
-        logger.warning(
-            "card supervisor requested evidence retry",
-            session_id=str((context.session_id if context else "") or "") or "default",
-            reason=failure_reason,
-            retry_count=current_retry_count + 1,
-            expanded_budget=expanded_budget,
-        )
+    if file_tree_path_active and failure_reason in {"missing_file_tree_evidence_items", "missing_file_tree_evidence"}:
+        payload["error"] = failure_reason
     return payload
 
 
@@ -878,18 +690,8 @@ async def finalize_processing(
     if not workspace_id:
         raise ValueError("workspace_id missing in runtime context")
 
-    explicit_status = str(state.get("status") or "").strip().lower()
-    card_status = str(state.get("card_status") or "").strip().lower()
+    final_status, final_status_reason = _derive_final_status(state)
     workflow_error = str(state.get("error") or "").strip()
-
-    if explicit_status == "need_user_input":
-        final_status = "need_user_input"
-    elif explicit_status == "failed" or workflow_error:
-        final_status = "failed"
-    elif card_status:
-        final_status = "success" if card_status == "quality_pass" else "failed"
-    else:
-        final_status = "success"
 
     cards = list(state.get("final_cards") or [])
     saved_card_ids = list(state.get("saved_card_ids") or [])
@@ -904,6 +706,9 @@ async def finalize_processing(
         cards = []
         saved_card_ids = []
 
+    if final_status == "failed" and not workflow_error and final_status_reason == "success_without_cards":
+        workflow_error = "no_cards_generated"
+
     if langfuse.enabled:
         try:
             langfuse.flush()
@@ -913,13 +718,28 @@ async def finalize_processing(
     final_message = str(state.get("message") or "").strip()
     if not final_message:
         if final_status == "failed":
-            final_message = str(state.get("error") or "").strip() or "Workflow failed"
+            final_message = workflow_error or "Workflow failed"
         elif final_status == "need_user_input":
-            final_message = "Additional user input is required to continue."
+            final_message = extract_first_question(list(state.get("pending_questions") or [])) or "Additional user input is required to continue."
         elif cards:
             final_message = f"Generated {len(cards)} flashcards"
         else:
             final_message = "Workflow completed successfully"
+
+    logger.debug(
+        "workflow finalize status resolution",
+        final_status=final_status,
+        final_status_reason=final_status_reason,
+        explicit_status=str(state.get("status") or "").strip().lower(),
+        card_status=str(state.get("card_status") or "").strip().lower(),
+        preflight_status=str(state.get("preflight_status") or "").strip().lower(),
+        syllabus_status=str(state.get("syllabus_status") or "").strip().lower(),
+        card_scope_status=str(state.get("card_scope_status") or "").strip().lower(),
+        evidence_status=str(state.get("evidence_status") or "").strip().lower(),
+        pending_question_count=len(list(state.get("pending_questions") or [])),
+        final_cards_count=len(cards),
+        error=workflow_error,
+    )
 
     return {
         "status": final_status,
@@ -927,5 +747,6 @@ async def finalize_processing(
         "final_cards": cards,
         "approved_cards": cards,
         "saved_card_ids": saved_card_ids,
+        "error": workflow_error or None,
         "completed_at": datetime.utcnow().isoformat(),
     }

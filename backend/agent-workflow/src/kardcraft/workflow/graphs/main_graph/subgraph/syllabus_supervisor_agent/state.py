@@ -18,6 +18,16 @@ class State(TypedDict, total=False):
     difficulty_level: Optional[str]
     language: Optional[str]
 
+    _user_input: str
+    _file_ids: List[str]
+    _driven_mode: str
+    _file_tree_path_active: bool
+    _session_id: Optional[str]
+    _user_id: Optional[str]
+    _document_trees: List[Dict[str, Any]]
+    _should_terminate: bool
+    _terminal_payload: Dict[str, Any]
+
     status: str
     reason: str
     syllabus_status: str

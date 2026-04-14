@@ -84,7 +84,7 @@ async def determine_query_scope(user_input: str, *, has_files: bool = False) -> 
         ],
     )
     content = ""
-    if response and getattr(response, "choices", None):
+    if response and getattr(response, "choices", None) and len(response.choices) > 0:
         msg = response.choices[0].message
         content = str(getattr(msg, "content", "") or "")
     parsed = safe_parse_llm_json(content, default={})
@@ -102,6 +102,7 @@ async def determine_query_scope(user_input: str, *, has_files: bool = False) -> 
 
 
 def scope_budget(scope: str) -> Dict[str, Any]:
+    """Validate and return retrieval budget parameters for the given query scope."""
     normalized_scope = str(scope or "").strip().lower()
     if normalized_scope not in VALID_QUERY_SCOPES:
         raise ValueError("invalid_query_scope")
@@ -165,6 +166,7 @@ def token_set(value: str) -> set[str]:
 
 
 def information_gain_score(responses: dict[str, str], base_context: str) -> float:
+    """Calculate information gain score based on the responses to pending questions compared to the base context."""
     merged_response = " ".join(str(v).strip() for v in responses.values() if str(v).strip())
     response_tokens = token_set(merged_response)
     if not response_tokens:
@@ -365,7 +367,7 @@ async def separate_content_and_task(user_input: str) -> Dict[str, str]:
             ],
         )
         content = ""
-        if response and getattr(response, "choices", None):
+        if response and getattr(response, "choices", None) and len(response.choices) > 0:
             msg = response.choices[0].message
             content = getattr(msg, "content", "") or ""
         parsed = safe_parse_llm_json(content, default={})

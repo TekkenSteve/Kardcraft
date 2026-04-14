@@ -50,4 +50,5 @@ class IntentClassificationPrompt(dspy.Module):
         """Classify user intent and content characteristics."""
         if not USE_DSPY:
             raise RuntimeError("DSPY_ENABLED=false, implement fallback logic")
+        assert self.classify is not None, "Classification chain not initialized"
         return self.classify(user_input=user_input, file_info=file_info)

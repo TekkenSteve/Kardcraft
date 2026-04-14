@@ -1,10 +1,9 @@
 """
 File Storage gRPC Client
 
-提供与 file-storage 服务交互的工具函数，封装 gRPC 调用细节。
 """
 
-import logging
+from . import logger
 import os
 from typing import List, Dict, Any, Optional, Tuple
 import grpc
@@ -13,9 +12,6 @@ from datetime import datetime
 
 from .. import file_storage_pb2
 from .. import file_storage_pb2_grpc
-
-logger = logging.getLogger(__name__)
-
 
 @dataclass
 class ConversationFileInfo:
@@ -121,13 +117,20 @@ class FileStorageClient:
         Returns:
             文件信息列表
         """
+        normalized_user_id = str(user_id or "").strip()
+        normalized_session_id = str(session_id or "").strip()
+        if not normalized_user_id:
+            raise ValueError("user_id is required for get_conversation_files")
+        if not normalized_session_id:
+            raise ValueError("session_id is required for get_conversation_files")
+
         try:
             async with grpc.aio.insecure_channel(self.endpoint) as channel:
                 stub = file_storage_pb2_grpc.FileStorageServiceStub(channel)
 
                 request = file_storage_pb2.GetConversationFilesRequest(
-                    user_id=user_id,
-                    session_id=session_id,
+                    user_id=normalized_user_id,
+                    session_id=normalized_session_id,
                 )
                 response = await stub.GetConversationFiles(request, timeout=self.timeout)
 
@@ -147,7 +150,9 @@ class FileStorageClient:
                 return files
 
         except Exception as e:
-            logger.error(f"获取会话文件列表失败: user_id={user_id}, session_id={session_id}, error={e}")
+            logger.error(
+                f"获取会话文件列表失败: user_id={normalized_user_id}, session_id={normalized_session_id}, error={e}"
+            )
             raise
     
     async def validate_file(

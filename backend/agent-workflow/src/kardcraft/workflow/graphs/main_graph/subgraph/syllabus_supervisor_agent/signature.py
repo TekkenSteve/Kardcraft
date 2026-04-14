@@ -15,7 +15,7 @@ INSTRUCTIONS = {
         "For content-driven mode, prioritize file-grounded knowledge. "
         "For topic-driven mode, prioritize deep-research-grounded knowledge. "
         "Return strict JSON in field outline_json with shape: "
-        '{"outline":[{"id":str,"title":str,"summary":str,"source_ids":[str],"children":[same]}]}.'
+        '{"outline":[{"id":"<string>","title":"<string>","summary":"<string>","source_ids":["<string>"],"children":[<recursive>]}]}.'
     ),
     "zh": (
         "你是用于制卡的知识大纲规划器。"
@@ -23,7 +23,7 @@ INSTRUCTIONS = {
         "按原则进行渐进式披露（先整体后局部），只选择合适内容，排除无关内容。"
         "内容驱动时优先文件内容证据；主题驱动时优先 deep research 证据。"
         "请在 outline_json 字段返回严格 JSON，结构为："
-        '{"outline":[{"id":str,"title":str,"summary":str,"source_ids":[str],"children":[same]}]}。'
+        '{"outline":[{"id":"<string>","title":"<string>","summary":"<string>","source_ids":["<string>"],"children":[<recursive>]}]}.'
     ),
 }
 

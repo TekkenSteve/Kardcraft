@@ -1,14 +1,3 @@
-# ragix/core/ragix_client.py
-"""
-Ragix 统一客户端（LightRAG Server 版本）
-
-最小可用：
-- upload 文档
-- insert 文本
-- query
-- delete session(workspace)
-"""
-
 import asyncio
 import mimetypes
 import os
@@ -21,6 +10,164 @@ from .._types import Answer
 from ..implementations.preprocessors import DocumentPipeline, PreprocessConfig
 from ..implementations.pipelines import QueryPipeline, QueryPipelineConfig
 from kardcraft.utils.logger import logger
+
+
+def _normalize_filename(name: str) -> str:
+    raw = str(name or "").strip()
+    if not raw:
+        return ""
+    normalized = raw.replace("\\", "/")
+    basename = os.path.basename(normalized)
+    return basename.casefold()
+
+
+def _extract_documents(payload: Any) -> List[Dict[str, Any]]:
+    if isinstance(payload, list):
+        return [x for x in payload if isinstance(x, dict)]
+    if not isinstance(payload, dict):
+        return []
+    statuses = payload.get("statuses")
+    if isinstance(statuses, dict):
+        flattened: List[Dict[str, Any]] = []
+        for docs in statuses.values():
+            if not isinstance(docs, list):
+                continue
+            flattened.extend([x for x in docs if isinstance(x, dict)])
+        if flattened:
+            return flattened
+    for key in ("documents", "items", "data", "docs", "results"):
+        value = payload.get(key)
+        if isinstance(value, list):
+            return [x for x in value if isinstance(x, dict)]
+        if isinstance(value, dict):
+            nested = _extract_documents(value)
+            if nested:
+                return nested
+    dict_values = [x for x in payload.values() if isinstance(x, dict)]
+    if dict_values and len(dict_values) >= max(2, len(payload) // 2):
+        return dict_values
+    return []
+
+
+def _extract_summary_text(payload: Any) -> str:
+    if isinstance(payload, str):
+        return payload.strip()
+    if isinstance(payload, list):
+        parts: List[str] = []
+        for item in payload:
+            text = _extract_summary_text(item).strip()
+            if text:
+                parts.append(text)
+        if parts:
+            return "\n\n".join(parts)
+        return ""
+    if not isinstance(payload, dict):
+        return ""
+    documents = payload.get("documents")
+    if isinstance(documents, list):
+        parts = []
+        for item in documents:
+            if not isinstance(item, dict):
+                continue
+            text = str(
+                item.get("content_summary")
+                or item.get("summary")
+                or item.get("document_summary")
+                or ""
+            ).strip()
+            if text:
+                parts.append(text)
+        if parts:
+            return "\n\n".join(parts)
+    for key in ("summary", "content_summary", "doc_summary", "document_summary", "file_summary"):
+        text = _extract_summary_text(payload.get(key))
+        if text:
+            return text
+    for key, value in payload.items():
+        if "summary" not in str(key).lower():
+            continue
+        text = _extract_summary_text(value)
+        if text:
+            return text
+    for key in ("data", "document", "doc", "result", "payload"):
+        text = _extract_summary_text(payload.get(key))
+        if text:
+            return text
+    return ""
+
+
+def _extract_track_document_summary(
+    track_payload: Any,
+    *,
+    preferred_doc_id: str,
+    preferred_filename: str,
+) -> str:
+    if not isinstance(track_payload, dict):
+        return ""
+    documents = track_payload.get("documents")
+    if not isinstance(documents, list):
+        return ""
+
+    preferred_id = str(preferred_doc_id or "").strip()
+    preferred_name = _normalize_filename(preferred_filename)
+    fallback = ""
+
+    for item in documents:
+        if not isinstance(item, dict):
+            continue
+        summary = str(
+            item.get("content_summary")
+            or item.get("summary")
+            or item.get("document_summary")
+            or ""
+        ).strip()
+        if not summary:
+            continue
+        if not fallback:
+            fallback = summary
+
+        doc_id = str(item.get("id") or item.get("doc_id") or item.get("document_id") or "").strip()
+        if preferred_id and doc_id and doc_id == preferred_id:
+            return summary
+
+        file_path = _normalize_filename(str(item.get("file_path") or item.get("filename") or ""))
+        if preferred_name and file_path and file_path == preferred_name:
+            return summary
+
+    return fallback
+
+
+def _find_doc_by_filename(
+    documents: List[Dict[str, Any]],
+    *,
+    target_filename: str,
+    file_id: str,
+) -> Dict[str, Any] | None:
+    target_norm = _normalize_filename(target_filename)
+    file_id_norm = str(file_id or "").strip()
+    best: Dict[str, Any] | None = None
+    for doc in documents:
+        if not isinstance(doc, dict):
+            continue
+        doc_id = str(doc.get("id") or doc.get("doc_id") or doc.get("document_id") or "").strip()
+        if file_id_norm and doc_id and doc_id == file_id_norm:
+            return doc
+        candidates = [
+            doc.get("file_name"),
+            doc.get("filename"),
+            doc.get("original_filename"),
+            doc.get("name"),
+            doc.get("title"),
+            doc.get("file_path"),
+            doc.get("source"),
+        ]
+        for candidate in candidates:
+            normalized = _normalize_filename(str(candidate or ""))
+            if normalized and normalized == target_norm:
+                return doc
+            if not best and target_norm and normalized.endswith(target_norm):
+                best = doc
+    return best
 
 
 class RagixClient:
@@ -177,6 +324,89 @@ class RagixClient:
             conversation_history=conversation_history,
             rewrite_hints=rewrite_hints,
         )
+
+    async def get_file_track_summaries(
+        self,
+        *,
+        session_id: Optional[str],
+        user_id: Optional[str],
+        file_ids: Optional[List[str]],
+    ) -> List[Dict[str, Any]]:
+        """按 file_ids 匹配 LightRAG 文档并通过 track_status 提取 summary。"""
+        if not session_id or not user_id or not file_ids:
+            return []
+        normalized_file_ids = [str(x).strip() for x in file_ids if str(x).strip()]
+        if not normalized_file_ids:
+            return []
+        if not self._initialized:
+            await self.initialize()
+
+        await self._ensure_files_indexed(session_id, normalized_file_ids, user_id)
+        workspace = session_id or "default"
+        targets: List[Dict[str, str]] = []
+        for file_id in normalized_file_ids:
+            cache_key = f"{workspace}:{user_id}:{file_id}"
+            filename = str(self._file_title_cache.get(cache_key) or file_id).strip()
+            targets.append({"file_id": file_id, "filename": filename})
+        if not targets:
+            return []
+
+        client = self._get_client(session_id)
+        docs_payload = await client.get_documents_statuses(workspace=session_id)
+        documents = _extract_documents(docs_payload)
+        if not documents:
+            return []
+
+        summaries: List[Dict[str, Any]] = []
+        for target in targets:
+            file_id = str(target.get("file_id") or "").strip()
+            filename = str(target.get("filename") or file_id).strip()
+            doc = _find_doc_by_filename(documents, target_filename=filename, file_id=file_id)
+            if not isinstance(doc, dict):
+                continue
+            preferred_doc_id = str(doc.get("id") or doc.get("doc_id") or doc.get("document_id") or "").strip()
+
+            track_ref = str(
+                doc.get("track_id")
+                or doc.get("id")
+                or doc.get("doc_id")
+                or doc.get("document_id")
+                or ""
+            ).strip()
+            if not track_ref:
+                continue
+
+            summary_text = ""
+            try:
+                track_status = await client.get_track_status(track_ref, workspace=session_id)
+                summary_text = _extract_track_document_summary(
+                    track_status,
+                    preferred_doc_id=preferred_doc_id,
+                    preferred_filename=filename,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "failed to fetch lightrag track summary",
+                    file_id=file_id,
+                    filename=filename,
+                    track_ref=track_ref,
+                    error=str(exc),
+                )
+
+            if not summary_text:
+                summary_text = _extract_summary_text(doc)
+            if not summary_text:
+                continue
+
+            summaries.append(
+                {
+                    "file_id": file_id,
+                    "filename": filename,
+                    "track_ref": track_ref,
+                    "summary": summary_text,
+                }
+            )
+        return summaries
 
     async def delete_session(self, session_id: str) -> bool:
         """删除 session/workspace"""
@@ -387,37 +617,6 @@ class RagixClient:
                 continue
             seen.add(folded)
             titles.append(title)
-
-        if not titles and user_id and session_id:
-            try:
-                from kardcraft.utils.file_storage_client import get_conversation_files
-
-                files = await get_conversation_files(user_id=user_id, session_id=session_id)
-                file_map = {str(item.file_id): item for item in files}
-                for file_id in file_ids:
-                    item = file_map.get(str(file_id))
-                    if item is None:
-                        continue
-                    title = (
-                        (item.custom_meta or {}).get("original_filename")
-                        or item.filename
-                    )
-                    normalized = str(title or "").strip()
-                    if not normalized:
-                        continue
-                    self._record_file_title(
-                        session_id=session_id,
-                        user_id=user_id,
-                        file_id=str(file_id),
-                        title=normalized,
-                    )
-                    folded = normalized.casefold()
-                    if folded in seen:
-                        continue
-                    seen.add(folded)
-                    titles.append(normalized)
-            except Exception as e:
-                logger.warning(f"Failed to load conversation file titles for rewrite hints: {e}")
 
         if titles:
             hints["uploaded_file_titles"] = titles

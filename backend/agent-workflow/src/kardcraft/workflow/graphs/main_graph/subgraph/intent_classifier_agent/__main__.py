@@ -7,22 +7,22 @@ async def main():
     """Test the intent classifier agent."""
     
     # Build the agent
-    agent = build_intent_classifier_agent()
+    agent = build_intent_classifier_agent().compile()
     
     # Test cases
     test_cases = [
         {
-            "user_input": "帮我制作关于微积分的卡片",
+            "user_input": "Help me make cards about calculus",
             "file_ids": [],
             "metadata": {}
         },
         {
-            "user_input": "我上传了一些生物学PDF，请帮我生成复习卡片",
+            "user_input": "I uploaded some biology PDFs, please help me generate review cards.",
             "file_ids": ["file1.pdf", "file2.pdf"],
             "metadata": {"target_count": 20}
         },
         {
-            "user_input": "优化我现有的英语词汇卡片",
+            "user_input": "Optimize my existing English vocabulary flashcards",
             "file_ids": [],
             "metadata": {"existing_cards": True}
         }

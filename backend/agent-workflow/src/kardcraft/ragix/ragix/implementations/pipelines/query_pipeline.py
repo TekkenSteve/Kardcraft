@@ -67,6 +67,11 @@ class QueryPipeline:
         conversation_history: Optional[List[Dict[str, str]]] = None,
         rewrite_hints: Optional[Dict[str, Any]] = None,
     ) -> Answer:
+        self._log_history_context(
+            session_id=session_id,
+            conversation_history=conversation_history,
+            phase="query",
+        )
         hints = {"workspace": session_id or "default"}
         if rewrite_hints:
             hints.update(rewrite_hints)
@@ -91,13 +96,15 @@ class QueryPipeline:
             )
             self._log_rewrite_decision(question=question, rewrite=rewrite, session_id=session_id)
             effective_question = rewrite.canonical_query or question
+        # "bypass" is a sentinel for skipping rewrite, not a LightRAG query mode.
+        query_mode = None if effective_mode == "bypass" else effective_mode
 
         if rewrite.sub_queries and not (modes and len(modes) > 1):
             return await self._query_multi_intent(
                 client=client,
                 sub_queries=rewrite.sub_queries,
                 session_id=session_id,
-                mode=mode,
+                mode=query_mode,
                 top_k=top_k,
                 include_references=include_references,
                 include_chunk_content=include_chunk_content,
@@ -128,7 +135,7 @@ class QueryPipeline:
             client=client,
             question=effective_question,
             session_id=session_id,
-            mode=mode,
+            mode=query_mode,
             top_k=top_k,
             include_references=include_references,
             include_chunk_content=include_chunk_content,
@@ -250,10 +257,13 @@ class QueryPipeline:
         effective_rerank: Optional[bool],
         conversation_history: Optional[List[Dict[str, str]]],
     ) -> Dict[str, Any]:
+        resolved_mode = str(mode or self.config.default_mode or "mix").strip().lower()
+        if resolved_mode == "bypass":
+            resolved_mode = "mix"
         return await client.query(
             question,
             workspace=session_id,
-            mode=mode or self.config.default_mode,
+            mode=resolved_mode,
             top_k=top_k if top_k is not None else self.config.top_k,
             include_references=(
                 include_references
@@ -348,6 +358,47 @@ class QueryPipeline:
 
         merged_text = self._format_multi_intent_answer(merged_sections)
         return Answer(text=merged_text, citations=list(ref_map.values()))
+
+    @staticmethod
+    def _history_preview(
+        conversation_history: Optional[List[Dict[str, str]]],
+        *,
+        max_items: int = 8,
+        max_chars: int = 200,
+    ) -> List[Dict[str, Any]]:
+        history = list(conversation_history or [])
+        start = max(0, len(history) - max_items)
+        preview: List[Dict[str, Any]] = []
+        for idx, item in enumerate(history[start:], start=start):
+            if not isinstance(item, dict):
+                preview.append({"index": idx, "role": "unknown", "content_preview": str(item)[:max_chars]})
+                continue
+            content = str(item.get("content") or "").strip()
+            if len(content) > max_chars:
+                content = content[:max_chars] + "...[truncated]"
+            preview.append(
+                {
+                    "index": idx,
+                    "role": str(item.get("role") or "unknown"),
+                    "content_preview": content,
+                }
+            )
+        return preview
+
+    def _log_history_context(
+        self,
+        *,
+        session_id: Optional[str],
+        conversation_history: Optional[List[Dict[str, str]]],
+        phase: str,
+    ) -> None:
+        logger.debug(
+            "query pipeline history context",
+            phase=phase,
+            session_id=session_id or "default",
+            history_count=len(list(conversation_history or [])),
+            history_preview=self._history_preview(conversation_history),
+        )
 
     @staticmethod
     def _count_unique_sources(result: Dict[str, Any]) -> int:

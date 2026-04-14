@@ -170,6 +170,32 @@ class WorkflowManager:
                 return True
         return False
 
+    def _history_preview(
+        self,
+        history: Optional[List[Dict[str, Any]]],
+        *,
+        max_items: int = 8,
+        max_chars: int = 200,
+    ) -> List[Dict[str, Any]]:
+        entries = list(history or [])
+        preview: List[Dict[str, Any]] = []
+        start = max(0, len(entries) - max_items)
+        for idx, item in enumerate(entries[start:], start=start):
+            if not isinstance(item, dict):
+                preview.append({"index": idx, "role": "unknown", "content_preview": str(item)[:max_chars]})
+                continue
+            content = str(item.get("content") or "").strip()
+            if len(content) > max_chars:
+                content = content[:max_chars] + "...[truncated]"
+            preview.append(
+                {
+                    "index": idx,
+                    "role": str(item.get("role") or "unknown"),
+                    "content_preview": content,
+                }
+            )
+        return preview
+
     async def execute(
         self,
         workflow_type: str,
@@ -204,6 +230,15 @@ class WorkflowManager:
                     workspace_id=input_data.get("workspace_id", ""),
                     input_context=input_payload.get("context",[]),
                     conversation_history=input_data.get("conversation_history") or [],
+                )
+                logger.debug(
+                    "main workflow context history",
+                    phase="execute",
+                    task_id=task_id,
+                    session_id=input_data.get("session_id") or "default",
+                    user_id=input_data.get("user_id") or "unknown",
+                    history_count=len(main_graph_context.conversation_history or []),
+                    history_preview=self._history_preview(main_graph_context.conversation_history),
                 )
 
             value_events = []
@@ -338,6 +373,15 @@ class WorkflowManager:
                 workspace_id=additional_input.get("workspace_id"),
                 input_context=input_payload.get("context"),
                 conversation_history=additional_input.get("conversation_history") or [],
+            )
+            logger.debug(
+                "main workflow context history",
+                phase="resume",
+                task_id=task_id,
+                session_id=additional_input.get("session_id") or "default",
+                user_id=additional_input.get("user_id") or "unknown",
+                history_count=len(main_graph_context.conversation_history or []),
+                history_preview=self._history_preview(main_graph_context.conversation_history),
             )
 
         start_time = time.time()

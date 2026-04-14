@@ -24,8 +24,25 @@ def route_after_syllabus(state: State) -> str:
         return "finalize"
     status = str(state.get("syllabus_status") or "").strip().lower()
     if status == "outline_ready":
+        return "card_scope_planner"
+    return "finalize"
+
+
+def route_after_card_scope(state: State) -> str:
+    if state.get("error"):
+        return "finalize"
+    scope_status = str(state.get("card_scope_status") or "").strip().lower()
+    if scope_status != "scope_ready":
+        return "finalize"
+    if state.get("scope_chunks"):
         if state.get("evidence_items"):
-            return "card_supervisor"
+            return "card_pipeline"
+        if state.get("candidate_nodes"):
+            return "evidence_builder"
+        return "card_pipeline"
+    if state.get("evidence_items"):
+        return "card_pipeline"
+    if state.get("candidate_nodes"):
         return "evidence_builder"
     return "finalize"
 
@@ -35,13 +52,9 @@ def route_after_evidence(state: State) -> str:
         return "finalize"
     status = state.get("evidence_status")
     if status == "evidence_ready":
-        return "card_supervisor"
+        return "card_pipeline"
     return "finalize"
 
 
-def route_after_card(state: State) -> str:
-    reason = str(state.get("error") or "").strip()
-    retry_count = int(state.get("evidence_retry_count") or 0)
-    if reason in {"missing_file_tree_evidence", "missing_file_tree_evidence_items"} and retry_count <= 1:
-        return "evidence_builder"
+def route_after_card_pipeline(state: State) -> str:
     return "finalize"

@@ -1,23 +1,22 @@
-"""State for card supervisor agent."""
+"""State for card aggregation agent."""
 
 from typing import Any, Dict, List, Optional, TypedDict
 
 
-class CardSupervisorState(TypedDict, total=False):
+class State(TypedDict, total=False):
     user_input: str
     message_knowledge: Optional[str]
     subject_domain: Optional[str]
     query_scope: Optional[str]
     learning_units: List[Dict[str, Any]]
+    scoped_learning_units: List[Dict[str, Any]]
     evidence_items: List[Dict[str, Any]]
     document_trees: List[Dict[str, Any]]
     template_profiles: List[str]
     template_default_profile: Optional[str]
     selected_template_profile: Optional[str]
     file_ids: List[str]
-    quality_threshold: float
-    judge_score_threshold: int
-    max_qa_iterations: int
+    scope_chunks: List[Dict[str, Any]]
 
     status: str
     reason: str

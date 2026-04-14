@@ -182,7 +182,7 @@ class RedisClient:
         # Hub for SSE fan-out (1 reader per stream, N clients)
         self._hub: Optional[StreamHub] = None
 
-        self._init_lock: Optional[asyncio.Lock] = None
+        self._init_lock: asyncio.Lock = asyncio.Lock()
         self._initialized = False
         # Metrics for monitoring
         self._op_count = 0
@@ -243,11 +243,7 @@ class RedisClient:
     async def get_client(self) -> Redis:
         if self._client is not None and self._initialized:
             return self._client
-        
-        # Lazily create the async lock (thread-safe via __init__)
-        if self._init_lock is None:
-            self._init_lock = asyncio.Lock()
-        
+
         async with self._init_lock:
             # Double-check after acquiring lock to prevent race condition
             if self._client is not None and self._initialized:
@@ -321,10 +317,6 @@ class RedisClient:
         await self.get_client()
     
     async def close(self):
-        # Lazily create the async lock if it doesn't exist
-        if self._init_lock is None:
-            self._init_lock = asyncio.Lock()
-
         async with self._init_lock:
             # Close general client/pool
             if self._client:

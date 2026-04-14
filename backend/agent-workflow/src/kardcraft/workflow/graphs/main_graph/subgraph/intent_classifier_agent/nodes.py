@@ -19,7 +19,7 @@ async def classify_intent(state: State) -> Dict[str, Any]:
     """Classify user intent and content characteristics."""
 
     logger.info(
-        "🎯 开始意图分类",
+        "🎯 Start Intent Classification",
         user_input_length=len(state["user_input"]),
         file_count=len(state.get("file_ids", [])),
     )
@@ -52,7 +52,7 @@ async def classify_intent(state: State) -> Dict[str, Any]:
             )
 
         logger.info(
-            "✅ 意图分类完成",
+            "✅ Intent classification completed",
             intent=classification["intent_type"],
             driven_mode=classification.get("driven_mode", ""),
             subject=classification["subject_domain"],
@@ -62,7 +62,7 @@ async def classify_intent(state: State) -> Dict[str, Any]:
         return classification
 
     except Exception as e:
-        logger.error("❌ 意图分类失败", error=str(e))
+        logger.error("❌Intent classification failed", error=str(e))
         return {
             "intent_type": "create_cards",
             "driven_mode": _infer_content_mode(

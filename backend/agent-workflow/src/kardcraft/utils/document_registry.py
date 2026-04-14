@@ -11,6 +11,8 @@ import tempfile
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple
 
+import pymupdf
+
 from kardcraft.llm.client import chat_complete
 from kardcraft.pageindex import PageIndexBuildConfig, build_document_tree, flatten_nodes
 from kardcraft.ragix.ragix.utils.gotenberg_client import (
@@ -91,6 +93,41 @@ def _convert_to_pdf_bytes(file_bytes: bytes, metadata: Any) -> bytes:
                 os.remove(temp_in_path)
             except Exception:
                 pass
+
+
+def _count_pdf_pages(pdf_bytes: bytes) -> int:
+    try:
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        return 0
+    try:
+        return int(doc.page_count or 0)
+    finally:
+        doc.close()
+
+
+def _is_low_quality_tree(*, tree: Dict[str, Any], file_id: str, pdf_page_count: int) -> bool:
+    if pdf_page_count < 3:
+        return False
+    doc_name = _as_str(tree.get("doc_name")) or file_id
+    doc_title = _as_str(tree.get("title")) or doc_name
+    refs = flatten_nodes(
+        file_id=file_id,
+        doc_name=doc_name,
+        doc_title=doc_title,
+        nodes=tree.get("nodes") or [],
+        include_root=False,
+        root=tree,
+    )
+    if len(refs) < 4:
+        return False
+    covered_pages: set[int] = set()
+    for ref in refs:
+        start = int(ref.get("start_index") or 1)
+        end = int(ref.get("end_index") or start)
+        covered_pages.add(max(1, start))
+        covered_pages.add(max(1, end))
+    return len(covered_pages) <= 1
 
 
 def _safe_json_loads(raw: str | None) -> Dict[str, Any]:
@@ -215,6 +252,7 @@ async def _build_one_document_tree(
         or file_id
     )
     pdf_bytes = await asyncio.to_thread(_convert_to_pdf_bytes, file_bytes, metadata)
+    pdf_page_count = await asyncio.to_thread(_count_pdf_pages, pdf_bytes)
     stream = io.BytesIO(pdf_bytes)
     config = PageIndexBuildConfig(model=model)
     tree = await asyncio.to_thread(
@@ -224,6 +262,10 @@ async def _build_one_document_tree(
         doc_name=str(filename),
         config=config,
     )
+    if _is_low_quality_tree(tree=tree, file_id=file_id, pdf_page_count=pdf_page_count):
+        raise ValueError(
+            f"pageindex_tree_low_quality:file_id={file_id}:pdf_pages={pdf_page_count}"
+        )
     return tree
 
 

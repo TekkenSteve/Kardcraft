@@ -115,7 +115,7 @@ class _IntentClassificationSignature(dspy.Signature):
 @lru_cache(maxsize=None)
 def _get_signature(lang: str) -> type[dspy.Signature]:
     """Get signature with specified language instructions (cached)."""
-    # with_instructions 会把传入的指令设为新类的 __doc__，因此 signature.instructions 能正确返回对应语言的指令
+    # with_instructions will set the passed instructions as the __doc__ of the new class, so signature.instructions can correctly return the instructions in the corresponding language
     return _IntentClassificationSignature.with_instructions(
         INSTRUCTIONS.get(lang, INSTRUCTIONS["en"])
     )

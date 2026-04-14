@@ -11,7 +11,6 @@ def build_intent_classifier_agent():
     
     # Add nodes
     builder.add_node("classify", classify_intent)
-    # builder.add_node("route", route_to_agents)
     
     # Set entry point
     builder.set_entry_point("classify")
