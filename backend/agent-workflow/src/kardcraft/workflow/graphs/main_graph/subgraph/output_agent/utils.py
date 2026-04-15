@@ -101,7 +101,13 @@ async def _rewrite_single_card(
             content = getattr(response.choices[0].message, "content", "") or ""
         parsed = safe_parse_llm_json(content, default={})
         return parsed if isinstance(parsed, dict) else {}
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "single card rewrite failed",
+            card_id=row.get("id"),
+            error=str(exc),
+            exc_info=True,
+        )
         return {}
 
 
@@ -179,7 +185,14 @@ async def run_output_generation(
         raw_cards = parsed.get("cards") if isinstance(parsed, dict) else []
         if isinstance(raw_cards, list):
             llm_cards = [item for item in raw_cards if isinstance(item, dict)]
-    except Exception:
+        
+    except Exception as exc:
+        logger.warning(
+            "batch output generation LLM call failed",
+            qa_pairs_count=len(qa_rows),
+            error=str(exc),
+            exc_info=True,
+        )
         llm_cards = []
 
     llm_by_id = {str(item.get("id") or "").strip(): item for item in llm_cards if str(item.get("id") or "").strip()}

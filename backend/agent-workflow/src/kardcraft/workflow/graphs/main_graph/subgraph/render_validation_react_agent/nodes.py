@@ -97,7 +97,8 @@ async def _preview_card(
     if resp.status_code >= 400:
         detail = {}
         try:
-            detail = resp.json().get("detail", {}) if isinstance(resp.json(), dict) else {}
+            body = resp.json()
+            detail = body.get("detail", {}) if isinstance(body, dict) else {}
         except Exception:
             detail = {"message": resp.text}
         validation = detail.get("validation") if isinstance(detail, dict) else {}
