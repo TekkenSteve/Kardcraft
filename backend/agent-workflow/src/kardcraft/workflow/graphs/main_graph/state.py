@@ -65,6 +65,7 @@ class State(TypedDict, total=False):
     selected_template_profile: Optional[str]
     template_note_fields: List[str]
     template_validation: Dict[str, Any]
+    profile_prompt_hint: Dict[str, Any]
 
     # Intent + global
     intent_type: Optional[str]

@@ -12,6 +12,7 @@ import { Sparkles, User, Layers, Brain, CheckCircle2, Clock, FileText, Maximize2
 import { cn } from "@/lib/utils";
 import { bulkUpdateStatus, updateCardModel, updateCardStatus, CardData } from "@/lib/features/runSlice";
 import { bulkUpdateCardModel, bulkUpdateCardStatus, createApkgExport, getApkgExport, getApkgExportDownloadUrl, ApkgExportRecord } from "@/lib/kardcraft/api";
+import { getSessionWorkspace } from "@/lib/kardcraft/session-repository";
 
 export function CardWorkspace({
     sessionId,
@@ -43,6 +44,8 @@ export function CardWorkspace({
     const [exportTask, setExportTask] = useState<ApkgExportRecord | null>(null);
     const [exporting, setExporting] = useState(false);
     const [exportError, setExportError] = useState("");
+    const exportNotFoundRetriesRef = useRef(0);
+    const [resolvedTemplateProfiles, setResolvedTemplateProfiles] = useState<string[]>([]);
     const PAGE_SIZE = 20;
     const VIRTUAL_THRESHOLD = 50;
     const ESTIMATED_ROW_HEIGHT = 220;
@@ -53,25 +56,8 @@ export function CardWorkspace({
     const focusRing = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
     const templateOptions = useMemo(() => {
-        const options: { id: string; label: string }[] = [];
-        const seen = new Set<string>();
-        const add = (id: string) => {
-            const normalized = String(id || "").trim();
-            if (!normalized || seen.has(normalized)) return;
-            seen.add(normalized);
-            options.push({ id: normalized, label: normalized });
-        };
-
-        // Question types come from backend template metadata plus per-card suggestions.
-        for (const questionType of templatePreflight.questionTypes || []) {
-            add(questionType);
-        }
-        for (const card of cards) {
-            add(card?.suggested_question_type || "");
-            add(card?.content?.model || "");
-        }
-        return options;
-    }, [cards, templatePreflight.questionTypes]);
+        return resolvedTemplateProfiles.map((id) => ({ id, label: id }));
+    }, [resolvedTemplateProfiles]);
 
     const statusCounts = useMemo(() => {
         let draft = 0;
@@ -152,6 +138,41 @@ export function CardWorkspace({
         return cards.find(card => card.card_id === selectedId) || null;
     }, [cards, selectedId]);
 
+    useEffect(() => {
+        let cancelled = false;
+        const run = async () => {
+            if (!sessionId) {
+                setResolvedTemplateProfiles([]);
+                return;
+            }
+            try {
+                const workspace = await getSessionWorkspace(sessionId);
+                if (cancelled) return;
+                const supported = Array.isArray(workspace.supported_question_types)
+                    ? workspace.supported_question_types.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+                    : [];
+                setResolvedTemplateProfiles(supported);
+            } catch {
+                if (!cancelled) setResolvedTemplateProfiles([]);
+                return;
+            }
+        };
+        void run();
+        return () => {
+            cancelled = true;
+        };
+    }, [sessionId, cardsVersion]);
+
+    useEffect(() => {
+        if (!selectedCard || selectedTemplate) return;
+        if (templateOptions.length === 0) return;
+        const model = String(selectedCard.suggested_question_type || selectedCard.content.model || "").trim();
+        const isKnown = templateOptions.some((option) => option.id === model);
+        if (isKnown) {
+            setSelectedTemplate(model);
+        }
+    }, [selectedCard, selectedTemplate, templateOptions]);
+
     const handleSelect = useCallback((cardId: string) => {
         setSelectedId(cardId);
         const card = cards.find((item) => item.card_id === cardId);
@@ -218,6 +239,7 @@ export function CardWorkspace({
         if (!sessionId || exporting) return;
         setExportError("");
         setExporting(true);
+        exportNotFoundRetriesRef.current = 0;
         try {
             const created = await createApkgExport({
                 session_id: sessionId,
@@ -232,21 +254,30 @@ export function CardWorkspace({
     }, [exporting, sessionId, templatePreflight.templateId]);
 
     const handleDownloadApkg = useCallback(() => {
-        if (!sessionId || !exportTask?.export_id || exportTask.status !== "completed") return;
-        window.location.href = getApkgExportDownloadUrl(sessionId, exportTask.export_id);
+        if (!exportTask?.export_id || exportTask.status !== "completed") return;
+        const exportSessionId = exportTask.session_id || sessionId;
+        if (!exportSessionId) return;
+        window.location.href = getApkgExportDownloadUrl(exportSessionId, exportTask.export_id);
     }, [exportTask, sessionId]);
 
     useEffect(() => {
-        if (!sessionId || !exportTask?.export_id || exportTask.status !== "processing") return;
+        const exportSessionId = exportTask?.session_id || sessionId;
+        if (!exportSessionId || !exportTask?.export_id || exportTask.status !== "processing") return;
         let cancelled = false;
         const timer = window.setInterval(async () => {
             try {
-                const latest = await getApkgExport(sessionId, exportTask.export_id);
+                const latest = await getApkgExport(exportSessionId, exportTask.export_id);
                 if (!cancelled) {
+                    exportNotFoundRetriesRef.current = 0;
                     setExportTask(latest);
                 }
             } catch (err) {
                 if (!cancelled) {
+                    const msg = err instanceof Error ? err.message : "Failed to query export task";
+                    if (msg.includes("export task not found") && exportNotFoundRetriesRef.current < 8) {
+                        exportNotFoundRetriesRef.current += 1;
+                        return;
+                    }
                     setExportError(err instanceof Error ? err.message : "Failed to query export task");
                 }
             }
@@ -255,7 +286,7 @@ export function CardWorkspace({
             cancelled = true;
             window.clearInterval(timer);
         };
-    }, [exportTask?.export_id, exportTask?.status, sessionId]);
+    }, [exportTask?.export_id, exportTask?.session_id, exportTask?.status, sessionId]);
 
     useEffect(() => {
         setSize(1);
@@ -770,12 +801,10 @@ export function CardWorkspace({
                                                 "w-full text-xs rounded-md border bg-[var(--app-surface-1)] px-2 py-1.5 border-[var(--app-border-subtle)]",
                                                 focusRing
                                             )}
+                                            disabled={templateOptions.length === 0}
                                             value={selectedTemplate}
                                             onChange={(event) => setSelectedTemplate(event.target.value)}
                                         >
-                                            {templateOptions.length === 0 && (
-                                                <option value="">{t("workspace.unknownQuestionType")}</option>
-                                            )}
                                             {templateOptions.map((option) => (
                                                 <option key={option.id} value={option.id}>
                                                     {option.label}
@@ -1037,12 +1066,10 @@ export function CardWorkspace({
                                     "w-full text-xs rounded-md border bg-[var(--app-surface-1)] px-2 py-1.5 border-[var(--app-border-subtle)]",
                                     focusRing
                                 )}
+                                disabled={templateOptions.length === 0}
                                 value={selectedTemplate}
                                 onChange={(event) => setSelectedTemplate(event.target.value)}
                             >
-                                {templateOptions.length === 0 && (
-                                    <option value="">{t("workspace.unknownQuestionType")}</option>
-                                )}
                                 {templateOptions.map((option) => (
                                     <option key={option.id} value={option.id}>
                                         {option.label}

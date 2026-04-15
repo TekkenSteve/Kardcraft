@@ -10,6 +10,7 @@ from typing import Any
 import httpx
 
 from kardcraft.db import CardTemplateRepository
+from kardcraft.utils.logger import logger
 
 ANKI_RUNTIME_URL = os.getenv("ANKI_RUNTIME_URL", "http://anki-runtime:8012").rstrip("/")
 TOKEN_PATTERN = re.compile(r"{{\s*([^{}]+?)\s*}}")
@@ -32,6 +33,7 @@ class PreparedTemplateContext:
     selected_template_profile: str
     template_note_fields: list[str]
     template_validation: dict[str, Any]
+    profile_prompt_hint: dict[str, Any]
 
 
 def _normalize_profile_name(value: Any) -> str:
@@ -62,6 +64,77 @@ def _extract_profiles_from_mapping(mapping_spec: dict[str, Any] | None) -> tuple
         profiles.append(default_profile)
 
     return profiles, default_profile
+
+
+def _build_profile_map(mapping_spec: dict[str, Any] | None) -> dict[str, dict[str, Any]]:
+    mapping = mapping_spec or {}
+    declared = mapping.get("profiles")
+    if not isinstance(declared, list):
+        return {}
+    profile_map: dict[str, dict[str, Any]] = {}
+    for item in declared:
+        if not isinstance(item, dict):
+            continue
+        name = _normalize_profile_name(item.get("name"))
+        if not name:
+            continue
+        profile_map[name] = item
+    return profile_map
+
+
+def _truncate_text(value: Any, *, limit: int) -> str:
+    text = str(value or "").strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}..."
+
+
+def _resolve_profile_sample_fields(
+    *,
+    mapping_spec: dict[str, Any] | None,
+    requested_profile: str,
+    default_profile: str,
+) -> tuple[str, dict[str, Any], str]:
+    profile_map = _build_profile_map(mapping_spec)
+    fallback_profile = default_profile if default_profile in profile_map else ""
+    if requested_profile in profile_map:
+        sample_fields = profile_map[requested_profile].get("sample_fields")
+        if isinstance(sample_fields, dict) and sample_fields:
+            return requested_profile, sample_fields, "selected"
+        if fallback_profile and fallback_profile != requested_profile:
+            fallback_fields = profile_map[fallback_profile].get("sample_fields")
+            if isinstance(fallback_fields, dict) and fallback_fields:
+                return fallback_profile, fallback_fields, "fallback_missing_selected_example"
+        return requested_profile, {}, "missing"
+
+    if fallback_profile:
+        fallback_fields = profile_map[fallback_profile].get("sample_fields")
+        if isinstance(fallback_fields, dict) and fallback_fields:
+            return fallback_profile, fallback_fields, "fallback"
+        return fallback_profile, {}, "missing"
+    return requested_profile or default_profile, {}, "missing"
+
+
+def _build_profile_prompt_hint(
+    *,
+    requested_profile: str,
+    resolved_profile: str,
+    sample_fields: dict[str, Any],
+    resolution: str,
+) -> dict[str, Any]:
+    sample_fields_compact: dict[str, str] = {}
+    for raw_key, raw_value in (sample_fields or {}).items():
+        key = str(raw_key or "").strip()
+        if not key:
+            continue
+        sample_fields_compact[key] = _truncate_text(raw_value, limit=2400)
+    return {
+        "requested_profile": requested_profile,
+        "resolved_profile": resolved_profile or requested_profile,
+        "resolution": resolution,
+        "sample_fields": sample_fields_compact,
+        "field_order": list(sample_fields_compact.keys()),
+    }
 
 
 def _extract_note_fields(front_html: str, back_html: str) -> list[str]:
@@ -279,6 +352,24 @@ async def prepare_template_context_for_main_graph(
     validation_summary, runtime_note_fields = await _validate_template_with_runtime(validation_payload)
     if not note_fields:
         note_fields = runtime_note_fields
+    resolved_profile, sample_fields, resolution = _resolve_profile_sample_fields(
+        mapping_spec=template.mapping_spec,
+        requested_profile=selected_profile,
+        default_profile=default_profile,
+    )
+    profile_prompt_hint = _build_profile_prompt_hint(
+        requested_profile=selected_profile,
+        resolved_profile=resolved_profile,
+        sample_fields=sample_fields,
+        resolution=resolution,
+    )
+    logger.info(
+        "template profile hint resolved",
+        template_id=template.template_id,
+        requested_profile=selected_profile,
+        resolved_profile=resolved_profile,
+        resolution=resolution,
+    )
 
     return PreparedTemplateContext(
         template_id=template.template_id,
@@ -289,4 +380,5 @@ async def prepare_template_context_for_main_graph(
         selected_template_profile=selected_profile,
         template_note_fields=note_fields,
         template_validation=validation_summary,
+        profile_prompt_hint=profile_prompt_hint,
     )

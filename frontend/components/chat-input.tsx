@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
 import { clearTemplatePreflight, setTemplatePreflight } from "@/lib/features/runSlice";
+import { getSessionWorkspace } from "@/lib/kardcraft/session-repository";
 import { FileUploadAPI } from "@/lib/file-upload/api";
 import { UploadedFile } from "@/lib/file-upload/types";
 import {
@@ -210,7 +211,10 @@ export function ChatInput({
                 checkedAt: new Date().toISOString(),
                 message: `Precheck passed (${precheck.card_count} sample cards).`,
             }));
-            return precheck;
+            return {
+                precheck,
+                questionTypes: nextQuestionTypes,
+            };
         } catch (error) {
             dispatch(setTemplatePreflight({
                 status: "failed",
@@ -240,11 +244,23 @@ export function ChatInput({
         setError(null);
 
         try {
+            let selectedProfileForSubmit = "";
             if (selectedAgent !== "normal") {
                 dispatch(clearTemplatePreflight());
             }
             if (selectedAgent === "normal" && selectedTemplateId) {
-                await runTemplatePreflight(selectedTemplateId, selectedTemplateVersion);
+                const preflight = await runTemplatePreflight(selectedTemplateId, selectedTemplateVersion);
+                if (sessionId) {
+                    try {
+                        const workspace = await getSessionWorkspace(sessionId);
+                        selectedProfileForSubmit = String(workspace.selected_question_type || "").trim();
+                    } catch {
+                        selectedProfileForSubmit = "";
+                    }
+                }
+                if (!selectedProfileForSubmit) {
+                    selectedProfileForSubmit = String((preflight.questionTypes || [])[0] || "").trim();
+                }
             }
 
             const context: Record<string, unknown> = {};
@@ -258,6 +274,9 @@ export function ChatInput({
             }
             if (selectedTemplateId && selectedTemplateVersion !== undefined) {
                 context.template_version = selectedTemplateVersion;
+            }
+            if (selectedTemplateId && selectedProfileForSubmit) {
+                context.template_profile = selectedProfileForSubmit;
             }
 
             const taskType = selectedAgent === "card_template" ? "card_template" : "main";
@@ -493,14 +512,17 @@ export function ChatInput({
     const handleTemplateSelect = async (template: CardTemplate) => {
         setSelectedTemplateId(template.template_id);
         setSelectedTemplateVersion(template.latest_version);
+        dispatch(clearTemplatePreflight());
+        setError(null);
         setIsSavingTemplatePref(true);
         try {
             await setUserTemplatePreference({
                 default_template_id: template.template_id,
                 default_template_version: template.latest_version,
             });
-        } catch {
-            // Keep local selection even if preference persistence fails.
+            await runTemplatePreflight(template.template_id, template.latest_version);
+        } catch (err) {
+            setError(err instanceof Error ? err.message : "Template precheck failed.");
         } finally {
             setIsSavingTemplatePref(false);
         }

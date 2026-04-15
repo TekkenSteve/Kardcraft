@@ -7,6 +7,10 @@ from typing import Any, Dict, List
 from langgraph.runtime import Runtime
 
 from kardcraft.workflow.graphs.main_graph.state import Context
+from kardcraft.workflow.graphs.main_graph.subgraph.output_agent import output_agent
+from kardcraft.workflow.graphs.main_graph.subgraph.render_validation_react_agent import (
+    render_validation_react_agent,
+)
 from kardcraft.utils.logger import logger
 from .utils import (
     run_answer_generation,
@@ -84,7 +88,6 @@ async def run_card_generation_node(
     state: State,
     runtime: Runtime[Context],
 ) -> Dict[str, Any]:
-    del runtime
     unit_ids = [str(x).strip() for x in (state.get("unit_ids") or []) if str(x).strip()]
     scoped_units = _filter_learning_units_by_scope(
         list(state.get("learning_units") or []),
@@ -95,6 +98,8 @@ async def run_card_generation_node(
         unit_ids,
     )
     payload: Dict[str, Any] = {
+        "template_id": state.get("template_id"),
+        "template_version": state.get("template_version"),
         "user_input": state.get("user_input") or "",
         "message_knowledge": state.get("message_knowledge") or "",
         "subject_domain": state.get("subject_domain") or "general",
@@ -105,6 +110,7 @@ async def run_card_generation_node(
         "template_profiles": state.get("template_profiles") or [],
         "template_default_profile": state.get("template_default_profile"),
         "selected_template_profile": state.get("selected_template_profile"),
+        "profile_prompt_hint": state.get("profile_prompt_hint") or {},
         "file_ids": state.get("file_ids") or [],
     }
 
@@ -118,7 +124,6 @@ async def run_card_generation_node(
             "refined_cards": [],
         }
 
-    raw_cards = question_stage.get("raw_cards") or []
     question_drafts = question_stage.get("question_drafts") or []
     logger.debug(
         "card generation question stage",
@@ -126,7 +131,6 @@ async def run_card_generation_node(
         unit_ids=unit_ids,
         scoped_units_count=len(scoped_units),
         scoped_evidence_count=len(scoped_evidence),
-        raw_cards_count=len(raw_cards),
         question_drafts_count=len(question_drafts),
     )
 
@@ -134,7 +138,6 @@ async def run_card_generation_node(
         {
             "question_drafts": question_drafts,
             "payload": payload,
-            "raw_cards": raw_cards,
         }
     )
     assembled_stage = await run_card_assembly.ainvoke(
@@ -160,8 +163,23 @@ async def run_card_generation_node(
         }
 
     approved_cards = quality_stage.get("approved_cards") or []
-    assembled_cards = assembled_stage.get("assembled_cards") or []
     quality_report = quality_stage.get("quality_report") or {}
+    output_stage = await output_agent.ainvoke(
+        {
+            "cards": approved_cards,
+            "payload": payload,
+        },
+        context=runtime.context,
+    )
+    render_validation_stage = await render_validation_react_agent.ainvoke(
+        {
+            "cards": output_stage.get("output_cards") or [],
+            "payload": payload,
+        },
+        context=runtime.context,
+    )
+    validated_cards = render_validation_stage.get("validated_cards") or []
+    output_cards = output_stage.get("output_cards") or []
     failed_cards = quality_report.get("failed_cards") if isinstance(quality_report, dict) else []
     failed_preview: List[Dict[str, Any]] = []
     if isinstance(failed_cards, list):
@@ -182,7 +200,8 @@ async def run_card_generation_node(
         "card generation quality stage",
         chunk_id=str(state.get("chunk_id") or ""),
         answer_drafts_count=len(answer_stage.get("answer_drafts") or []),
-        assembled_cards_count=len(assembled_cards),
+        output_cards_count=len(output_cards),
+        validated_cards_count=len(validated_cards),
         approved_cards_count=len(approved_cards),
         quality_checked=int(quality_report.get("checked") or 0),
         quality_failed=int(quality_report.get("failed") or 0),
@@ -192,13 +211,14 @@ async def run_card_generation_node(
     )
     chunk_id = str(state.get("chunk_id") or "").strip()
     if chunk_id:
-        for card in approved_cards:
+        for card in validated_cards:
             if isinstance(card, dict):
                 card["scope_chunk_id"] = chunk_id
 
     return {
-        "approved_cards": approved_cards,
+        "approved_cards": validated_cards,
         "quality_report": quality_stage.get("quality_report") or {},
-        "raw_cards": raw_cards,
+        "raw_cards": validated_cards,
         "refined_cards": quality_stage.get("refined_cards") or [],
+        "render_validation_report": render_validation_stage.get("render_validation_report") or {},
     }

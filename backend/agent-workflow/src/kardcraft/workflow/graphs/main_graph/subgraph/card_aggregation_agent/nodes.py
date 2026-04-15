@@ -71,6 +71,8 @@ async def run_card_aggregation_node(
             {
                 "chunk_id": chunk_id,
                 "unit_ids": unit_ids,
+                "template_id": state.get("template_id"),
+                "template_version": state.get("template_version"),
                 "user_input": state.get("user_input") or "",
                 "message_knowledge": state.get("message_knowledge") or "",
                 "subject_domain": state.get("subject_domain") or "general",
@@ -81,6 +83,7 @@ async def run_card_aggregation_node(
                 "template_profiles": state.get("template_profiles") or [],
                 "template_default_profile": state.get("template_default_profile"),
                 "selected_template_profile": state.get("selected_template_profile"),
+                "profile_prompt_hint": state.get("profile_prompt_hint") or {},
                 "file_ids": state.get("file_ids") or [],
             },
             context=runtime.context,

@@ -25,6 +25,7 @@ HARD_REASON_CODES = {
     "hard_back_too_long",
     "hard_non_atomic_back",
     "hard_title_scope_drift",
+    "hard_question_type_mismatch",
 }
 SOFT_REASON_CODES = {
     "soft_low_clarity",
@@ -137,6 +138,7 @@ def _intent_rule_violations(
     query_scope: str,
     doc_titles: List[str],
     profile: PolicyProfile,
+    expected_question_type: str = "",
 ) -> List[str]:
     violations: List[str] = []
     front = str(card.get("front") or "").strip()
@@ -150,6 +152,11 @@ def _intent_rule_violations(
     if profile.require_title_alignment and query_scope == "title_only" and doc_titles:
         if not (_contains_any_title(front, doc_titles) or _contains_any_title(back, doc_titles)):
             violations.append("hard_title_scope_drift")
+    expected_qtype = str(expected_question_type or "").strip()
+    if expected_qtype:
+        card_qtype = str(card.get("suggested_question_type") or card.get("model") or "").strip()
+        if card_qtype and card_qtype != expected_qtype:
+            violations.append("hard_question_type_mismatch")
     return violations
 
 
@@ -180,6 +187,33 @@ def _normalize_card(item: Dict[str, Any], default_model: str = "default") -> Dic
     }
 
 
+def _safe_profile_prompt_hint(payload: Dict[str, Any]) -> Dict[str, Any]:
+    raw = payload.get("profile_prompt_hint")
+    if not isinstance(raw, dict):
+        return {}
+    sample_fields = raw.get("sample_fields") if isinstance(raw.get("sample_fields"), dict) else {}
+    return {
+        "requested_profile": str(raw.get("requested_profile") or "").strip(),
+        "resolved_profile": str(raw.get("resolved_profile") or "").strip(),
+        "resolution": str(raw.get("resolution") or "").strip(),
+        "sample_fields": {str(k): str(v) for k, v in sample_fields.items() if str(k).strip()},
+        "field_order": [str(x).strip() for x in (raw.get("field_order") or []) if str(x).strip()],
+    }
+
+
+def _resolve_selected_question_type(payload: Dict[str, Any]) -> str:
+    hint = _safe_profile_prompt_hint(payload)
+    resolved = str(hint.get("resolved_profile") or "").strip()
+    if resolved:
+        return resolved
+    preferred_model = str(
+        payload.get("selected_template_profile")
+        or payload.get("template_default_profile")
+        or "default"
+    ).strip()
+    return preferred_model or "default"
+
+
 def _evidence_unit_id(node: Dict[str, Any], fallback: str) -> str:
     node_id = str(node.get("node_id") or "").strip()
     file_id = str(node.get("file_id") or "").strip()
@@ -200,7 +234,7 @@ def _split_unit_id(value: str) -> tuple[str, str]:
     return file_id.strip(), node_id.strip()
 
 
-async def _generate_cards_with_llm(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
+async def _generate_questions_with_llm(payload: Dict[str, Any]) -> List[Dict[str, Any]]:
     units = payload.get("learning_units") or []
     evidence_items = payload.get("evidence_items") or []
     file_ids = payload.get("file_ids") or []
@@ -211,11 +245,7 @@ async def _generate_cards_with_llm(payload: Dict[str, Any]) -> List[Dict[str, An
     query_scope = str(payload.get("query_scope") or "focused")
     document_titles = _collect_document_titles(payload)
     file_tree_input = _is_file_tree_input(payload)
-    preferred_model = str(
-        payload.get("selected_template_profile")
-        or payload.get("template_default_profile")
-        or "default"
-    )
+    preferred_model = _resolve_selected_question_type(payload)
     available_models = [
         str(item).strip()
         for item in (payload.get("template_profiles") or [])
@@ -295,14 +325,12 @@ async def _generate_cards_with_llm(payload: Dict[str, Any]) -> List[Dict[str, An
             ensure_ascii=False,
         )
     )
+    profile_hint = _safe_profile_prompt_hint(payload)
     system_prompt = (
-        "You are a multilingual flashcard generator. "
-        "Generate accurate cards from node evidence, independent of language. "
-        "Return JSON only: {\"cards\": [{\"front\": str, \"back\": str, \"source_unit_id\": str, \"model\": str, \"suggested_question_type\": str, \"tags\": [str]}]}. "
-        "If available_models has more than one item, choose the most suitable model per card and avoid putting all cards in the same model unless truly necessary. "
-        "Apply progressive disclosure: front should be focused and answerable; back should be concise and not overload unrelated details. "
-        "Hard constraints: each question must be directly answerable from the provided evidence; do not ask generic or undefined 'what is X' questions unless evidence explicitly defines X; "
-        "avoid vague fronts, avoid missing context, and keep each card atomic to one testable fact/rule/procedure."
+        "You are a multilingual flashcard question generator. "
+        "Generate question drafts only from evidence. "
+        "Return JSON only: {\"questions\": [{\"question\": str, \"source_unit_id\": str, \"tags\": [str]}]}. "
+        "Each question must be directly answerable from provided evidence and align with selected question_type."
     )
     if query_scope == "title_only":
         system_prompt += " Strictly stay on document title intent. Produce at most 2 cards."
@@ -310,18 +338,20 @@ async def _generate_cards_with_llm(payload: Dict[str, Any]) -> List[Dict[str, An
         system_prompt = f"{system_prompt}\n\n{principles_text}"
     default_count = max(2, len(evidence_blocks) * 2)
     max_cards = _card_budget_from_scope(query_scope, default_count=default_count)
-    profile = _resolve_policy_profile(subject_domain=subject_domain, query_scope=query_scope)
-    user_prompt = {
+    user_prompt: Dict[str, Any] = {
         "user_input": user_input,
         "query_scope": query_scope,
         "document_titles": document_titles,
         "subject_domain": subject_domain,
-        "available_models": available_models,
-        "preferred_model": preferred_model,
+        "question_type": preferred_model,
         "max_cards": max_cards,
         "message_knowledge": message_knowledge[:2000],
         "units": evidence_blocks,
     }
+    if profile_hint:
+        user_prompt["profile_prompt_hint"] = profile_hint
+    if available_models:
+        user_prompt["available_models"] = available_models
 
     try:
         response = await chat_complete(
@@ -336,54 +366,56 @@ async def _generate_cards_with_llm(payload: Dict[str, Any]) -> List[Dict[str, An
         if response and getattr(response, "choices", None):
             msg = response.choices[0].message
             content = getattr(msg, "content", "") or ""
-        parsed = safe_parse_llm_json(content, default={"cards": []})
-        cards_raw = parsed.get("cards") if isinstance(parsed, dict) else []
-        cards: List[Dict[str, Any]] = []
-        dropped_by_policy = 0
-        if isinstance(cards_raw, list):
-            for item in cards_raw:
+        parsed = safe_parse_llm_json(content, default={"questions": []})
+        questions_raw = parsed.get("questions") if isinstance(parsed, dict) else []
+        questions: List[Dict[str, Any]] = []
+        dropped = 0
+        if isinstance(questions_raw, list):
+            for item in questions_raw:
                 if not isinstance(item, dict):
                     continue
-                normalized = _normalize_card(item, default_model=preferred_model)
-                if normalized and available_models:
-                    model = str(normalized.get("model") or "").strip()
-                    if model not in available_models:
-                        normalized["model"] = preferred_model
-                if normalized:
-                    cards.append(normalized)
-                else:
-                    dropped_by_policy += 1
-        if cards:
-            hard_fail_count = 0
-            for card in cards:
-                violations = _intent_rule_violations(
-                    card,
-                    query_scope=query_scope,
-                    doc_titles=document_titles,
-                    profile=profile,
+                front = str(item.get("question") or item.get("front") or "").strip()
+                if not front:
+                    dropped += 1
+                    continue
+                source_unit_id = str(item.get("source_unit_id") or "").strip()
+                tags_raw = item.get("tags") if isinstance(item.get("tags"), list) else []
+                tags = [str(t).strip() for t in tags_raw if str(t).strip()]
+                questions.append(
+                    {
+                        "id": str(item.get("id") or f"card_{uuid.uuid4().hex[:8]}"),
+                        "front": front,
+                        "source_unit_id": source_unit_id,
+                        "question_type": preferred_model,
+                        "model": preferred_model,
+                        "suggested_question_type": preferred_model,
+                        "tags": tags,
+                        "status": "question_draft",
+                    }
                 )
-                if violations:
-                    hard_fail_count += 1
+        if query_scope == "title_only":
+            questions = questions[:2]
+        if questions:
             logger.debug(
-                "card generation raw output summary",
+                "question generation llm output summary",
                 evidence_block_count=len(evidence_blocks),
-                llm_card_count=len(cards_raw) if isinstance(cards_raw, list) else 0,
-                normalized_card_count=len(cards),
-                normalized_drop_count=dropped_by_policy,
-                hard_fail_precheck_count=hard_fail_count,
+                llm_question_count=len(questions_raw) if isinstance(questions_raw, list) else 0,
+                normalized_question_count=len(questions),
+                normalized_drop_count=dropped,
                 query_scope=query_scope,
+                question_type=preferred_model,
+                hint_resolution=str(profile_hint.get("resolution") or ""),
             )
         else:
             logger.warning(
-                "card generation produced zero normalized cards",
+                "question generation produced zero normalized questions",
                 evidence_block_count=len(evidence_blocks),
-                llm_card_count=len(cards_raw) if isinstance(cards_raw, list) else 0,
-                normalized_drop_count=dropped_by_policy,
+                llm_question_count=len(questions_raw) if isinstance(questions_raw, list) else 0,
+                normalized_drop_count=dropped,
                 query_scope=query_scope,
+                question_type=preferred_model,
             )
-        if query_scope == "title_only":
-            cards = cards[:2]
-        return cards
+        return questions
     except Exception:
         return []
 
@@ -636,6 +668,7 @@ async def _quality_gate_with_llm(
     query_scope: str,
     document_titles: List[str],
     subject_domain: str,
+    expected_question_type: str = "",
 ) -> Dict[str, Any]:
     if not cards:
         return {
@@ -679,6 +712,7 @@ async def _quality_gate_with_llm(
             query_scope=query_scope,
             doc_titles=document_titles,
             profile=profile,
+            expected_question_type=expected_question_type,
         )
         if violations:
             hard_failed[card_id] = violations
@@ -778,55 +812,101 @@ async def run_question_generation(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Generate question drafts scoped by selected evidence/units."""
     work_state = dict(payload or {})
     try:
-        raw_cards = work_state.get("raw_cards") or []
-        if not raw_cards:
-            raw_cards = await _generate_cards_with_llm(work_state)
-        question_drafts: List[Dict[str, Any]] = []
-        for card in raw_cards:
-            if not isinstance(card, dict):
-                continue
-            front = str(card.get("front") or "").strip()
-            if not front:
-                continue
-            question_drafts.append(
-                {
-                    "id": str(card.get("id") or ""),
-                    "front": front,
-                    "source_unit_id": card.get("source_unit_id"),
-                    "model": str(card.get("model") or ""),
-                    "suggested_question_type": str(card.get("suggested_question_type") or card.get("model") or ""),
-                    "tags": [str(t).strip() for t in (card.get("tags") or []) if str(t).strip()],
-                    "status": "question_draft",
-                }
-            )
+        question_drafts = await _generate_questions_with_llm(work_state)
+        selected_qtype = _resolve_selected_question_type(work_state)
+        for draft in question_drafts:
+            if isinstance(draft, dict):
+                draft["question_type"] = str(draft.get("question_type") or selected_qtype).strip() or selected_qtype
         logger.debug(
             "question generation stage summary",
-            raw_cards_count=len(raw_cards),
             question_drafts_count=len(question_drafts),
             evidence_items_count=len(work_state.get("evidence_items") or []),
             learning_units_count=len(work_state.get("learning_units") or []),
+            selected_question_type=selected_qtype,
         )
-        return {"raw_cards": raw_cards, "question_drafts": question_drafts}
+        return {"question_drafts": question_drafts}
     except SkillSelectorUnavailableError:
-        return {"fatal_error": "selector_unavailable", "raw_cards": [], "question_drafts": []}
+        return {"fatal_error": "selector_unavailable", "question_drafts": []}
 
 
 @tool
 async def run_answer_generation(
     question_drafts: List[Dict[str, Any]],
     payload: Dict[str, Any],
-    raw_cards: List[Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
-    """Generate/resolve answer drafts for question drafts."""
+    """Generate answer drafts via LLM using question drafts + selected question type."""
     work_state = dict(payload or {})
-    raw_by_id: Dict[str, Dict[str, Any]] = {}
-    for card in (raw_cards or []):
-        if not isinstance(card, dict):
-            continue
-        cid = str(card.get("id") or "").strip()
-        if cid:
-            raw_by_id[cid] = card
+    profile_hint = _safe_profile_prompt_hint(work_state)
+    selected_qtype = _resolve_selected_question_type(work_state)
     evidence_index = _build_evidence_index(work_state)
+    if not question_drafts:
+        return {"answer_drafts": []}
+
+    condensed_questions: List[Dict[str, Any]] = []
+    for draft in question_drafts:
+        if not isinstance(draft, dict):
+            continue
+        card_id = str(draft.get("id") or "").strip()
+        front = str(draft.get("front") or "").strip()
+        source_unit_id = str(draft.get("source_unit_id") or "").strip()
+        if not card_id or not front:
+            continue
+        evidence = _pick_best_evidence(front, source_unit_id, evidence_index)
+        condensed_questions.append(
+            {
+                "id": card_id,
+                "question": front[:260],
+                "question_type": str(draft.get("question_type") or selected_qtype).strip() or selected_qtype,
+                "source_unit_id": source_unit_id,
+                "evidence": evidence[:600],
+            }
+        )
+
+    if not condensed_questions:
+        return {"answer_drafts": []}
+
+    system_prompt = (
+        "You are a multilingual flashcard answer generator. "
+        "Generate concise, evidence-grounded answer drafts for each question. "
+        "Return JSON only: {\"answers\": [{\"id\": str, \"answer\": str, \"question_type\": str}]}. "
+        "Respect the question_type style and do not invent unsupported facts."
+    )
+    user_prompt: Dict[str, Any] = {
+        "selected_question_type": selected_qtype,
+        "questions": condensed_questions[:40],
+    }
+    if profile_hint:
+        user_prompt["profile_prompt_hint"] = profile_hint
+
+    answers_by_id: Dict[str, Dict[str, Any]] = {}
+    try:
+        response = await chat_complete(
+            intent="reasoning",
+            temperature=0.1,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": str(user_prompt)},
+            ],
+        )
+        content = ""
+        if response and getattr(response, "choices", None):
+            msg = response.choices[0].message
+            content = getattr(msg, "content", "") or ""
+        parsed = safe_parse_llm_json(content, default={"answers": []})
+        answers_raw = parsed.get("answers") if isinstance(parsed, dict) else []
+        if isinstance(answers_raw, list):
+            for item in answers_raw:
+                if not isinstance(item, dict):
+                    continue
+                card_id = str(item.get("id") or "").strip()
+                answer = str(item.get("answer") or item.get("back") or "").strip()
+                if not card_id or not answer:
+                    continue
+                qtype = str(item.get("question_type") or "").strip() or selected_qtype
+                answers_by_id[card_id] = {"answer": answer, "question_type": qtype}
+    except Exception:
+        answers_by_id = {}
+
     answer_drafts: List[Dict[str, Any]] = []
     for draft in question_drafts or []:
         if not isinstance(draft, dict):
@@ -836,12 +916,23 @@ async def run_answer_generation(
         source_unit_id = str(draft.get("source_unit_id") or "").strip()
         if not card_id or not front:
             continue
-        back = str((raw_by_id.get(card_id) or {}).get("back") or "").strip()
-        if not back:
-            back = _pick_best_evidence(front, source_unit_id, evidence_index)
-        if not back:
+        question_type = str(draft.get("question_type") or selected_qtype).strip() or selected_qtype
+        answer = str((answers_by_id.get(card_id) or {}).get("answer") or "").strip()
+        answer_qtype = str((answers_by_id.get(card_id) or {}).get("question_type") or question_type).strip() or question_type
+        if not answer:
+            answer = _pick_best_evidence(front, source_unit_id, evidence_index)
+            answer_qtype = question_type
+        if not answer:
             continue
-        answer_drafts.append({"id": card_id, "back": back, "status": "answer_draft"})
+        answer_drafts.append(
+            {
+                "id": card_id,
+                "answer": answer,
+                "back": answer,
+                "question_type": answer_qtype,
+                "status": "answer_draft",
+            }
+        )
     return {"answer_drafts": answer_drafts}
 
 
@@ -851,60 +942,49 @@ async def run_card_assembly(
     answer_drafts: List[Dict[str, Any]],
     payload: Dict[str, Any],
 ) -> Dict[str, Any]:
-    """Assemble finalized card objects from question/answer drafts."""
+    """Assemble QA cards (front=question, back=answer) for quality evaluation."""
     work_state = dict(payload or {})
-    available_models = [
-        str(item).strip()
-        for item in (work_state.get("template_profiles") or [])
-        if str(item).strip()
-    ]
-    preferred_model = str(
-        work_state.get("selected_template_profile")
-        or work_state.get("template_default_profile")
-        or "default"
-    )
-    if preferred_model not in available_models and available_models:
-        preferred_model = available_models[0]
+    selected_qtype = _resolve_selected_question_type(work_state)
     answer_by_id = {
-        str(item.get("id") or "").strip(): str(item.get("back") or "").strip()
+        str(item.get("id") or "").strip(): item
         for item in (answer_drafts or [])
-        if isinstance(item, dict)
+        if isinstance(item, dict) and str(item.get("id") or "").strip()
     }
     assembled_cards: List[Dict[str, Any]] = []
     for draft in question_drafts or []:
         if not isinstance(draft, dict):
             continue
-        cid = str(draft.get("id") or "").strip()
+        card_id = str(draft.get("id") or "").strip()
         front = str(draft.get("front") or "").strip()
-        back = str(answer_by_id.get(cid) or "").strip()
-        if not cid or not front or not back:
+        if not card_id or not front:
             continue
-        normalized = _normalize_card(
+        answer_item = answer_by_id.get(card_id) or {}
+        back = str(answer_item.get("answer") or answer_item.get("back") or "").strip()
+        if not back:
+            continue
+        question_type = str(
+            answer_item.get("question_type")
+            or draft.get("question_type")
+            or selected_qtype
+        ).strip() or selected_qtype
+        assembled_cards.append(
             {
-                "id": cid,
+                "id": card_id,
                 "front": front,
                 "back": back,
-                "model": draft.get("model") or preferred_model,
-                "suggested_question_type": draft.get("suggested_question_type") or draft.get("model") or preferred_model,
-                "tags": draft.get("tags") or [],
+                "model": question_type,
+                "suggested_question_type": question_type,
                 "source_unit_id": draft.get("source_unit_id"),
+                "tags": [str(t).strip() for t in (draft.get("tags") or []) if str(t).strip()],
                 "status": "assembled",
-            },
-            default_model=preferred_model,
+            }
         )
-        if normalized and available_models:
-            model = str(normalized.get("model") or "").strip()
-            if model not in available_models:
-                normalized["model"] = preferred_model
-                normalized["suggested_question_type"] = preferred_model
-        if normalized:
-            assembled_cards.append(normalized)
     return {"assembled_cards": assembled_cards}
 
 
 @tool
 async def run_card_quality_pipeline(cards: List[Dict[str, Any]], payload: Dict[str, Any]) -> Dict[str, Any]:
-    """Run refinement, typing, and quality gate on assembled cards."""
+    """Run refinement, typing, and quality gate on output-agent cards."""
     work_state = dict(payload or {})
     try:
         refined_cards = await _refine_cards_with_llm(cards, work_state)
@@ -920,9 +1000,10 @@ async def run_card_quality_pipeline(cards: List[Dict[str, Any]], payload: Dict[s
         )
         if preferred_model not in available_models and available_models:
             preferred_model = available_models[0]
+        # Keep selected question type linked across the pipeline for this run.
         typed_cards = await _assign_question_types_with_llm(
             refined_cards,
-            available_models=available_models,
+            available_models=[preferred_model] if preferred_model else available_models,
             preferred_model=preferred_model,
         )
         quality = await _quality_gate_with_llm(
@@ -930,6 +1011,7 @@ async def run_card_quality_pipeline(cards: List[Dict[str, Any]], payload: Dict[s
             query_scope=str(work_state.get("query_scope") or "focused"),
             document_titles=_collect_document_titles(work_state),
             subject_domain=str(work_state.get("subject_domain") or "general"),
+            expected_question_type=_resolve_selected_question_type(work_state),
         )
         return {
             "approved_cards": quality.get("approved_cards") or [],

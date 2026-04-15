@@ -166,6 +166,7 @@ async def initialize_processing(
         "selected_template_profile": prepared_template.selected_template_profile,
         "template_note_fields": prepared_template.template_note_fields,
         "template_validation": prepared_template.template_validation,
+        "profile_prompt_hint": prepared_template.profile_prompt_hint,
         "preflight_status": None,
         "preflight_reason": None,
         "query_scope": None,
@@ -640,6 +641,8 @@ async def run_card_pipeline(
     file_tree_path_active = bool(state.get("file_tree_path_active"))
     result = await card_aggregation_agent.ainvoke(
         {
+            "template_id": state.get("template_id"),
+            "template_version": state.get("template_version"),
             "user_input": state.get("user_input"),
             "message_knowledge": state.get("message_knowledge"),
             "subject_domain": state.get("subject_domain"),
@@ -652,6 +655,7 @@ async def run_card_pipeline(
             "template_profiles": state.get("template_profiles") or [],
             "template_default_profile": state.get("template_default_profile"),
             "selected_template_profile": state.get("selected_template_profile"),
+            "profile_prompt_hint": state.get("profile_prompt_hint") or {},
             "file_ids": state.get("file_ids") or [],
         },
         context=runtime.context,

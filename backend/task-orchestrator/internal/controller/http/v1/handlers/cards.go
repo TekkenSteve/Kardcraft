@@ -83,7 +83,9 @@ func handleBulkCards(w http.ResponseWriter, r *http.Request, sessionID string, d
 		http.Error(w, "failed to load workspace", http.StatusInternalServerError)
 		return
 	}
+	rawWorkspace := workspace
 	workspace = NormalizeWorkspaceResponse(workspace, sessionID)
+	preserveApkgExports(workspace, rawWorkspace)
 	cards := extractWorkspaceCards(workspace)
 	now := time.Now().UTC().Format(time.RFC3339)
 	idSet := make(map[string]struct{}, len(req.CardIDs))
@@ -149,7 +151,9 @@ func handleCardLock(w http.ResponseWriter, r *http.Request, sessionID, cardID st
 		http.Error(w, "failed to load workspace", http.StatusInternalServerError)
 		return
 	}
+	rawWorkspace := workspace
 	workspace = NormalizeWorkspaceResponse(workspace, sessionID)
+	preserveApkgExports(workspace, rawWorkspace)
 	cards := extractWorkspaceCards(workspace)
 	found := false
 	for _, card := range cards {
@@ -229,7 +233,9 @@ func handleCardEdit(w http.ResponseWriter, r *http.Request, sessionID, cardID st
 		http.Error(w, "failed to load workspace", http.StatusInternalServerError)
 		return
 	}
+	rawWorkspace := workspace
 	workspace = NormalizeWorkspaceResponse(workspace, sessionID)
+	preserveApkgExports(workspace, rawWorkspace)
 	cards := extractWorkspaceCards(workspace)
 	found := false
 	newVersion := 0
@@ -312,4 +318,15 @@ func intFromAny(v any) int {
 
 func workspaceVersion(workspace map[string]any) int {
 	return intFromAny(workspace["version"])
+}
+
+func preserveApkgExports(dst, src map[string]any) {
+	if dst == nil || src == nil {
+		return
+	}
+	raw, ok := src["apkg_exports"].(map[string]any)
+	if !ok || len(raw) == 0 {
+		return
+	}
+	dst["apkg_exports"] = raw
 }

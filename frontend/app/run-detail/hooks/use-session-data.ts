@@ -135,19 +135,20 @@ export function useSessionData({
         const supportedQuestionTypes = Array.isArray(swrCards?.supported_question_types)
             ? swrCards.supported_question_types.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
             : [];
-        if (supportedQuestionTypes.length > 0) {
-            const nextTemplateId = swrCards?.template_id || templatePreflight.templateId;
-            const currentQuestionTypes = templatePreflight.questionTypes || [];
-            const sameLength = currentQuestionTypes.length === supportedQuestionTypes.length;
-            const sameItems = sameLength && currentQuestionTypes.every((item, index) => item === supportedQuestionTypes[index]);
-            if (templatePreflight.templateId !== nextTemplateId || !sameItems) {
-                dispatch(setTemplatePreflight({
-                    ...templatePreflight,
-                    templateId: nextTemplateId,
-                    questionTypes: supportedQuestionTypes,
-                    checkedAt: templatePreflight.checkedAt || new Date().toISOString(),
-                }));
-            }
+        const nextTemplateId = swrCards?.template_id || templatePreflight.templateId;
+        const currentQuestionTypes = templatePreflight.questionTypes || [];
+        const sameLength = currentQuestionTypes.length === supportedQuestionTypes.length;
+        const sameItems = sameLength && currentQuestionTypes.every((item, index) => item === supportedQuestionTypes[index]);
+        const shouldSyncQuestionTypes = supportedQuestionTypes.length > 0 || currentQuestionTypes.length === 0;
+        const nextQuestionTypes = shouldSyncQuestionTypes ? supportedQuestionTypes : currentQuestionTypes;
+        const questionTypesChanged = !sameItems && shouldSyncQuestionTypes;
+        if (templatePreflight.templateId !== nextTemplateId || questionTypesChanged) {
+            dispatch(setTemplatePreflight({
+                ...templatePreflight,
+                templateId: nextTemplateId,
+                questionTypes: nextQuestionTypes,
+                checkedAt: templatePreflight.checkedAt || new Date().toISOString(),
+            }));
         }
         const nextPhase = inferWorkspacePhase({
             projectionStatus: swrCards?.projection_status,

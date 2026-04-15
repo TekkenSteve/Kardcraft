@@ -130,8 +130,10 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 	if outcome.Status == "completed" {
 		cards := buildWorkspaceCards(outcome.FinalCards, outcome.UserID)
 		if len(cards) > 0 {
+			var currentWorkspace map[string]any
 			nextVersion := 1
-			if currentWorkspace, err := persistenceStore.LoadWorkspace(ctx, sessionID); err == nil {
+			if loadedWorkspace, err := persistenceStore.LoadWorkspace(ctx, sessionID); err == nil {
+				currentWorkspace = loadedWorkspace
 				nextVersion = workspaceVersion(currentWorkspace) + 1
 			}
 			now := time.Now().UTC()
@@ -152,6 +154,11 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 				}
 				if selected := strings.TrimSpace(asString(outcome.Metadata["selected_question_type"])); selected != "" {
 					workspace["selected_question_type"] = selected
+				}
+			}
+			if currentWorkspace != nil {
+				if apkgExports, ok := currentWorkspace["apkg_exports"].(map[string]any); ok && len(apkgExports) > 0 {
+					workspace["apkg_exports"] = apkgExports
 				}
 			}
 			if err := persistenceStore.SaveWorkspace(ctx, sessionID, workspace); err != nil {
