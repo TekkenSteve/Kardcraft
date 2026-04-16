@@ -32,8 +32,7 @@ async def save_cards_to_workspace(cards: list, workspace_id: str, owner: str) ->
 
     saved_card_ids: list[str] = []
 
-    if not postgres._initialized:
-        await postgres.initialize()
+    await postgres.initialize()
 
     try:
         existing_pack = await pack_workspace.get_workspace(session_id)

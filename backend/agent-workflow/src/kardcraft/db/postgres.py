@@ -5,21 +5,28 @@ PostgreSQL async database client for Kardcraft.
 import os
 import asyncio
 from contextlib import asynccontextmanager
-from typing import AsyncGenerator, Optional
+from dataclasses import dataclass
+from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
-from sqlalchemy.pool import NullPool, AsyncAdaptedQueuePool
+from sqlalchemy.pool import AsyncAdaptedQueuePool
 from sqlalchemy import text
 from ..utils.logger import logger
 from .models import Base
 
 
+@dataclass
+class _LoopResources:
+    loop_id: int
+    engine: object
+    session_factory: object
+
+
 class PostgresClient:
-    """Async PostgreSQL client with connection pooling."""
+    """Async PostgreSQL client with per-event-loop connection pools."""
 
     def __init__(self):
-        self._engine = None
-        self._session_factory = None
-        self._initialized = False
+        self._resources_by_loop: dict[int, _LoopResources] = {}
+        self._init_lock: asyncio.Lock | None = None
 
     def _get_config(self) -> dict:
         """Get PostgreSQL configuration from environment."""
@@ -39,16 +46,34 @@ class PostgresClient:
         }
 
     async def initialize(self):
-        """Initialize the database connection pool."""
-        if self._initialized:
-            return
+        """Initialize resources for the current event loop."""
+        await self._get_loop_resources()
 
+    async def _get_loop_resources(self) -> _LoopResources:
+        loop = asyncio.get_running_loop()
+        loop_id = id(loop)
+        resources = self._resources_by_loop.get(loop_id)
+        if resources is not None:
+            return resources
+
+        if self._init_lock is None:
+            self._init_lock = asyncio.Lock()
+
+        async with self._init_lock:
+            resources = self._resources_by_loop.get(loop_id)
+            if resources is not None:
+                return resources
+            resources = self._create_loop_resources(loop_id=loop_id)
+            self._resources_by_loop[loop_id] = resources
+            return resources
+
+    def _create_loop_resources(self, *, loop_id: int) -> _LoopResources:
         config = self._get_config()
         logger.info(
-            f"Initializing PostgreSQL at {config['host']}:{config['port']}/{config['db']}"
+            f"Initializing PostgreSQL at {config['host']}:{config['port']}/{config['db']} for loop={loop_id}"
         )
 
-        self._engine = create_async_engine(
+        engine = create_async_engine(
             config["url"],
             echo=False,
             poolclass=AsyncAdaptedQueuePool,
@@ -58,22 +83,25 @@ class PostgresClient:
             pool_recycle=3600,
         )
 
-        self._session_factory = async_sessionmaker(
-            self._engine,
+        session_factory = async_sessionmaker(
+            engine,
             class_=AsyncSession,
             expire_on_commit=False,
         )
+        logger.info(f"PostgreSQL initialized successfully for loop={loop_id}")
+        return _LoopResources(
+            loop_id=loop_id,
+            engine=engine,
+            session_factory=session_factory,
+        )
 
-        self._initialized = True
-        logger.info("PostgreSQL initialized successfully")
 
     @asynccontextmanager
     async def session(self) -> AsyncGenerator[AsyncSession, None]:
         """Get a database session. Use as context manager."""
-        if not self._initialized:
-            await self.initialize()
+        resources = await self._get_loop_resources()
 
-        async with self._session_factory() as session:
+        async with resources.session_factory() as session:
             try:
                 yield session
                 await session.commit()
@@ -83,22 +111,41 @@ class PostgresClient:
 
     async def create_tables(self):
         """Create all tables if they don't exist."""
-        async with self._engine.begin() as conn:
+        resources = await self._get_loop_resources()
+        async with resources.engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
         logger.info("Database tables created")
 
     async def drop_tables(self):
         """Drop all tables (for testing)."""
-        async with self._engine.begin() as conn:
+        resources = await self._get_loop_resources()
+        async with resources.engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)
         logger.warning("Database tables dropped")
 
     async def close(self):
-        """Close the connection pool."""
-        if self._engine:
-            await self._engine.dispose()
-            self._initialized = False
-            logger.info("PostgreSQL connection closed")
+        """Close loop-local connection pool; drop stale loop references safely."""
+        current_loop_id = id(asyncio.get_running_loop())
+        resources = self._resources_by_loop.pop(current_loop_id, None)
+        if resources is not None:
+            try:
+                await resources.engine.dispose()
+            except Exception as e:
+                logger.warning(
+                    f"Error disposing PostgreSQL engine for loop={current_loop_id}: {e}"
+                )
+
+        stale_loop_ids = [loop_id for loop_id in self._resources_by_loop]
+        if stale_loop_ids:
+            # Avoid cross-loop disposal; just drop references to prevent accidental reuse.
+            logger.warning(
+                "Dropping PostgreSQL loop resources without disposal for closed/foreign loops: "
+                + ",".join(str(loop_id) for loop_id in stale_loop_ids)
+            )
+            for loop_id in stale_loop_ids:
+                self._resources_by_loop.pop(loop_id, None)
+
+        logger.info("PostgreSQL connection resources closed")
 
     async def verify_connection(self) -> bool:
         """Verify database connectivity."""

@@ -15,6 +15,7 @@ from temporalio import activity
 from ...llm.context import LLMRuntimeContext, reset_runtime_context, set_runtime_context
 from ...workflow.manager import WorkflowManager
 from ...services.redis import RedisClient
+from ...services.workflow_event_bus import EventContext, WorkflowEventBus
 from ...utils.conversation_history import normalize_conversation_history
 from ...utils.logger import logger
 
@@ -26,17 +27,46 @@ class AgentActivities:
         self,
         workflow_manager: WorkflowManager,
         redis_client: RedisClient,
+        event_bus: Optional[WorkflowEventBus] = None,
     ):
         self.workflow_manager = workflow_manager
         self.redis_client = redis_client
+        self.event_bus = event_bus or WorkflowEventBus()
         # Per workflow/node dedupe cache to prevent stream event storms.
         self._progress_cache: Dict[str, Dict[str, Any]] = {}
         # Node lifecycle phase cache: key=task_id:node_name, value=started|completed|failed
         self._node_phase: Dict[str, str] = {}
+        self._event_contexts: Dict[str, EventContext] = {}
 
     async def _ensure_redis_ready(self) -> None:
         # Ensure Redis initializes in the same event loop that executes activities.
         await self.redis_client.initialize_async()
+
+    def _build_event_context(
+        self,
+        *,
+        task_id: str,
+        session_id: Optional[str],
+        user_id: Optional[str],
+    ) -> EventContext:
+        try:
+            info = activity.info()
+            workflow_id = str(getattr(info, "workflow_id", "") or "unknown-workflow")
+            run_id = str(
+                getattr(info, "workflow_run_id", "")
+                or getattr(info, "run_id", "")
+                or "unknown-run"
+            )
+        except Exception:
+            workflow_id = "unknown-workflow"
+            run_id = "unknown-run"
+        return EventContext(
+            task_id=str(task_id),
+            session_id=str(session_id or "") or None,
+            user_id=str(user_id or "") or None,
+            workflow_id=workflow_id,
+            run_id=run_id,
+        )
 
     @activity.defn(name="execute_agent_workflow")
     async def execute_agent_workflow(
@@ -140,6 +170,13 @@ class AgentActivities:
             "selected_template_profile": template_profile or None,
             "clarification_responses": input_payload.get("clarification_responses") or {},
         }
+        event_ctx = self._build_event_context(
+            task_id=str(task_id),
+            session_id=session_id,
+            user_id=str(user_id),
+        )
+        self._event_contexts[str(task_id)] = event_ctx
+        await self.event_bus.mark_task_running(str(task_id))
 
         # 增强的progress callback，确保定期heartbeat
         last_heartbeat_time = [0.0]
@@ -169,20 +206,14 @@ class AgentActivities:
             activity.heartbeat({"status": "running_langgraph", "task_id": task_id})
 
             async def usage_emitter(payload: Dict[str, Any]) -> None:
-                stream_key = f"stream:events:{task_id}"
-                fields = {
-                    "task_id": str(task_id),
-                    "event_type": "LLM_USAGE",
-                    "message": "LLM usage captured",
-                    "data": json.dumps(payload, ensure_ascii=False, default=str),
-                    "timestamp": datetime.utcnow().isoformat(),
-                }
-                await self.redis_client.stream_add(
-                    stream_key=stream_key,
-                    fields=fields,
-                    maxlen=5000,
-                    approximate=False,
-                    fail_silently=False,
+                await self.event_bus.publish_usage(
+                    ctx=event_ctx,
+                    payload={
+                        "task_id": str(task_id),
+                        "message": "LLM usage captured",
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "usage": payload,
+                    },
                 )
 
             llm_ctx_token = set_runtime_context(
@@ -350,13 +381,12 @@ class AgentActivities:
                 f"Agent workflow cancelled by user/system task_id={task_id}"
             )
             try:
-                await asyncio.shield(
-                    self._publish_terminal_events(
-                        task_id=task_id,
-                        event_type="WORKFLOW_CANCELLED",
-                        message="Workflow cancelled",
-                        session_id=session_id,
-                    )
+                await self.event_bus.mark_task_cancelling(str(task_id))
+                await self._publish_terminal_events(
+                    task_id=task_id,
+                    event_type="WORKFLOW_CANCELLED",
+                    message="Workflow cancelled",
+                    session_id=session_id,
                 )
             except Exception:
                 pass
@@ -397,6 +427,8 @@ class AgentActivities:
                 pass
             # We raise the exception so Temporal marks the activity as failed and can retry if configured
             raise
+        finally:
+            self._event_contexts.pop(str(task_id), None)
 
     @activity.defn(name="resume_agent_workflow")
     async def resume_agent_workflow(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -414,6 +446,13 @@ class AgentActivities:
         if not task_id or not checkpoint_id:
             raise ValueError("task_id and checkpoint_id are required")
         await self._ensure_redis_ready()
+        event_ctx = self._build_event_context(
+            task_id=str(task_id),
+            session_id=str(session_id or ""),
+            user_id=str(user_id or ""),
+        )
+        self._event_contexts[str(task_id)] = event_ctx
+        await self.event_bus.mark_task_running(str(task_id))
 
         async def progress_callback(event_data: Dict[str, Any]):
             await self._publish_progress_event(task_id, event_data)
@@ -421,20 +460,14 @@ class AgentActivities:
 
         try:
             async def usage_emitter(payload: Dict[str, Any]) -> None:
-                stream_key = f"stream:events:{task_id}"
-                fields = {
-                    "task_id": str(task_id),
-                    "event_type": "LLM_USAGE",
-                    "message": "LLM usage captured",
-                    "data": json.dumps(payload, ensure_ascii=False, default=str),
-                    "timestamp": datetime.utcnow().isoformat(),
-                }
-                await self.redis_client.stream_add(
-                    stream_key=stream_key,
-                    fields=fields,
-                    maxlen=5000,
-                    approximate=False,
-                    fail_silently=False,
+                await self.event_bus.publish_usage(
+                    ctx=event_ctx,
+                    payload={
+                        "task_id": str(task_id),
+                        "message": "LLM usage captured",
+                        "timestamp": datetime.utcnow().isoformat(),
+                        "usage": payload,
+                    },
                 )
 
             llm_ctx_token = set_runtime_context(
@@ -471,6 +504,10 @@ class AgentActivities:
 
         except asyncio.CancelledError:
             activity.logger.info(f"Agent workflow resume cancelled task_id={task_id}")
+            try:
+                await self.event_bus.mark_task_cancelling(str(task_id))
+            except Exception:
+                pass
             return {
                 "status": "cancelled",
                 "task_id": task_id,
@@ -481,6 +518,8 @@ class AgentActivities:
         except Exception as e:
             activity.logger.error(f"Agent workflow resume failed: {e}", exc_info=True)
             raise
+        finally:
+            self._event_contexts.pop(str(task_id), None)
 
     @activity.defn(name="health_check_activity")
     async def health_check_activity(self) -> Dict[str, Any]:
@@ -504,27 +543,47 @@ class AgentActivities:
         activity.logger.info(
             f"Publishing workflow event: {event_type} for task {task_id}"
         )
-        await self._ensure_redis_ready()
+        data = data if isinstance(data, dict) else {}
+        event_ctx = self._event_contexts.get(str(task_id)) or self._build_event_context(
+            task_id=str(task_id),
+            session_id=str(data.get("workspace_id") or data.get("session_id") or ""),
+            user_id=None,
+        )
 
         try:
-            # 发布到 Redis Stream 供 SSE 使用
-            stream_key = f"stream:events:{task_id}"
-            event_payload = {
+            normalized_event_type = str(event_type or "").strip()
+            payload = {
                 "task_id": task_id,
-                "event_type": event_type,
-                "data": json.dumps(data),
+                "event_type": normalized_event_type or "WORKFLOW_PROGRESS",
                 "timestamp": datetime.utcnow().isoformat(),
+                **data,
             }
-
-            await self.redis_client.stream_add(
-                stream_key=stream_key,
-                fields=event_payload,
-                maxlen=1000,
-                approximate=True,
-                fail_silently=True,
-            )
-
-            return {"status": "success", "event_type": event_type, "task_id": task_id}
+            if normalized_event_type.lower() == "done":
+                accepted = await self.event_bus.publish_done(
+                    ctx=event_ctx,
+                    message=str(data.get("message") or "Stream end"),
+                )
+            elif normalized_event_type.upper() in {
+                "WORKFLOW_COMPLETED",
+                "WORKFLOW_FAILED",
+                "WORKFLOW_CANCELLED",
+            }:
+                accepted = await self.event_bus.publish_terminal(
+                    ctx=event_ctx,
+                    event_type=normalized_event_type.upper(),
+                    message=str(data.get("message") or normalized_event_type),
+                    payload=payload,
+                )
+            else:
+                accepted = await self.event_bus.publish_progress(
+                    ctx=event_ctx,
+                    payload=payload,
+                )
+            return {
+                "status": "success" if accepted else "dropped",
+                "event_type": normalized_event_type or "WORKFLOW_PROGRESS",
+                "task_id": task_id,
+            }
 
         except Exception as e:
             activity.logger.error(f"Failed to publish workflow event: {e}")
@@ -592,19 +651,6 @@ class AgentActivities:
             if workspace_id:
                 payload["workspace_id"] = workspace_id
 
-            stream_key = f"stream:events:{task_id}"
-            event_payload = {
-                "task_id": task_id,
-                "event_type": event_type,
-                "data": json.dumps(payload),
-                "message": message,
-                "timestamp": datetime.utcnow().isoformat(),
-            }
-            if node_name:
-                event_payload["node_name"] = node_name
-            if workspace_id:
-                event_payload["workspace_id"] = workspace_id
-
             cache_key = f"{task_id}:{event_type}:{node_name or '_'}"
             now_ts = time.monotonic()
             cache = self._progress_cache.get(cache_key) or {}
@@ -618,12 +664,18 @@ class AgentActivities:
                 self._progress_cache[cache_key] = cache
                 return
 
-            await self.redis_client.stream_add(
-                stream_key=stream_key,
-                fields=event_payload,
-                maxlen=1000,
-                approximate=False,
-                fail_silently=True,
+            event_ctx = self._event_contexts.get(str(task_id))
+            if event_ctx is None:
+                event_ctx = self._build_event_context(
+                    task_id=str(task_id),
+                    session_id=str(workspace_id or ""),
+                    user_id=None,
+                )
+                self._event_contexts[str(task_id)] = event_ctx
+
+            await self.event_bus.publish_progress(
+                ctx=event_ctx,
+                payload=payload,
             )
             self._progress_cache[cache_key] = {
                 "fingerprint": fingerprint,
@@ -667,25 +719,20 @@ class AgentActivities:
         if session_id:
             terminal_payload["workspace_id"] = session_id
             terminal_payload["session_id"] = session_id
-
-        await self.publish_workflow_event(
-            {
-                "task_id": task_id,
-                "event_type": event_type,
-                "data": terminal_payload,
-            }
+        event_ctx = self._event_contexts.get(str(task_id)) or self._build_event_context(
+            task_id=str(task_id),
+            session_id=str(session_id or ""),
+            user_id=None,
         )
-        await self.publish_workflow_event(
-            {
-                "task_id": task_id,
-                "event_type": "done",
-                "data": {
-                    "message": "Stream end",
-                    "task_id": task_id,
-                    "workspace_id": session_id or "",
-                    "session_id": session_id or "",
-                },
-            }
+        await self.event_bus.publish_terminal(
+            ctx=event_ctx,
+            event_type=event_type,
+            message=message,
+            payload=terminal_payload,
+        )
+        await self.event_bus.publish_done(
+            ctx=event_ctx,
+            message="Stream end",
         )
 
     def _extract_first_pending_question(self, pending_questions: Any) -> str:

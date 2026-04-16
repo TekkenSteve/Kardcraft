@@ -7,9 +7,8 @@ import os
 import asyncio
 import time
 from typing import Optional, Dict, List, Any
-from ..utils.logger import logger
-
-REDIS_KEY_TTL = 3600 * 2
+# from dotenv import load_dotenv
+from kardcraft.utils.logger import logger
 
 # Default timeouts (in seconds) - can be overridden via environment variables
 DEFAULT_OP_TIMEOUT = float(os.getenv("REDIS_OP_TIMEOUT", "5.0"))  # Basic operations
@@ -183,93 +182,16 @@ class RedisClient:
         self._hub: Optional[StreamHub] = None
 
         self._init_lock: Optional[asyncio.Lock] = None
-        self._init_lock_loop_id: Optional[int] = None
-        self._runtime_loop_id: Optional[int] = None
         self._initialized = False
         # Metrics for monitoring
         self._op_count = 0
         self._timeout_count = 0
         self._error_count = 0
         self._init_time: Optional[float] = None
-
-    def _current_loop_id(self) -> int:
-        return id(asyncio.get_running_loop())
-
-    def _ensure_init_lock_for_current_loop(self) -> int:
-        loop_id = self._current_loop_id()
-        if self._init_lock is None or self._init_lock_loop_id != loop_id:
-            self._init_lock = asyncio.Lock()
-            self._init_lock_loop_id = loop_id
-        return loop_id
-
-    def _is_main_client_ready_in_current_loop(self) -> bool:
-        try:
-            loop_id = self._current_loop_id()
-        except RuntimeError:
-            return False
-        return bool(
-            self._initialized
-            and self._client is not None
-            and self._runtime_loop_id == loop_id
-        )
-
-    def _is_stream_client_ready_in_current_loop(self) -> bool:
-        try:
-            loop_id = self._current_loop_id()
-        except RuntimeError:
-            return False
-        return bool(
-            self._initialized
-            and self._stream_client is not None
-            and self._runtime_loop_id == loop_id
-        )
-
-    async def _dispose_clients(self) -> None:
-        if self._hub:
-            try:
-                await self._hub.close()
-            except Exception as e:
-                logger.warning(f"Error closing StreamHub: {e}")
-            finally:
-                self._hub = None
-
-        if self._client:
-            try:
-                await self._client.aclose()
-            except Exception as e:
-                logger.warning(f"Error closing Redis client: {e}")
-            finally:
-                self._client = None
-
-        if self._pool:
-            try:
-                await self._pool.aclose()
-            except Exception as e:
-                logger.warning(f"Error closing Redis pool: {e}")
-            finally:
-                self._pool = None
-
-        if self._stream_client:
-            try:
-                await self._stream_client.aclose()
-            except Exception as e:
-                logger.warning(f"Error closing Redis stream client: {e}")
-            finally:
-                self._stream_client = None
-
-        if self._stream_pool:
-            try:
-                await self._stream_pool.aclose()
-            except Exception as e:
-                logger.warning(f"Error closing Redis stream pool: {e}")
-            finally:
-                self._stream_pool = None
-
-        self._initialized = False
-        self._init_time = None
-        self._runtime_loop_id = None
     
     def _get_config(self) -> Dict[str, Any]:
+        # load_dotenv()
+        
         redis_host = os.getenv("REDIS_HOST", "localhost")
         redis_port = int(os.getenv("REDIS_PORT", 6379))
         redis_password = os.getenv("REDIS_PASSWORD", "")
@@ -320,19 +242,17 @@ class RedisClient:
         return {"status": "pool_not_initialized"}
 
     async def get_client(self) -> Redis:
-        current_loop_id = self._ensure_init_lock_for_current_loop()
+        if self._client is not None and self._initialized:
+            return self._client
+        
+        # Lazily create the async lock (thread-safe via __init__)
+        if self._init_lock is None:
+            self._init_lock = asyncio.Lock()
         
         async with self._init_lock:
-            if self._is_main_client_ready_in_current_loop():
+            # Double-check after acquiring lock to prevent race condition
+            if self._client is not None and self._initialized:
                 return self._client
-
-            if self._initialized and self._runtime_loop_id != current_loop_id:
-                logger.warning(
-                    "Redis loop changed, rebuilding clients",
-                    old_loop_id=self._runtime_loop_id,
-                    new_loop_id=current_loop_id,
-                )
-                await self._dispose_clients()
             
             config = self._get_config()
             
@@ -378,17 +298,12 @@ class RedisClient:
             )
 
             try:
-                ping_result = self._client.ping()
-                if asyncio.iscoroutine(ping_result):
-                    await asyncio.wait_for(ping_result, timeout=5.0)
-                stream_ping_result = self._stream_client.ping()
-                if asyncio.iscoroutine(stream_ping_result):
-                    await asyncio.wait_for(stream_ping_result, timeout=5.0)
+                await asyncio.wait_for(self._client.ping(), timeout=5.0)
+                await asyncio.wait_for(self._stream_client.ping(), timeout=5.0)
                 # Initialize hub for SSE fan-out
                 self._hub = StreamHub(self._stream_client)
                 self._initialized = True
                 self._init_time = time.time()
-                self._runtime_loop_id = current_loop_id
                 logger.info(f"Successfully connected to Redis (general_pool={GENERAL_POOL_SIZE}, stream_pool={STREAM_POOL_SIZE})")
             except asyncio.TimeoutError:
                 logger.error("Redis ping timed out after 5 seconds")
@@ -403,18 +318,61 @@ class RedisClient:
         await self.get_client()
     
     async def close(self):
-        self._ensure_init_lock_for_current_loop()
+        # Lazily create the async lock if it doesn't exist
+        if self._init_lock is None:
+            self._init_lock = asyncio.Lock()
 
         async with self._init_lock:
-            await self._dispose_clients()
+            # Close general client/pool
+            if self._client:
+                try:
+                    await self._client.aclose()
+                except Exception as e:
+                    logger.warning(f"Error closing Redis client: {e}")
+                finally:
+                    self._client = None
+
+            if self._pool:
+                try:
+                    await self._pool.aclose()
+                except Exception as e:
+                    logger.warning(f"Error closing Redis pool: {e}")
+                finally:
+                    self._pool = None
+
+            # Close stream client/pool
+            if self._stream_client:
+                try:
+                    await self._stream_client.aclose()
+                except Exception as e:
+                    logger.warning(f"Error closing Redis stream client: {e}")
+                finally:
+                    self._stream_client = None
+
+            if self._stream_pool:
+                try:
+                    await self._stream_pool.aclose()
+                except Exception as e:
+                    logger.warning(f"Error closing Redis stream pool: {e}")
+                finally:
+                    self._stream_pool = None
+
+            # Close hub (cancels all pump tasks)
+            if self._hub:
+                try:
+                    await self._hub.close()
+                except Exception as e:
+                    logger.warning(f"Error closing StreamHub: {e}")
+                finally:
+                    self._hub = None
+
+            self._initialized = False
             logger.info("Redis connections and pools closed")
     
     async def verify_connection(self) -> bool:
         try:
             client = await self.get_client()
-            ping_result = client.ping()
-            if asyncio.iscoroutine(ping_result):
-                await asyncio.wait_for(ping_result, timeout=5.0)
+            await asyncio.wait_for(client.ping(), timeout=5.0)
             logger.info("✅ Redis connection verified")
             return True
         except Exception as e:
@@ -467,10 +425,10 @@ class RedisClient:
     
     # ========== Basic Operations with Timeout ==========
     
-    async def get(self, key: str, timeout: Optional[float] = None) -> Optional[str]:
+    async def get(self, key: str, timeout: float = None) -> Optional[str]:
         """Get a key with timeout protection."""
         timeout = timeout or DEFAULT_OP_TIMEOUT
-        if self._is_main_client_ready_in_current_loop():
+        if self._initialized and self._client:
             client = self._client
         else:
             client = await self.get_client()
@@ -484,7 +442,7 @@ class RedisClient:
     async def set(self, key: str, value: str, ex: Optional[int]= None, nx: bool = False, timeout: Optional[float] = None) -> bool:
         """Set a key with timeout protection."""
         timeout = timeout or DEFAULT_OP_TIMEOUT
-        if self._is_main_client_ready_in_current_loop():
+        if self._initialized and self._client:
             client = self._client
         else:
             client = await self.get_client()
@@ -499,7 +457,7 @@ class RedisClient:
     async def setex(self, key: str, seconds: int, value: str, timeout: Optional[float] = None) -> bool:
         """Set a key with expiration and timeout protection."""
         timeout = timeout or DEFAULT_OP_TIMEOUT
-        if self._is_main_client_ready_in_current_loop():
+        if self._initialized and self._client:
             client = self._client
         else:
             client = await self.get_client()
@@ -514,7 +472,7 @@ class RedisClient:
     async def delete(self, key: str, timeout: Optional[float] = None) -> int:
         """Delete a key with timeout protection."""
         timeout = timeout or DEFAULT_OP_TIMEOUT
-        if self._is_main_client_ready_in_current_loop():
+        if self._initialized and self._client:
             client = self._client
         else:
             client = await self.get_client()
@@ -532,7 +490,7 @@ class RedisClient:
             return 0
         
         timeout = timeout or DEFAULT_OP_TIMEOUT
-        if self._is_main_client_ready_in_current_loop():
+        if self._initialized and self._client:
             client = self._client
         else:
             client = await self.get_client()
@@ -759,7 +717,7 @@ class RedisClient:
                         approximate: bool = True, timeout: Optional[float] = None, 
                         fail_silently: bool = True) -> Optional[str]:
         """Add to stream with timeout protection."""
-        if self._is_main_client_ready_in_current_loop():
+        if self._initialized and self._client:
             client = self._client
         else:
             client = await self.get_client()
@@ -791,13 +749,13 @@ class RedisClient:
         """Read from stream with timeout protection. Uses STREAM_POOL if blocking."""
         # Use stream pool for blocking reads to prevent starvation
         if block_ms and block_ms > 0:
-            if self._is_stream_client_ready_in_current_loop():
+            if self._initialized and self._stream_client:
                 client = self._stream_client
             else:
                 await self.get_client()
                 client = self._stream_client
         else:
-            if self._is_main_client_ready_in_current_loop():
+            if self._initialized and self._client:
                 client = self._client
             else:
                 client = await self.get_client()
@@ -835,7 +793,7 @@ class RedisClient:
     async def stream_range(self, stream_key: str, start: str = "-", end: str = "+", 
                            count: Optional[int] = None, timeout: Optional[float] = None) -> List[tuple]:
         """Get stream range with timeout protection."""
-        if self._is_main_client_ready_in_current_loop():
+        if self._initialized and self._client:
             client = self._client
         else:
             client = await self.get_client()
@@ -874,13 +832,13 @@ class RedisClient:
         """Read from multiple streams with timeout protection. Uses STREAM_POOL if blocking."""
         # Use stream pool for blocking reads to prevent starvation
         if block and block > 0:
-            if self._is_stream_client_ready_in_current_loop():
+            if self._initialized and self._stream_client:
                 client = self._stream_client
             else:
                 await self.get_client()
                 client = self._stream_client
         else:
-            if self._is_main_client_ready_in_current_loop():
+            if self._initialized and self._client:
                 client = self._client
             else:
                 client = await self.get_client()
@@ -904,7 +862,7 @@ class RedisClient:
     async def xrange(self, stream_key: str, start: str = "-", end: str = "+", 
                      count: Optional[int] = None, timeout: Optional[float] = None) -> List:
         """Get stream range with timeout protection."""
-        if self._is_main_client_ready_in_current_loop():
+        if self._initialized and self._client:
             client = self._client
         else:
             client = await self.get_client()
@@ -931,20 +889,6 @@ class RedisClient:
             client.xtrim(stream_key, minid=minid, approximate=approximate),
             timeout_seconds=timeout,
             operation_name=f"xtrim_minid({stream_key})",
-            default=0
-        )
-        return result or 0
-    
-    # ========== Pub/Sub Operations ==========
-    
-    async def publish(self, channel: str, message: str, timeout: Optional[float] = None) -> int:
-        """Publish message to Redis Pub/Sub channel with timeout protection."""
-        timeout = timeout or DEFAULT_OP_TIMEOUT
-        client = await self.get_client()
-        result = await self._with_timeout(
-            client.publish(channel, message),
-            timeout_seconds=timeout,
-            operation_name=f"publish({channel})",
             default=0
         )
         return result or 0
@@ -977,7 +921,7 @@ class RedisClient:
         block_ms = block or 0
         # Use stream pool for blocking reads to prevent starvation
         if block_ms > 0:
-            if self._is_stream_client_ready_in_current_loop():
+            if self._initialized and self._stream_client:
                 client = self._stream_client
             else:
                 await self.get_client()
@@ -1022,9 +966,7 @@ class RedisClient:
         start = time.time()
         try:
             client = await self.get_client()
-            ping_result = client.ping()
-            if asyncio.iscoroutine(ping_result):
-                await asyncio.wait_for(ping_result, timeout=2.0)
+            await asyncio.wait_for(client.ping(), timeout=2.0)
             latency_ms = (time.time() - start) * 1000
             
             pool_info = self.get_pool_info()

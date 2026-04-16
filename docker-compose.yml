@@ -461,6 +461,7 @@ services:
 
   # Agent工作流层 (Python)
   agent-workflow:
+    image: kardcraft-agent-workflow
     build:
       context: ./backend/agent-workflow
       dockerfile: Dockerfile
@@ -470,6 +471,7 @@ services:
       - ${PWD}/.env.llm
       - ${PWD}/.env.ragix
     restart: always
+    command: ["python", "-m", "kardcraft.temporal.worker"]
     # ports removed since it's a consumer
     environment:
       # 基础服务配置
@@ -514,6 +516,35 @@ services:
         condition: service_healthy
       sandbox-broker:
         condition: service_started
+    networks:
+      - kardcraft-network
+
+  # Workflow Event Projector (Postgres outbox -> Redis stream)
+  agent-workflow-projector:
+    image: kardcraft-agent-workflow
+    container_name: kardcraft-agent-workflow-projector
+    env_file:
+      - ${PWD}/.env.llm
+      - ${PWD}/.env.ragix
+    restart: always
+    command: [ "python", "-m", "kardcraft.temporal.event_projector" ]
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - REDIS_DB=0
+      - REDIS_PASSWORD=redis123
+      - POSTGRES_HOST=postgres
+      - POSTGRES_PORT=5432
+      - POSTGRES_DB=kardcraft
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres123
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      db-migrate:
+        condition: service_completed_successfully
     networks:
       - kardcraft-network
 

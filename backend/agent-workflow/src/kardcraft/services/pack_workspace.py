@@ -101,9 +101,9 @@ class PackWorkspace:
 
 class PackWorkspaceService:
     """
-    Pack 工作区服务 - 操作 Redis 中的工作区
+    Pack Workspace Service - Operate Redis Workspaces
 
-    所有方法都是幂等的，供 Temporal Activity 调用
+    All methods are idempotent, intended for Temporal Activity calls
     """
 
     def __init__(self):
@@ -112,10 +112,7 @@ class PackWorkspaceService:
     def _pack_key(self, session_id: str) -> str:
         return f"pack:session:{session_id}"
 
-    def _pubsub_channel(self, session_id: str) -> str:
-        return f"pack:changes:{session_id}"
-
-    # ========== 工作区生命周期 ==========
+    # ========== Workspace Lifecycle ==========
 
     async def create_workspace(
         self, session_id: str, initial_cards: Optional[List[Dict]] = None
@@ -470,10 +467,9 @@ class PackWorkspaceService:
         await self.redis.set(key, json.dumps(pack.to_dict()))
 
     async def _publish_change(self, session_id: str, change: Dict):
-        """发布变更事件（供 WebSocket 订阅）"""
-        channel = self._pubsub_channel(session_id)
-        await self.redis.publish(channel, json.dumps(change))
-        logger.debug(f"Published change to {channel}: {change['type']}")
+        """Pack workspace change events are intentionally disabled."""
+        event_type = str(change.get("type", "unknown"))
+        logger.debug(f"Skipped pack workspace change publish for session={session_id} type={event_type}")
 
 
 # 全局实例

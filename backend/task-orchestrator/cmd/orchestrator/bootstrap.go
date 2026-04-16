@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/redis/go-redis/v9"
+	goredis "github.com/redis/go-redis/v9"
 	tclient "go.temporal.io/sdk/client"
 
 	httpserver "task-orchestrator/internal/controller/http/v1"
@@ -43,17 +43,12 @@ func buildServerFromEnv() *httpserver.Server {
 		}
 	}
 
-	var redisClient *redis.Client
+	var redisClient *goredis.Client
 	var streamClient *v1adapters.RedisStreamClient
 	if storeCfg.RedisAddr != "" {
-		rdb := redis.NewClient(&redis.Options{
-			Addr:     storeCfg.RedisAddr,
-			Password: storeCfg.RedisPassword,
-			DB:       storeCfg.RedisDB,
-		})
-		if err := rdb.Ping(context.Background()).Err(); err != nil {
+		rdb, err := redissvc.NewStreamClient(context.Background(), storeCfg.RedisAddr, storeCfg.RedisPassword, storeCfg.RedisDB)
+		if err != nil {
 			log.Printf("warning: redis stream client ping failed: %v", err)
-			_ = rdb.Close()
 		} else {
 			redisClient = rdb
 			streamClient = v1adapters.NewRedisStreamClient(redissvc.NewService(redisClient))

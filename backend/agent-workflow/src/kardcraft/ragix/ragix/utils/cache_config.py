@@ -1,7 +1,6 @@
 """
 统一的缓存配置管理
 
-这个模块提供了 ragix 模块的缓存配置，与主项目的 runtime_cache 保持一致。
 """
 import os
 from typing import Dict, Any, Optional
@@ -41,25 +40,25 @@ def get_cache_key(category: str, identifier: str) -> str:
 
 def get_cache_ttl(cache_type: str) -> int:
     """获取指定缓存类型的 TTL"""
-    return CACHE_TTL_CONFIG.get(cache_type, 1800)  # 默认30分钟
+    return CACHE_TTL_CONFIG.get(cache_type, 1800)  # Default 30 minutes
 
-# 缓存策略配置
+# Cache Policy Configuration
 CACHE_STRATEGIES = {
-    # 解析器实例：内存优先，Redis 作为配置缓存
+    # Parser instance: memory-first, Redis as configuration cache
     "parser_instance": {
         "memory": True,
-        "redis": "config_only",  # 只缓存配置，不缓存实例
+        "redis": "config_only",  # Cache only configuration, not instances
         "ttl": CACHE_TTL_CONFIG["parser_config"]
     },
     
-    # 模型实例：内存优先，Redis 作为备份
+    # Model example: memory-first, Redis as a backup
     "model_instance": {
         "memory": True,
-        "redis": "metadata_only",  # 只缓存元数据
+        "redis": "metadata_only",  # Cache only metadata
         "ttl": CACHE_TTL_CONFIG["embedding_model"]
     },
     
-    # 处理结果：Redis 优先
+    # Processing result: Redis preferred
     "processing_result": {
         "memory": False,
         "redis": True,
@@ -68,12 +67,12 @@ CACHE_STRATEGIES = {
 }
 
 def should_cache_to_redis(cache_type: str) -> bool:
-    """判断是否应该缓存到 Redis"""
+    """Determine whether it should be cached to Redis"""
     strategy = CACHE_STRATEGIES.get(cache_type, {})
     redis_strategy = strategy.get("redis", True)
     return redis_strategy is True or redis_strategy in ["config_only", "metadata_only"]
 
 def should_cache_to_memory(cache_type: str) -> bool:
-    """判断是否应该缓存到内存"""
+    """Determine whether it should be cached in memory"""
     strategy = CACHE_STRATEGIES.get(cache_type, {})
     return strategy.get("memory", True)

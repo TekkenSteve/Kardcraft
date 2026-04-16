@@ -46,6 +46,57 @@ func TestNormalizeWorkspaceResponse_StableAcrossRepeatedCalls(t *testing.T) {
 	}
 }
 
+func TestNormalizeWorkspaceResponse_AcceptsPackWorkspaceCardShape(t *testing.T) {
+	raw := map[string]any{
+		"session_id": "s1",
+		"version":    2,
+		"status":     "active",
+		"cards": []any{
+			map[string]any{
+				"temp_id": "card_tmp_1",
+				"model":   "mcq",
+				"status":  "output_draft",
+				"content": map[string]any{
+					"front": "front text",
+					"back":  "back text",
+					"tags":  []any{"tag-a"},
+				},
+				"modified_at": "2026-04-16T05:24:21Z",
+			},
+		},
+	}
+
+	normalized := v1handlers.NormalizeWorkspaceResponse(raw, "s1")
+	if normalized["projection_status"] != "hydrated" {
+		t.Fatalf("expected projection_status=hydrated, got %v", normalized["projection_status"])
+	}
+	if normalized["card_count"] != 1 {
+		t.Fatalf("expected card_count=1, got %v", normalized["card_count"])
+	}
+
+	cards, ok := normalized["cards"].([]map[string]any)
+	if !ok || len(cards) != 1 {
+		t.Fatalf("expected exactly one normalized card, got %#v", normalized["cards"])
+	}
+
+	card := cards[0]
+	if cardID, _ := card["card_id"].(string); cardID != "card_tmp_1" {
+		t.Fatalf("expected card_id=card_tmp_1, got %q", cardID)
+	}
+	editState, _ := card["edit_state"].(map[string]any)
+	if status, _ := editState["status"].(string); status != "draft" {
+		t.Fatalf("expected mapped status=draft, got %q", status)
+	}
+	content, _ := card["content"].(map[string]any)
+	data, _ := content["data"].(map[string]any)
+	if front, _ := data["front"].(string); front != "front text" {
+		t.Fatalf("expected front text, got %q", front)
+	}
+	if back, _ := data["back"].(string); back != "back text" {
+		t.Fatalf("expected back text, got %q", back)
+	}
+}
+
 func TestExtractResultMessage_StrictContractByDefault(t *testing.T) {
 	t.Setenv("TASK_READ_PATH_BACKFILL_ENABLED", "false")
 	message := v1handlers.ExtractResultMessage(map[string]any{

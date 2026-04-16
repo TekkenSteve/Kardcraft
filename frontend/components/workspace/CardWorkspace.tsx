@@ -11,8 +11,8 @@ import { Button } from "@/components/ui/button";
 import { Sparkles, User, Layers, Brain, CheckCircle2, Clock, FileText, Maximize2, Minimize2, X, LayoutGrid, List, SlidersHorizontal, Lock, Unlock, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { bulkUpdateStatus, updateCardModel, updateCardStatus, CardData } from "@/lib/features/runSlice";
-import { bulkUpdateCardModel, bulkUpdateCardStatus, createApkgExport, getApkgExport, getApkgExportDownloadUrl, ApkgExportRecord } from "@/lib/kardcraft/api";
-import { getSessionWorkspace } from "@/lib/kardcraft/session-repository";
+import { bulkUpdateCardModel, bulkUpdateCardStatus, createApkgExport, getApkgExport, getApkgExportDownloadUrl, ApkgExportRecord, getTask } from "@/lib/kardcraft/api";
+import { getSessionHistory, getSessionWorkspace } from "@/lib/kardcraft/session-repository";
 
 export function CardWorkspace({
     sessionId,
@@ -56,8 +56,21 @@ export function CardWorkspace({
     const focusRing = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
     const templateOptions = useMemo(() => {
-        return resolvedTemplateProfiles.map((id) => ({ id, label: id }));
-    }, [resolvedTemplateProfiles]);
+        // Real source only:
+        // question type options must come from backend metadata, never inferred from card text/content.
+        const merged = new Set<string>();
+
+        for (const item of resolvedTemplateProfiles) {
+            const value = String(item || "").trim();
+            if (value) merged.add(value);
+        }
+        for (const item of templatePreflight.questionTypes || []) {
+            const value = String(item || "").trim();
+            if (value) merged.add(value);
+        }
+
+        return Array.from(merged).map((id) => ({ id, label: id }));
+    }, [resolvedTemplateProfiles, templatePreflight.questionTypes]);
 
     const statusCounts = useMemo(() => {
         let draft = 0;
@@ -151,7 +164,33 @@ export function CardWorkspace({
                 const supported = Array.isArray(workspace.supported_question_types)
                     ? workspace.supported_question_types.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
                     : [];
-                setResolvedTemplateProfiles(supported);
+                if (supported.length > 0) {
+                    setResolvedTemplateProfiles(supported);
+                    return;
+                }
+
+                // Source-of-truth fallback:
+                // when workspace omits question types, read latest task outcome metadata.
+                // This is still backend-generated data, not client inference.
+                const history = await getSessionHistory(sessionId);
+                if (cancelled) return;
+                const tasks = Array.isArray(history.tasks) ? history.tasks : [];
+                const latestTask = tasks.length > 0 ? tasks[tasks.length - 1] : null;
+                const latestTaskId = latestTask && typeof latestTask.task_id === "string"
+                    ? latestTask.task_id.trim()
+                    : "";
+                if (!latestTaskId) {
+                    setResolvedTemplateProfiles([]);
+                    return;
+                }
+
+                const taskDetail = await getTask(latestTaskId);
+                if (cancelled) return;
+                const metadata = extractTaskMetadata(taskDetail);
+                const fromTask = Array.isArray(metadata?.supported_question_types)
+                    ? metadata.supported_question_types.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+                    : [];
+                setResolvedTemplateProfiles(fromTask);
             } catch {
                 if (!cancelled) setResolvedTemplateProfiles([]);
                 return;
@@ -165,11 +204,13 @@ export function CardWorkspace({
 
     useEffect(() => {
         if (!selectedCard || selectedTemplate) return;
-        if (templateOptions.length === 0) return;
         const model = String(selectedCard.suggested_question_type || selectedCard.content.model || "").trim();
-        const isKnown = templateOptions.some((option) => option.id === model);
-        if (isKnown) {
+        if (model) {
             setSelectedTemplate(model);
+            return;
+        }
+        if (templateOptions.length > 0) {
+            setSelectedTemplate(templateOptions[0].id);
         }
     }, [selectedCard, selectedTemplate, templateOptions]);
 
@@ -177,10 +218,9 @@ export function CardWorkspace({
         setSelectedId(cardId);
         const card = cards.find((item) => item.card_id === cardId);
         const model = String(card?.suggested_question_type || card?.content?.model || "").trim();
-        const isKnownQuestionType = templateOptions.some((option) => option.id === model);
-        setSelectedTemplate(isKnownQuestionType ? model : "");
+        setSelectedTemplate(model);
         setInspectorOpen(true);
-    }, [cards, templateOptions]);
+    }, [cards]);
 
     const handleTab = useCallback((tab: "all" | "draft" | "active" | "confirmed") => {
         setActiveTab(tab);
@@ -1151,4 +1191,29 @@ export function CardWorkspace({
             `}</style>
         </div>
     );
+}
+
+function extractTaskMetadata(taskDetail: unknown): Record<string, unknown> | null {
+    // Keep this extraction strict:
+    // only consume backend task outcome metadata fields, do not synthesize/guess keys.
+    if (!taskDetail || typeof taskDetail !== "object") return null;
+    const taskRecord = taskDetail as Record<string, unknown>;
+    const result = taskRecord.result;
+    if (!result || typeof result !== "object") return null;
+    const resultRecord = result as Record<string, unknown>;
+
+    const nested = resultRecord.result;
+    if (nested && typeof nested === "object") {
+        const nestedRecord = nested as Record<string, unknown>;
+        const nestedMetadata = nestedRecord.metadata;
+        if (nestedMetadata && typeof nestedMetadata === "object") {
+            return nestedMetadata as Record<string, unknown>;
+        }
+    }
+
+    const directMetadata = resultRecord.metadata;
+    if (directMetadata && typeof directMetadata === "object") {
+        return directMetadata as Record<string, unknown>;
+    }
+    return null;
 }

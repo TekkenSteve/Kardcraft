@@ -779,35 +779,12 @@ func NormalizeWorkspaceResponse(raw map[string]any, sessionID string) map[string
 	}
 	cardsRaw, _ := raw["cards"].([]any)
 	cards := make([]map[string]any, 0, len(cardsRaw))
+	now := time.Now().UTC().Format(time.RFC3339)
 	for _, entry := range cardsRaw {
-		card, ok := entry.(map[string]any)
-		if !ok {
-			continue
+		card, ok := normalizeWorkspaceCard(entry, now)
+		if ok {
+			cards = append(cards, card)
 		}
-		id, _ := card["id"].(string)
-		userID, _ := card["user_id"].(string)
-		cardID, _ := card["card_id"].(string)
-		content, _ := card["content"].(map[string]any)
-		editState, _ := card["edit_state"].(map[string]any)
-		meta, _ := card["meta"].(map[string]any)
-		if id == "" || userID == "" || cardID == "" || content == nil || editState == nil || meta == nil {
-			continue
-		}
-		status, _ := editState["status"].(string)
-		if status != "draft" && status != "ai_editing" && status != "user_editing" && status != "confirmed" {
-			continue
-		}
-		data, _ := content["data"].(map[string]any)
-		if data == nil {
-			continue
-		}
-		if _, ok := data["front"].(string); !ok {
-			continue
-		}
-		if _, ok := data["back"].(string); !ok {
-			continue
-		}
-		cards = append(cards, card)
 	}
 	out["cards"] = cards
 	out["card_count"] = len(cards)
@@ -835,4 +812,166 @@ func normalizeStringSliceAny(v any) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+func normalizeWorkspaceCard(entry any, fallbackTime string) (map[string]any, bool) {
+	card, ok := entry.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+
+	cardID := strings.TrimSpace(firstNonEmptyStringAny(card["card_id"], card["id"], card["temp_id"]))
+	if cardID == "" {
+		return nil, false
+	}
+
+	content := asMapAny(card["content"])
+	contentData := asMapAny(content["data"])
+	front := strings.TrimSpace(firstNonEmptyStringAny(contentData["front"], content["front"]))
+	back := strings.TrimSpace(firstNonEmptyStringAny(contentData["back"], content["back"]))
+
+	data := map[string]any{
+		"front": front,
+		"back":  back,
+		"tags":  normalizeStringSliceAny(contentData["tags"]),
+	}
+	if len(data["tags"].([]string)) == 0 {
+		data["tags"] = normalizeStringSliceAny(content["tags"])
+	}
+	data["concepts"] = normalizeStringSliceAny(contentData["concepts"])
+	if len(data["concepts"].([]string)) == 0 {
+		data["concepts"] = normalizeStringSliceAny(content["concepts"])
+	}
+
+	contentOut := map[string]any{
+		"version": asIntAny(firstNonEmptyAny(content["version"], card["version"])),
+		"model":   strings.TrimSpace(firstNonEmptyStringAny(content["model"], card["model"])),
+		"data":    data,
+	}
+	if asIntAny(contentOut["version"]) <= 0 {
+		contentOut["version"] = 1
+	}
+	if contentOut["model"] == "" {
+		contentOut["model"] = "mcq"
+	}
+	if media, ok := content["media"].([]any); ok {
+		contentOut["media"] = media
+	} else if media, ok := card["media"].([]any); ok {
+		contentOut["media"] = media
+	} else {
+		contentOut["media"] = []any{}
+	}
+
+	status := normalizeWorkspaceCardStatus(strings.TrimSpace(firstNonEmptyStringAny(
+		asMapAny(card["edit_state"])["status"],
+		card["status"],
+	)))
+	if status == "" {
+		return nil, false
+	}
+	editStateOut := map[string]any{"status": status}
+	if lockedBy := strings.TrimSpace(firstNonEmptyStringAny(
+		asMapAny(card["edit_state"])["locked_by"],
+		card["locked_by"],
+	)); lockedBy != "" {
+		editStateOut["locked_by"] = lockedBy
+	}
+	if lockedAt := strings.TrimSpace(firstNonEmptyStringAny(
+		asMapAny(card["edit_state"])["locked_at"],
+		card["locked_at"],
+	)); lockedAt != "" {
+		editStateOut["locked_at"] = lockedAt
+	}
+	if expiresAt := strings.TrimSpace(firstNonEmptyStringAny(
+		asMapAny(card["edit_state"])["expires_at"],
+		card["lock_expires"],
+	)); expiresAt != "" {
+		editStateOut["expires_at"] = expiresAt
+	}
+
+	meta := asMapAny(card["meta"])
+	createdAt := strings.TrimSpace(firstNonEmptyStringAny(meta["created_at"], card["created_at"], fallbackTime))
+	modifiedAt := strings.TrimSpace(firstNonEmptyStringAny(meta["modified_at"], card["modified_at"], fallbackTime))
+	metaOut := map[string]any{
+		"created_at":   createdAt,
+		"modified_at":  modifiedAt,
+		"manual_edits": asIntAny(firstNonEmptyAny(meta["manual_edits"], card["manual_edits"])),
+	}
+
+	userID := strings.TrimSpace(firstNonEmptyStringAny(card["user_id"], card["owner"], "system"))
+	suggestedQuestionType := strings.TrimSpace(firstNonEmptyStringAny(card["suggested_question_type"], contentOut["model"]))
+
+	out := map[string]any{
+		"id":                      cardID,
+		"user_id":                 userID,
+		"card_id":                 cardID,
+		"suggested_question_type": suggestedQuestionType,
+		"content":                 contentOut,
+		"edit_state":              editStateOut,
+		"concepts":                data["concepts"],
+		"meta":                    metaOut,
+	}
+	return out, true
+}
+
+func normalizeWorkspaceCardStatus(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "draft", "output_draft":
+		return "draft"
+	case "ai_editing":
+		return "ai_editing"
+	case "user_editing":
+		return "user_editing"
+	case "confirmed", "output_confirmed":
+		return "confirmed"
+	default:
+		return ""
+	}
+}
+
+func asMapAny(v any) map[string]any {
+	m, _ := v.(map[string]any)
+	return m
+}
+
+func asIntAny(v any) int {
+	switch val := v.(type) {
+	case int:
+		return val
+	case int32:
+		return int(val)
+	case int64:
+		return int(val)
+	case float64:
+		return int(val)
+	default:
+		return 0
+	}
+}
+
+func firstNonEmptyStringAny(values ...any) string {
+	for _, value := range values {
+		if s, ok := value.(string); ok {
+			if strings.TrimSpace(s) != "" {
+				return strings.TrimSpace(s)
+			}
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyAny(values ...any) any {
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			if strings.TrimSpace(typed) == "" {
+				continue
+			}
+		}
+		return value
+	}
+	return nil
 }

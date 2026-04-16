@@ -184,12 +184,8 @@ func NewSessionStore(ctx context.Context, cfg SessionStoreConfig) *SessionStore 
 		}
 	}
 	if cfg.RedisAddr != "" {
-		rdb := redis.NewClient(&redis.Options{
-			Addr:     cfg.RedisAddr,
-			Password: cfg.RedisPassword,
-			DB:       cfg.RedisDB,
-		})
-		if err := rdb.Ping(ctx).Err(); err != nil {
+		rdb, err := redissvc.NewGeneralClient(ctx, cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
+		if err != nil {
 			log.Printf("session store redis ping failed: %v", err)
 		} else {
 			s.redis = rdb
