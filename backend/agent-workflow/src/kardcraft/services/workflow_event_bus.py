@@ -85,7 +85,15 @@ class WorkflowEventBus:
             payload=data,
         )
         if accepted:
-            await self._repo.mark_terminal(ctx.task_id)
+            try:
+                await self._repo.mark_terminal(ctx.task_id)
+            except Exception:
+                logger.exception(
+                    "failed to mark task terminal after publishing event",
+                    task_id=ctx.task_id,
+                    event_type=event_type,
+                )
+                # Event was published; task state inconsistent but recoverable
         return accepted
 
     async def publish_done(self, *, ctx: EventContext, message: str = "Stream end") -> bool:

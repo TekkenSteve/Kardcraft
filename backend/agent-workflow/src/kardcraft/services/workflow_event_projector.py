@@ -131,6 +131,12 @@ class WorkflowEventProjector:
                         projector_id=self._projector_id,
                     )
                 except Exception as exc:
+                    logger.error(
+                        "failed to project outbox event during drain",
+                        event_id=event.id,
+                        task_id=event.task_id,
+                        error=str(exc),
+                    )
                     await self._repo.nack_projecting(
                         event_id=event.id,
                         projector_id=self._projector_id,
