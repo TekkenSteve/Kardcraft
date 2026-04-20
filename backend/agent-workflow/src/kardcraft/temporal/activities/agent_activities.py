@@ -7,12 +7,14 @@ This module defines activities that execute LangGraph workflows as Temporal acti
 import asyncio
 import json
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 import time
+import uuid
 
 from temporalio import activity
 
 from ...llm.context import LLMRuntimeContext, reset_runtime_context, set_runtime_context
+from ...llm.usage_event import validate_usage_recorded_event
 from ...workflow.manager import WorkflowManager
 from ...services.redis import RedisClient
 from ...services.workflow_event_bus import EventContext, WorkflowEventBus
@@ -206,14 +208,21 @@ class AgentActivities:
             activity.heartbeat({"status": "running_langgraph", "task_id": task_id})
 
             async def usage_emitter(payload: Dict[str, Any]) -> None:
+                event_payload = {
+                    "event_id": str(uuid.uuid4()),
+                    "occurred_at": datetime.now(timezone.utc).isoformat(),
+                    "task_id": str(task_id),
+                    "workflow_id": str(event_ctx.workflow_id),
+                    "session_id": str(session_id or ""),
+                    "user_id": str(user_id or ""),
+                    "usage": payload,
+                }
+                ok, reason = validate_usage_recorded_event(event_payload)
+                if not ok:
+                    raise ValueError(f"invalid usage payload: {reason}")
                 await self.event_bus.publish_usage(
                     ctx=event_ctx,
-                    payload={
-                        "task_id": str(task_id),
-                        "message": "LLM usage captured",
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "usage": payload,
-                    },
+                    payload=event_payload,
                 )
 
             llm_ctx_token = set_runtime_context(
@@ -460,14 +469,21 @@ class AgentActivities:
 
         try:
             async def usage_emitter(payload: Dict[str, Any]) -> None:
+                event_payload = {
+                    "event_id": str(uuid.uuid4()),
+                    "occurred_at": datetime.now(timezone.utc).isoformat(),
+                    "task_id": str(task_id),
+                    "workflow_id": str(event_ctx.workflow_id),
+                    "session_id": str(session_id or ""),
+                    "user_id": str(user_id or ""),
+                    "usage": payload,
+                }
+                ok, reason = validate_usage_recorded_event(event_payload)
+                if not ok:
+                    raise ValueError(f"invalid usage payload: {reason}")
                 await self.event_bus.publish_usage(
                     ctx=event_ctx,
-                    payload={
-                        "task_id": str(task_id),
-                        "message": "LLM usage captured",
-                        "timestamp": datetime.utcnow().isoformat(),
-                        "usage": payload,
-                    },
+                    payload=event_payload,
                 )
 
             llm_ctx_token = set_runtime_context(

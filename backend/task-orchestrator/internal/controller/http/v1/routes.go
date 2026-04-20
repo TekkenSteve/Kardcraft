@@ -300,7 +300,6 @@ func (s *Server) registerMiscRoutes() {
 		UsageDeduped:   func() int64 { return atomic.LoadInt64(&s.llmUsageDeduped) },
 		UsageFailed:    func() int64 { return atomic.LoadInt64(&s.llmUsageFailed) },
 		UsageInvalid:   func() int64 { return atomic.LoadInt64(&s.llmUsageInvalid) },
-		UsageSchemaMis: func() int64 { return atomic.LoadInt64(&s.llmUsageSchemaMismatch) },
 		RedisStats: func() map[string]any {
 			if s.redisSvc == nil {
 				return nil

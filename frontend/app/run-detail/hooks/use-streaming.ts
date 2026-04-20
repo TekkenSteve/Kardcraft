@@ -168,8 +168,8 @@ export function useStreaming({
 
         if (runStatus === "completed" && effectiveSessionId) {
             let retryCount = 0;
-            const maxRetries = 3;
-            const delays = [1500, 3000, 5000];
+            const maxRetries = 6;
+            const delays = [1200, 2000, 3000, 5000, 7000, 10000];
 
             const fetchWithRetry = async () => {
                 try {
@@ -186,11 +186,12 @@ export function useStreaming({
                         setSessionData({ conversation, timeline });
                     });
 
-                    const hasMeaningfulData = historyData?.tasks?.some((task) =>
-                        (task.duration_ms || 0) > 0
+                    const hasUnfinalizedUsage = historyData?.tasks?.some((task) =>
+                        task.usage_projection_status === "pending" ||
+                        task.usage_projection_status === "partial"
                     );
 
-                    if (!hasMeaningfulData && retryCount < maxRetries) {
+                    if (hasUnfinalizedUsage && retryCount < maxRetries) {
                         retryCount++;
                         setTimeout(fetchWithRetry, delays[retryCount - 1]);
                     }

@@ -447,7 +447,28 @@ func handleSessionHistory(w http.ResponseWriter, r *http.Request, sessionID stri
 	items := make([]map[string]any, 0, len(tasks))
 	for _, t := range tasks {
 		usage := usageByTask[t.TaskID]
-		item := map[string]any{"task_id": t.TaskID, "workflow_id": t.WorkflowID, "query": valueFromPtr(t.Query), "status": valueFromPtr(t.Status), "mode": valueFromPtr(t.TaskType), "total_tokens": usage.TotalTokens, "total_cost_usd": usage.TotalCostUSD}
+		status, reason := usageProjectionStatus(t, usage, time.Now().UTC())
+		metadata, modelUsed, provider := buildUsageMetadata(usage)
+		item := map[string]any{
+			"task_id":                 t.TaskID,
+			"workflow_id":             t.WorkflowID,
+			"query":                   valueFromPtr(t.Query),
+			"status":                  valueFromPtr(t.Status),
+			"mode":                    valueFromPtr(t.TaskType),
+			"total_tokens":            usage.TotalTokens,
+			"total_cost_usd":          usage.TotalCostUSD,
+			"usage_projection_status": status,
+			"usage_projection_reason": reason,
+		}
+		if modelUsed != "" {
+			item["model_used"] = modelUsed
+		}
+		if provider != "" {
+			item["provider"] = provider
+		}
+		if metadata != nil {
+			item["metadata"] = metadata
+		}
 		if t.StartedAt != nil {
 			item["started_at"] = t.StartedAt.UTC().Format(time.RFC3339)
 		}
@@ -465,6 +486,65 @@ func handleSessionHistory(w http.ResponseWriter, r *http.Request, sessionID stri
 	deps.WriteJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "tasks": items})
 }
 
+func usageProjectionStatus(task usecase.TaskRow, usage usecase.TaskUsageSummary, now time.Time) (string, string) {
+	if task.CompletedAt == nil {
+		return "pending", "task_not_completed"
+	}
+	hasUsage := usage.TotalTokens > 0 || usage.TotalCostUSD > 0 || len(usage.ModelBreakdown) > 0
+	if hasUsage {
+		return "finalized", "usage_ingested"
+	}
+	// Grace window to absorb async projection lag before marking invalid.
+	const projectionGrace = 5 * time.Minute
+	completedAt := task.CompletedAt.UTC()
+	if now.UTC().Sub(completedAt) <= projectionGrace {
+		return "partial", "awaiting_usage_projection"
+	}
+	return "invalid", "usage_missing_after_grace_window"
+}
+
+func buildUsageMetadata(usage usecase.TaskUsageSummary) (map[string]any, string, string) {
+	if len(usage.ModelBreakdown) == 0 {
+		return nil, "", ""
+	}
+	breakdown := make([]map[string]any, 0, len(usage.ModelBreakdown))
+	totalExecutions := 0
+	estimatedExecutions := 0
+	for _, entry := range usage.ModelBreakdown {
+		breakdown = append(breakdown, map[string]any{
+			"model":                entry.Model,
+			"provider":             entry.Provider,
+			"executions":           entry.Executions,
+			"tokens":               entry.Tokens,
+			"cost_usd":             entry.CostUSD,
+			"prompt_tokens":        entry.PromptTokens,
+			"completion_tokens":    entry.CompletionTokens,
+			"cache_read_tokens":    entry.CacheReadTokens,
+			"cache_write_tokens":   entry.CacheWriteTokens,
+			"estimated_executions": entry.EstimatedExecutions,
+		})
+		totalExecutions += entry.Executions
+		estimatedExecutions += entry.EstimatedExecutions
+	}
+
+	primary := usage.ModelBreakdown[0]
+	estimatedRatio := 0.0
+	if totalExecutions > 0 {
+		estimatedRatio = float64(estimatedExecutions) / float64(totalExecutions)
+	}
+
+	metadata := map[string]any{
+		"model":           primary.Model,
+		"provider":        primary.Provider,
+		"model_breakdown": breakdown,
+		"usage_quality": map[string]any{
+			"has_estimated_usage": estimatedExecutions > 0,
+			"estimated_ratio":     estimatedRatio,
+		},
+	}
+	return metadata, primary.Model, primary.Provider
+}
+
 func handleSessionWorkspace(w http.ResponseWriter, r *http.Request, sessionID string, deps SessionsDeps) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -476,7 +556,7 @@ func handleSessionWorkspace(w http.ResponseWriter, r *http.Request, sessionID st
 	}
 	userID := deps.UserID(r)
 	if _, err := deps.ReadModel.GetSession(r.Context(), sessionID, userID); err != nil {
-		deps.WriteAPIError(w, http.StatusForbidden, deps.AuthzDeniedCode, "access denied for session resource", map[string]any{"session_id": sessionID})
+		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
 	resp, err := deps.ReadModel.LoadWorkspace(r.Context(), sessionID)

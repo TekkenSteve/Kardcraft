@@ -203,14 +203,17 @@ export function CardWorkspace({
     }, [sessionId, cardsVersion]);
 
     useEffect(() => {
-        if (!selectedCard || selectedTemplate) return;
+        if (!selectedCard) return;
+
         const model = String(selectedCard.suggested_question_type || selectedCard.content.model || "").trim();
-        if (model) {
-            setSelectedTemplate(model);
-            return;
-        }
-        if (templateOptions.length > 0) {
-            setSelectedTemplate(templateOptions[0].id);
+        const hasOptions = templateOptions.length > 0;
+        const modelValid = !hasOptions || templateOptions.some((option) => option.id === model);
+        const next = model && modelValid
+            ? model
+            : (hasOptions ? templateOptions[0].id : "");
+
+        if (next !== selectedTemplate) {
+            setSelectedTemplate(next);
         }
     }, [selectedCard, selectedTemplate, templateOptions]);
 
@@ -334,9 +337,13 @@ export function CardWorkspace({
 
     useEffect(() => {
         if (!selectedTemplate) return;
+        if (templateOptions.length === 0) return;
         const valid = templateOptions.some((option) => option.id === selectedTemplate);
         if (!valid) {
-            setSelectedTemplate("");
+            const fallback = templateOptions[0]?.id || "";
+            if (fallback !== selectedTemplate) {
+                setSelectedTemplate(fallback);
+            }
         }
     }, [selectedTemplate, templateOptions]);
 

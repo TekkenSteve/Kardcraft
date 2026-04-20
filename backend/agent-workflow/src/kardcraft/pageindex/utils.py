@@ -12,7 +12,7 @@ from io import BytesIO
 from types import SimpleNamespace as config
 
 from kardcraft.llm import chat_complete
-from kardcraft.llm.client import token_counter
+from kardcraft.llm.tokenizer import token_counter
 from kardcraft.llm.context import (
     LLMRuntimeContext,
     get_runtime_context,

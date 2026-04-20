@@ -13,7 +13,7 @@ from .discovery import (
 )
 from .context import LLMRuntimeContext, get_runtime_context, reset_runtime_context, set_runtime_context
 from .config import configure_dspy_lm
-from .usage_event import LLMUsageEventPayload, LLM_USAGE_SCHEMA_VERSION
+from .usage_event import LLMUsageRecord, LLMUsageRecordedEventPayload
 
 __all__ = [
     "acompletion",
@@ -22,8 +22,8 @@ __all__ = [
     "aembedding",
     "arerank",
     "LLMRuntimeContext",
-    "LLMUsageEventPayload",
-    "LLM_USAGE_SCHEMA_VERSION",
+    "LLMUsageRecord",
+    "LLMUsageRecordedEventPayload",
     "set_runtime_context",
     "reset_runtime_context",
     "get_runtime_context",

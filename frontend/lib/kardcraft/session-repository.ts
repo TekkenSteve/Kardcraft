@@ -67,17 +67,103 @@ function normalizeHistory(data: unknown, sessionId: string) {
 
 function normalizeWorkspace(data: unknown, sessionId: string) {
     const record = asRecord(data);
-    const cards = Array.isArray(record?.cards) ? record.cards : [];
+    const cardsRaw = Array.isArray(record?.cards) ? record.cards : [];
+    const cards = cardsRaw
+        .map((card) => normalizeWorkspaceCard(card))
+        .filter((card): card is NonNullable<ReturnType<typeof normalizeWorkspaceCard>> => card !== null);
+    const projectionStatus = record?.projection_status === "hydrated" || record?.projection_status === "empty"
+        ? record.projection_status
+        : (cards.length > 0 ? "hydrated" : "empty");
+    const supportedQuestionTypes = Array.isArray(record?.supported_question_types)
+        ? record.supported_question_types.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+        : undefined;
+    const templateId = typeof record?.template_id === "string" && record.template_id.trim().length > 0
+        ? record.template_id
+        : undefined;
+    const selectedQuestionType = typeof record?.selected_question_type === "string" && record.selected_question_type.trim().length > 0
+        ? record.selected_question_type
+        : undefined;
     if (!Array.isArray(record?.cards)) {
         logError("Workspace normalization", { sessionId, received: data });
+    }
+    if (cardsRaw.length !== cards.length) {
+        logError("Workspace normalization dropped invalid cards", {
+            sessionId,
+            total: cardsRaw.length,
+            valid: cards.length,
+        });
     }
     return {
         ...(record ?? {}),
         session_id: record?.session_id || sessionId,
         version: typeof record?.version === "number" ? record.version : 0,
         status: typeof record?.status === "string" ? record.status : "unknown",
+        template_id: templateId,
+        selected_question_type: selectedQuestionType,
+        supported_question_types: supportedQuestionTypes,
+        projection_status: projectionStatus,
         card_count: typeof record?.card_count === "number" ? record.card_count : cards.length,
         cards,
+    };
+}
+
+function normalizeWorkspaceCard(value: unknown) {
+    const card = asRecord(value);
+    if (!card) return null;
+    const id = typeof card.card_id === "string" && card.card_id.trim().length > 0
+        ? card.card_id
+        : (typeof card.id === "string" && card.id.trim().length > 0 ? card.id : "");
+    if (!id) return null;
+
+    const content = asRecord(card.content);
+    const contentData = asRecord(content?.data);
+    const editState = asRecord(card.edit_state);
+    const meta = asRecord(card.meta);
+
+    const status = typeof editState?.status === "string" ? editState.status : "draft";
+    const normalizedStatus = status === "draft" || status === "ai_editing" || status === "user_editing" || status === "confirmed"
+        ? status
+        : "draft";
+
+    const tags = Array.isArray(contentData?.tags)
+        ? contentData.tags.filter((item): item is string => typeof item === "string")
+        : [];
+    const concepts = Array.isArray(contentData?.concepts)
+        ? contentData.concepts.filter((item): item is string => typeof item === "string")
+        : [];
+
+    return {
+        id,
+        user_id: typeof card.user_id === "string" && card.user_id.trim().length > 0 ? card.user_id : "system",
+        card_id: id,
+        suggested_question_type:
+            typeof card.suggested_question_type === "string" && card.suggested_question_type.trim().length > 0
+                ? card.suggested_question_type
+                : undefined,
+        content: {
+            version: typeof content?.version === "number" && Number.isFinite(content.version) ? content.version : 1,
+            model: typeof content?.model === "string" && content.model.trim().length > 0 ? content.model : "mcq",
+            data: {
+                front: typeof contentData?.front === "string" ? contentData.front : "",
+                back: typeof contentData?.back === "string" ? contentData.back : "",
+                tags,
+                concepts,
+            },
+            media: Array.isArray(content?.media) ? content.media : [],
+        },
+        edit_state: {
+            status: normalizedStatus,
+            locked_by: typeof editState?.locked_by === "string" ? editState.locked_by : undefined,
+            locked_at: typeof editState?.locked_at === "string" ? editState.locked_at : undefined,
+            expires_at: typeof editState?.expires_at === "string" ? editState.expires_at : undefined,
+        },
+        concepts,
+        meta: {
+            created_at: typeof meta?.created_at === "string" ? meta.created_at : new Date(0).toISOString(),
+            modified_at: typeof meta?.modified_at === "string" ? meta.modified_at : new Date(0).toISOString(),
+            manual_edits: typeof meta?.manual_edits === "number" && Number.isFinite(meta.manual_edits) ? meta.manual_edits : 0,
+        },
+        deleted_at: typeof card.deleted_at === "string" ? card.deleted_at : undefined,
     };
 }
 

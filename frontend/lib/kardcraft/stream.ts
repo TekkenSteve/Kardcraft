@@ -7,6 +7,7 @@ import { setConnectionState, setStreamError } from "../features/runSlice";
 
 const MAX_RECONNECT_DELAY_MS = 10000;
 const BASE_RECONNECT_DELAY_MS = 1000;
+const MAX_RECONNECT_ATTEMPTS = 8;
 const MAX_HANDLED_EVENT_KEYS = 2000;
 const isDev = process.env.NODE_ENV !== "production";
 
@@ -101,7 +102,7 @@ export function useRunStream(workflowId: string | null, restartKey: number = 0) 
 
             debugLog("[useRunStream] Connecting to SSE:", url);
 
-            const eventSource = new EventSource(url);
+            const eventSource = new EventSource(url, { withCredentials: true });
             eventSourceRef.current = eventSource;
 
             const handleEvent = (event: MessageEvent, eventType?: string) => {
@@ -272,11 +273,25 @@ export function useRunStream(workflowId: string | null, restartKey: number = 0) 
             };
 
             eventSource.onerror = (err) => {
-                console.error("SSE Error:", err);
+                const readyState = eventSource.readyState;
+                const reason = readyState === EventSource.CLOSED ? "closed" : "transport_error";
+                console.warn("[useRunStream] SSE error", {
+                    workflowId,
+                    attempt,
+                    reason,
+                    readyState,
+                });
                 eventSource.close();
 
                 if (!shouldReconnectRef.current) {
                     dispatch(setConnectionState("idle"));
+                    return;
+                }
+
+                if (attempt >= MAX_RECONNECT_ATTEMPTS) {
+                    dispatch(setConnectionState("error"));
+                    dispatch(setStreamError(`Stream unavailable for workflow ${workflowId} after ${attempt + 1} attempts`));
+                    shouldReconnectRef.current = false;
                     return;
                 }
 

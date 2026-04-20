@@ -5,22 +5,21 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Optional, TypeVar
 
 import litellm
-from litellm import token_counter
-
-from kardcraft.utils.logger import logger
 
 from .context import LLMRuntimeContext, get_runtime_context
 from .discovery import detect_provider, get_completion_config, get_embed_model, get_rerank_model
-from .usage_event import LLMUsageEventPayload, LLM_USAGE_SCHEMA_VERSION
+from .usage_event import LLMUsageRecord
 
 T = TypeVar("T")
 
 DEFAULT_TIMEOUT_SECONDS = 120.0
 DEFAULT_MAX_ATTEMPTS = 1
 DEFAULT_RETRY_DELAY_SECONDS = 0.8
+USD_QUANT = Decimal("0.00000001")
 
 
 class LLMClientError(RuntimeError):
@@ -47,6 +46,16 @@ def _coerce_float(value: Any, fallback: float) -> float:
         return float(fallback)
 
 
+def _quantize_usd(value: Any, field_name: str) -> float:
+    try:
+        dec = Decimal(str(value))
+    except (InvalidOperation, ValueError, TypeError) as exc:
+        raise LLMClientError(f"invalid {field_name}: {value!r}") from exc
+    if dec.is_nan() or dec.is_infinite() or dec < 0:
+        raise LLMClientError(f"invalid {field_name}: {value!r}")
+    return float(dec.quantize(USD_QUANT, rounding=ROUND_HALF_UP))
+
+
 def _read_usage_field(usage: Any, key: str) -> int:
     if usage is None:
         return 0
@@ -55,27 +64,15 @@ def _read_usage_field(usage: Any, key: str) -> int:
     return _coerce_int(getattr(usage, key, 0))
 
 
-def _extract_completion_text(response: Any) -> str:
-    if not response or not getattr(response, "choices", None):
-        return ""
-    choice = response.choices[0]
-    message = getattr(choice, "message", None)
-    if isinstance(message, dict):
-        return str(message.get("content") or "")
-    return str(getattr(message, "content", "") or "")
-
-
-def _resolve_provider(model_name: str) -> str:
-    model_name = str(model_name or "").strip()
-    if "/" in model_name:
-        prefix = model_name.split("/", 1)[0].strip().lower()
-        if prefix:
-            return prefix
+def _resolve_provider(explicit_provider: Optional[str]) -> str:
+    provider = str(explicit_provider or "").strip().lower()
+    if provider:
+        return provider
     return detect_provider()
 
 
 def _normalize_error(operation: str, model_name: str, err: Exception) -> LLMClientError:
-    provider = _resolve_provider(model_name)
+    provider = _resolve_provider(None)
     return LLMClientError(
         f"LLM {operation} failed provider={provider} model={model_name or '<unknown>'}: {type(err).__name__}: {err}"
     )
@@ -85,21 +82,87 @@ def _extract_request_id(response: Any) -> str:
     return str(getattr(response, "id", "") or "").strip()
 
 
-def _token_counter_safe(*, model_name: str, messages: Optional[list[dict[str, Any]]] = None, text: Optional[str] = None) -> int:
-    try:
-        if messages is not None:
-            return _coerce_int(token_counter(model=model_name, messages=messages))
-        if text is not None:
-            return _coerce_int(token_counter(model=model_name, text=text))
-        return 0
-    except Exception:
-        logger.warning(
-            "llm usage estimation failed",
-            model=model_name,
-            has_messages=messages is not None,
-            has_text=bool(text),
-        )
-        return 0
+def _read_usage_float(usage: Any, key: str) -> float:
+    if usage is None:
+        return 0.0
+    if isinstance(usage, dict):
+        return _coerce_float(usage.get(key), 0.0)
+    return _coerce_float(getattr(usage, key, 0.0), 0.0)
+
+
+def _extract_model_name(response: Any, fallback_model_name: str) -> str:
+    response_model = str(getattr(response, "model", "") or "").strip()
+    if response_model:
+        return response_model
+    model_name = str(fallback_model_name or "").strip()
+    if model_name:
+        return model_name
+    raise LLMClientError("LLM response missing model name; cannot emit usage event")
+
+
+def _extract_total_cost_usd(response: Any, usage: Any) -> float:
+    candidate_keys = ("total_cost_usd", "total_cost", "response_cost", "cost")
+    for key in candidate_keys:
+        value = _read_usage_float(usage, key)
+        if value > 0:
+            return value
+
+    hidden_params = getattr(response, "_hidden_params", None)
+    if isinstance(hidden_params, dict):
+        value = _coerce_float(hidden_params.get("response_cost"), 0.0)
+        if value > 0:
+            return value
+
+    headers = getattr(response, "_response_headers", None)
+    if isinstance(headers, dict):
+        value = _coerce_float(headers.get("x-litellm-response-cost"), 0.0)
+        if value > 0:
+            return value
+
+    raise LLMClientError(
+        "LLM response missing authoritative cost field; ensure requests are routed through LiteLLM Proxy spend tracking"
+    )
+
+
+def _extract_proxy_markers(response: Any) -> dict[str, str]:
+    markers: dict[str, str] = {}
+    hidden_params = getattr(response, "_hidden_params", None)
+    if isinstance(hidden_params, dict):
+        _copy_non_empty(hidden_params, markers, "response_cost", "hidden_response_cost")
+        _copy_non_empty(hidden_params, markers, "request_id", "hidden_request_id")
+        _copy_non_empty(hidden_params, markers, "custom_llm_provider", "hidden_provider")
+
+    headers = getattr(response, "_response_headers", None)
+    if isinstance(headers, dict):
+        _copy_non_empty(headers, markers, "x-litellm-response-cost", "header_response_cost")
+        _copy_non_empty(headers, markers, "x-litellm-model-id", "header_model_id")
+        _copy_non_empty(headers, markers, "x-request-id", "header_request_id")
+    return markers
+
+
+def _extract_observability_metadata(response: Any) -> dict[str, Any]:
+    metadata: dict[str, Any] = {}
+    hidden_params = getattr(response, "_hidden_params", None)
+    if isinstance(hidden_params, dict):
+        _copy_non_empty(hidden_params, metadata, "trace_id", "langfuse_trace_id")
+        _copy_non_empty(hidden_params, metadata, "observation_id", "langfuse_observation_id")
+        _copy_non_empty(hidden_params, metadata, "generation_id", "langfuse_generation_id")
+        _copy_non_empty(hidden_params, metadata, "request_id", "litellm_request_id")
+        _copy_non_empty(hidden_params, metadata, "custom_llm_provider", "litellm_provider")
+
+    headers = getattr(response, "_response_headers", None)
+    if isinstance(headers, dict):
+        _copy_non_empty(headers, metadata, "x-request-id", "response_header_request_id")
+        _copy_non_empty(headers, metadata, "x-litellm-model-id", "litellm_model_id")
+
+    return metadata
+
+
+def _copy_non_empty(source: dict[str, Any], target: dict[str, Any], key: str, target_key: str) -> None:
+    value = source.get(key)
+    text = str(value or "").strip()
+    if text:
+        target[target_key] = text
 
 
 def _require_runtime_context() -> LLMRuntimeContext:
@@ -123,69 +186,74 @@ async def _emit_usage(
     intent: str,
     model_name: str,
     response: Any,
-    messages: Optional[list[dict[str, Any]]] = None,
-    input_text: Optional[str] = None,
-    estimated_output_text: Optional[str] = None,
 ) -> None:
     ctx = _require_runtime_context()
     usage = getattr(response, "usage", None)
+    if usage is None:
+        raise LLMClientError(
+            "LLM response missing usage; cannot emit usage analytics without provider usage payload"
+        )
 
     prompt_tokens = _read_usage_field(usage, "prompt_tokens")
     completion_tokens = _read_usage_field(usage, "completion_tokens")
     cache_read_tokens = _read_usage_field(usage, "cache_read_input_tokens")
     cache_write_tokens = _read_usage_field(usage, "cache_creation_input_tokens")
     total_tokens = _read_usage_field(usage, "total_tokens")
-    estimated = False
-    source = "provider"
+    estimated = _coerce_int(_read_usage_field(usage, "estimated")) > 0
+    source = "litellm_proxy"
 
     if total_tokens == 0 and usage is not None:
         total_tokens = prompt_tokens + completion_tokens
 
-    if usage is None:
-        if messages is not None:
-            prompt_tokens = _token_counter_safe(model_name=model_name, messages=messages)
-            text = estimated_output_text if estimated_output_text is not None else _extract_completion_text(response)
-            completion_tokens = _token_counter_safe(model_name=model_name, text=text)
-            total_tokens = prompt_tokens + completion_tokens
-            estimated = True
-            source = "estimated_messages"
-        elif input_text is not None:
-            prompt_tokens = _token_counter_safe(model_name=model_name, text=input_text)
-            completion_tokens = 0
-            total_tokens = prompt_tokens
-            estimated = True
-            source = "estimated_input"
+    if total_tokens <= 0:
+        raise LLMClientError(
+            "LLM usage payload missing token counts; cannot emit usage analytics without prompt/completion tokens"
+        )
+    proxy_markers = _extract_proxy_markers(response)
+    if not proxy_markers:
+        raise LLMClientError(
+            "LLM response missing LiteLLM Proxy markers; usage analytics requires LiteLLM Proxy authority"
+        )
 
     external_request_id = _extract_request_id(response)
     if not external_request_id:
         external_request_id = uuid.uuid4().hex
 
     now_iso = datetime.now(timezone.utc).isoformat()
-    payload: LLMUsageEventPayload = {
-        "schema_version": LLM_USAGE_SCHEMA_VERSION,
+    provider = _resolve_provider(getattr(response, "provider", None))
+    model_value = _extract_model_name(response, model_name)
+    input_cost_usd = _quantize_usd(_read_usage_float(usage, "input_cost_usd"), "input_cost_usd")
+    output_cost_usd = _quantize_usd(_read_usage_float(usage, "output_cost_usd"), "output_cost_usd")
+    cache_cost_usd = _quantize_usd(_read_usage_float(usage, "cache_cost_usd"), "cache_cost_usd")
+    total_cost_usd = _quantize_usd(_extract_total_cost_usd(response, usage), "total_cost_usd")
+    if input_cost_usd + output_cost_usd + cache_cost_usd > total_cost_usd and total_cost_usd > 0:
+        raise LLMClientError(
+            "LLM usage cost payload inconsistent: component costs exceed total cost"
+        )
+    payload: LLMUsageRecord = {
         "idempotency_key": f"{ctx.task_id}:{external_request_id}",
-        "task_id": ctx.task_id,
-        "workflow_id": ctx.task_id,
-        "session_id": ctx.session_id,
-        "user_id": ctx.user_id,
         "operation": operation,
         "intent": intent,
-        "provider": _resolve_provider(model_name),
-        "model": model_name,
+        "provider": provider,
+        "model": model_value,
         "prompt_tokens": prompt_tokens,
         "completion_tokens": completion_tokens,
         "cache_read_tokens": cache_read_tokens,
         "cache_write_tokens": cache_write_tokens,
         "total_tokens": total_tokens,
-        "input_cost_usd": 0.0,
-        "output_cost_usd": 0.0,
-        "cache_cost_usd": 0.0,
-        "total_cost_usd": 0.0,
+        "input_cost_usd": input_cost_usd,
+        "output_cost_usd": output_cost_usd,
+        "cache_cost_usd": cache_cost_usd,
+        "total_cost_usd": total_cost_usd,
         "estimated": estimated,
         "source": source,
         "external_request_id": external_request_id,
         "created_at": now_iso,
     }
+    observability_metadata = _extract_observability_metadata(response)
+    observability_metadata["proxy_markers"] = proxy_markers
+    if observability_metadata:
+        payload["metadata"] = observability_metadata
     await ctx.usage_emitter(payload)
 
 
@@ -244,7 +312,6 @@ async def acompletion(
         intent=intent,
         model_name=model_name,
         response=response,
-        messages=messages,
     )
     return response
 
@@ -260,7 +327,15 @@ async def acompletion_stream(
     **overrides: Any,
 ) -> AsyncIterator[Any]:
     _require_runtime_context()
-    cfg = get_completion_config(intent=intent, temperature=temperature, stream=True, **overrides)
+    stream_options = dict(overrides.get("stream_options") or {})
+    stream_options.setdefault("include_usage", True)
+    cfg = get_completion_config(
+        intent=intent,
+        temperature=temperature,
+        stream=True,
+        stream_options=stream_options,
+        **{k: v for k, v in overrides.items() if k != "stream_options"},
+    )
     model_name = str(cfg.get("model") or "").strip()
 
     async def _invoke() -> Any:
@@ -277,19 +352,8 @@ async def acompletion_stream(
 
     async def _iterate() -> AsyncIterator[Any]:
         last_chunk = None
-        content_chunks: list[str] = []
         async for chunk in stream:
             last_chunk = chunk
-            delta_text = ""
-            try:
-                choices = getattr(chunk, "choices", None)
-                if choices:
-                    delta = getattr(choices[0], "delta", None)
-                    delta_text = str(getattr(delta, "content", "") or "")
-            except Exception:
-                delta_text = ""
-            if delta_text:
-                content_chunks.append(delta_text)
             yield chunk
 
         if last_chunk is None:
@@ -300,8 +364,6 @@ async def acompletion_stream(
             intent=intent,
             model_name=model_name,
             response=last_chunk,
-            messages=messages,
-            estimated_output_text="".join(content_chunks),
         )
 
     return _iterate()
@@ -351,13 +413,11 @@ async def aembedding(
         retry_delay_seconds=_coerce_float(retry_delay_seconds, DEFAULT_RETRY_DELAY_SECONDS),
         fn=_invoke,
     )
-    input_text = input if isinstance(input, str) else "\n".join([str(item) for item in input])
     await _emit_usage(
         operation="aembedding",
         intent="embedding",
         model_name=model_name,
         response=response,
-        input_text=input_text,
     )
     return response
 
@@ -393,6 +453,5 @@ async def arerank(
         intent="rerank",
         model_name=model_name,
         response=response,
-        input_text=query + "\n" + "\n".join(documents),
     )
     return response

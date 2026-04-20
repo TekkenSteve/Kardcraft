@@ -57,12 +57,18 @@ describe("session history usage metadata schema", () => {
                 {
                     task_id: "t1",
                     workflow_id: "t1",
+                    model_used: "openai/gpt-4o-mini",
+                    provider: "openai",
                     total_tokens: 0,
                     total_cost_usd: 0,
+                    usage_projection_status: "partial",
+                    usage_projection_reason: "awaiting_usage_projection",
                 },
             ],
         });
         expect(parsed.tasks[0].total_tokens).toBe(0);
+        expect(parsed.tasks[0].usage_projection_status).toBe("partial");
+        expect(parsed.tasks[0].model_used).toBe("openai/gpt-4o-mini");
     });
 
     it("accepts multi-model breakdown with estimated quality marker", () => {
@@ -102,11 +108,14 @@ describe("session history usage metadata schema", () => {
                             estimated_ratio: 0.33,
                         },
                     },
+                    usage_projection_status: "finalized",
+                    usage_projection_reason: "usage_ingested",
                 },
             ],
         });
         expect(parsed.tasks[0].metadata?.model_breakdown).toHaveLength(2);
         expect(parsed.tasks[0].metadata?.usage_quality?.has_estimated_usage).toBe(true);
+        expect(parsed.tasks[0].usage_projection_status).toBe("finalized");
     });
 });
 

@@ -188,7 +188,6 @@ func (s *Server) subscribeRedisStream(ctx context.Context, workflowID string) {
 		func() { atomic.AddInt64(&s.llmUsageDeduped, 1) },
 		func() { atomic.AddInt64(&s.llmUsageFailed, 1) },
 		func() { atomic.AddInt64(&s.llmUsageInvalid, 1) },
-		func() { atomic.AddInt64(&s.llmUsageSchemaMismatch, 1) },
 	)
 
 	lastID := reader.StartFrom(ctx, workflowID)

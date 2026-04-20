@@ -122,7 +122,6 @@ type Server struct {
 	llmUsageDeduped        int64
 	llmUsageFailed         int64
 	llmUsageInvalid        int64
-	llmUsageSchemaMismatch int64
 }
 
 type ServerDependencies struct {

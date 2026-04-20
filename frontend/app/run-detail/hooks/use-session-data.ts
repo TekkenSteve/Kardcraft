@@ -32,6 +32,7 @@ export function useSessionData({
     const lastWorkspaceVersionRef = useRef<number | null>(null);
     const lastWorkspaceSessionRef = useRef<string | null>(null);
     const lastWorkspaceCardCountRef = useRef<number>(0);
+    const workspaceErrorStreakRef = useRef<number>(0);
     const completionRetryTokenRef = useRef<number>(0);
     const cardsSessionId = resolvedSessionId;
     const { data: swrCards, isLoading, isValidating, error, mutate } = useSWR<SessionWorkspaceResponseRecord>(
@@ -41,6 +42,9 @@ export function useSessionData({
             dedupingInterval: 10_000,
             keepPreviousData: false,
             revalidateOnFocus: false,
+            shouldRetryOnError: true,
+            errorRetryCount: 8,
+            errorRetryInterval: 1500,
             // Keep workspace responsive while cards are being generated.
             refreshInterval: (latestData) => {
                 if (!cardsSessionId) return 0;
@@ -102,8 +106,19 @@ export function useSessionData({
         if (!cardsSessionId) return;
 
         if (error) {
-            setWorkspacePhase("error");
-            return;
+            workspaceErrorStreakRef.current += 1;
+            // A transient request failure should not permanently poison workspace UI
+            // when we still have cached projection data.
+            if (!swrCards) {
+                if (workspaceErrorStreakRef.current >= 3) {
+                    setWorkspacePhase("error");
+                } else if (workspacePhase === "idle" || workspacePhase === "clearing") {
+                    setWorkspacePhase("loading");
+                }
+                return;
+            }
+        } else {
+            workspaceErrorStreakRef.current = 0;
         }
 
         if (isLoading || isValidating) {

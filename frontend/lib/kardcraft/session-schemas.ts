@@ -81,9 +81,13 @@ export const SessionHistoryTaskSchema = z.object({
     query: z.string().optional(),
     status: z.string().optional(),
     mode: z.string().optional(),
+    model_used: z.string().optional(),
+    provider: z.string().optional(),
     error_message: z.string().optional(),
     total_tokens: z.number().optional(),
     total_cost_usd: z.number().optional(),
+    usage_projection_status: z.enum(["pending", "partial", "finalized", "invalid"]).optional(),
+    usage_projection_reason: z.string().optional(),
     metadata: z
         .object({
             model: z.string().optional(),

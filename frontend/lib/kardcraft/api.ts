@@ -136,32 +136,7 @@ export async function listTasks(limit: number = 50, offset: number = 0): Promise
 }
 
 export function getStreamUrl(workflowId: string): string {
-    // For SSE streams, we rely on cookies being sent automatically
-    // EventSource should send cookies with credentials, but as a fallback
-    // we can extract the session token if needed
-    const baseUrl = apiUrl(`/api/v1/stream/sse?workflow_id=${workflowId}`);
-
-    // Try to get the session token from cookies as a fallback for EventSource
-    const sessionToken = getSessionTokenFromCookies();
-    if (sessionToken) {
-        return `${baseUrl}&token=${encodeURIComponent(sessionToken)}`;
-    }
-
-    return baseUrl;
-}
-
-// Helper function to extract session token from cookies
-function getSessionTokenFromCookies(): string | null {
-    if (typeof document === 'undefined') return null;
-
-    const cookies = document.cookie.split(';');
-    for (const cookie of cookies) {
-        const [name, value] = cookie.trim().split('=');
-        if (name === 'ory_kratos_session') {
-            return decodeURIComponent(value);
-        }
-    }
-    return null;
+    return apiUrl(`/api/v1/stream/sse?workflow_id=${encodeURIComponent(workflowId)}`);
 }
 
 // Session Types
@@ -658,9 +633,13 @@ export interface SessionHistoryResponse {
         query?: string;
         status?: string;
         mode?: string;
+        model_used?: string;
+        provider?: string;
         error_message?: string;
         total_tokens?: number;
         total_cost_usd?: number;
+        usage_projection_status?: "pending" | "partial" | "finalized" | "invalid";
+        usage_projection_reason?: string;
         metadata?: Record<string, unknown>;
         started_at?: string;
         completed_at?: string;
@@ -766,8 +745,19 @@ export async function getSessionWorkspace(sessionId: string): Promise<SessionWor
         credentials: "include",
     });
 
+    if (response.status === 404) {
+        return {
+            session_id: sessionId,
+            version: 0,
+            status: "not_started",
+            card_count: 0,
+            projection_status: "empty",
+            cards: [],
+        };
+    }
+
     if (!response.ok) {
-        throw new Error(`Failed to get session workspace: ${response.statusText}`);
+        throw await extractApiError(response, "Failed to get session workspace");
     }
 
     return response.json();

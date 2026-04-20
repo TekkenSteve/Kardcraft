@@ -20,12 +20,20 @@ export function SummaryPanel() {
     const tasks: SessionHistoryResponseRecord["tasks"] = sessionHistory?.tasks || [];
     const hasTokenData = tasks.some((task) => typeof task.total_tokens === "number");
     const hasCostData = tasks.some((task) => typeof task.total_cost_usd === "number");
+    const usagePendingCount = tasks.filter((task) => task.usage_projection_status === "pending" || task.usage_projection_status === "partial").length;
+    const usageInvalidCount = tasks.filter((task) => task.usage_projection_status === "invalid").length;
 
     return (
         <div className="max-w-4xl mx-auto space-y-4 overflow-hidden">
             <div>
                 <h2 className="text-xl font-bold">{t("runDetail.summaryTitle")}</h2>
                 <p className="text-sm text-muted-foreground">{t("runDetail.summarySubtitle")}</p>
+                {usagePendingCount > 0 && (
+                    <p className="text-xs text-amber-700 mt-1">{t("runDetail.usageProcessing", { count: usagePendingCount })}</p>
+                )}
+                {usageInvalidCount > 0 && (
+                    <p className="text-xs text-red-700 mt-1">{t("runDetail.usageInvalid", { count: usageInvalidCount })}</p>
+                )}
             </div>
 
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
@@ -80,6 +88,12 @@ export function SummaryPanel() {
                                     <div className="flex-1 min-w-0">
                                         <div className="text-xs font-medium truncate">{t("runDetail.turnLabel", { index: index + 1 })}</div>
                                         <div className="text-xs text-muted-foreground truncate">{task.query}</div>
+                                        {task.usage_projection_status && (
+                                            <div className="text-[10px] text-muted-foreground mt-0.5 truncate">
+                                                {t("runDetail.usageStatus")}: {task.usage_projection_status}
+                                                {task.usage_projection_reason ? ` (${task.usage_projection_reason})` : ""}
+                                            </div>
+                                        )}
                                         {(task.model_used || task.metadata?.model) && (
                                             <div className="text-xs text-muted-foreground mt-0.5 truncate">
                                                 {task.model_used || task.metadata?.model}

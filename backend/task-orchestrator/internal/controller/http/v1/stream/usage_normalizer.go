@@ -1,20 +1,103 @@
 package stream
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"strconv"
+	"math"
 	"strings"
 	"time"
 
 	"task-orchestrator/internal/usecase"
 )
 
-const usageSchemaVersion = "1"
-
 type Entry struct {
 	ID     string
 	Values map[string]any
+}
+
+type UsageRecordPayload struct {
+	IdempotencyKey   string         `json:"idempotency_key"`
+	Operation        string         `json:"operation"`
+	Intent           string         `json:"intent"`
+	Provider         string         `json:"provider"`
+	Model            string         `json:"model"`
+	PromptTokens     int            `json:"prompt_tokens"`
+	CompletionTokens int            `json:"completion_tokens"`
+	CacheReadTokens  int            `json:"cache_read_tokens"`
+	CacheWriteTokens int            `json:"cache_write_tokens"`
+	TotalTokens      int            `json:"total_tokens"`
+	InputCostUSD     float64        `json:"input_cost_usd"`
+	OutputCostUSD    float64        `json:"output_cost_usd"`
+	CacheCostUSD     float64        `json:"cache_cost_usd"`
+	TotalCostUSD     float64        `json:"total_cost_usd"`
+	Estimated        bool           `json:"estimated"`
+	Source           string         `json:"source"`
+	ExternalRequest  string         `json:"external_request_id"`
+	CreatedAt        string         `json:"created_at"`
+	Metadata         map[string]any `json:"metadata,omitempty"`
+}
+
+type UsageEnvelopePayload struct {
+	EventID    string             `json:"event_id"`
+	OccurredAt string             `json:"occurred_at"`
+	EventType  string             `json:"event_type,omitempty"`
+	Message    string             `json:"message,omitempty"`
+	Workspace  string             `json:"workspace_id,omitempty"`
+	TaskID     string             `json:"task_id"`
+	WorkflowID string             `json:"workflow_id"`
+	SessionID  string             `json:"session_id"`
+	UserID     string             `json:"user_id"`
+	Usage      UsageRecordPayload `json:"usage"`
+}
+
+func decodeUsageEnvelope(payload map[string]any) (UsageEnvelopePayload, bool, string) {
+	rawUsage, hasUsage := payload["usage"]
+	if !hasUsage {
+		return UsageEnvelopePayload{}, false, "missing_usage_payload"
+	}
+	if _, ok := rawUsage.(map[string]any); !ok {
+		return UsageEnvelopePayload{}, false, "invalid_usage_type"
+	}
+
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return UsageEnvelopePayload{}, false, "invalid_payload_encoding"
+	}
+	var envelope UsageEnvelopePayload
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if err := decoder.Decode(&envelope); err != nil {
+		return UsageEnvelopePayload{}, false, "invalid_payload_shape"
+	}
+	if strings.TrimSpace(envelope.TaskID) == "" {
+		return UsageEnvelopePayload{}, false, "missing_task_id"
+	}
+	if !hasRFC3339Timestamp(envelope.OccurredAt) {
+		return UsageEnvelopePayload{}, false, "invalid_occurred_at"
+	}
+	if !hasRFC3339Timestamp(envelope.Usage.CreatedAt) {
+		return UsageEnvelopePayload{}, false, "invalid_created_at"
+	}
+	if strings.TrimSpace(envelope.Usage.IdempotencyKey) == "" {
+		return UsageEnvelopePayload{}, false, "missing_idempotency_key"
+	}
+	if strings.TrimSpace(envelope.Usage.Provider) == "" || strings.TrimSpace(envelope.Usage.Model) == "" {
+		return UsageEnvelopePayload{}, false, "missing_required_fields"
+	}
+	if !isValidUSD(envelope.Usage.InputCostUSD) || !isValidUSD(envelope.Usage.OutputCostUSD) || !isValidUSD(envelope.Usage.CacheCostUSD) {
+		return UsageEnvelopePayload{}, false, "invalid_cost_components"
+	}
+	if envelope.Usage.TotalCostUSD <= 0 {
+		return UsageEnvelopePayload{}, false, "missing_authoritative_cost"
+	}
+	if !isValidUSD(envelope.Usage.TotalCostUSD) {
+		return UsageEnvelopePayload{}, false, "invalid_total_cost_usd"
+	}
+	componentSum := normalizeUSD(envelope.Usage.InputCostUSD + envelope.Usage.OutputCostUSD + envelope.Usage.CacheCostUSD)
+	if componentSum > normalizeUSD(envelope.Usage.TotalCostUSD) {
+		return UsageEnvelopePayload{}, false, "invalid_cost_breakdown"
+	}
+	return envelope, true, ""
 }
 
 func ValueAsString(v any) string {
@@ -32,37 +115,40 @@ func ValueAsString(v any) string {
 }
 
 func BuildUsageLedgerRow(payload map[string]any, workflowID, fallbackTaskID, fallbackSessionID string) (usecase.UsageLedgerRow, bool, string) {
+	envelope, ok, reason := decodeUsageEnvelope(payload)
+	if !ok {
+		return usecase.UsageLedgerRow{}, false, reason
+	}
+
+	usagePayload := envelope.Usage
 	row := usecase.UsageLedgerRow{
-		SchemaVersion:    normalizedString(payload["schema_version"], "1"),
-		IdempotencyKey:   normalizedString(payload["idempotency_key"], ""),
-		TaskID:           normalizedString(payload["task_id"], fallbackTaskID),
-		WorkflowID:       normalizedString(payload["workflow_id"], workflowID),
-		SessionID:        normalizedString(payload["session_id"], fallbackSessionID),
-		UserID:           normalizedString(payload["user_id"], ""),
-		Intent:           normalizedString(payload["intent"], ""),
-		Provider:         normalizedString(payload["provider"], ""),
-		Model:            normalizedString(payload["model"], ""),
-		PromptTokens:     asInt(payload["prompt_tokens"]),
-		CompletionTokens: asInt(payload["completion_tokens"]),
-		CacheReadTokens:  asInt(payload["cache_read_tokens"]),
-		CacheWriteTokens: asInt(payload["cache_write_tokens"]),
-		TotalTokens:      asInt(payload["total_tokens"]),
-		InputCostUSD:     asFloat(payload["input_cost_usd"]),
-		OutputCostUSD:    asFloat(payload["output_cost_usd"]),
-		CacheCostUSD:     asFloat(payload["cache_cost_usd"]),
-		TotalCostUSD:     asFloat(payload["total_cost_usd"]),
-		Estimated:        asBool(payload["estimated"]),
-		Source:           normalizedString(payload["source"], ""),
+		SchemaVersion:    "1",
+		IdempotencyKey:   normalizedString(usagePayload.IdempotencyKey, ""),
+		TaskID:           normalizedString(envelope.TaskID, fallbackTaskID),
+		WorkflowID:       normalizedString(envelope.WorkflowID, workflowID),
+		SessionID:        normalizedString(envelope.SessionID, fallbackSessionID),
+		UserID:           normalizedString(envelope.UserID, ""),
+		Intent:           normalizedString(firstAny(usagePayload.Intent, usagePayload.Operation), ""),
+		Provider:         normalizedString(usagePayload.Provider, ""),
+		Model:            normalizedString(usagePayload.Model, ""),
+		PromptTokens:     usagePayload.PromptTokens,
+		CompletionTokens: usagePayload.CompletionTokens,
+		CacheReadTokens:  usagePayload.CacheReadTokens,
+		CacheWriteTokens: usagePayload.CacheWriteTokens,
+		TotalTokens:      usagePayload.TotalTokens,
+		InputCostUSD:     normalizeUSD(usagePayload.InputCostUSD),
+		OutputCostUSD:    normalizeUSD(usagePayload.OutputCostUSD),
+		CacheCostUSD:     normalizeUSD(usagePayload.CacheCostUSD),
+		TotalCostUSD:     normalizeUSD(usagePayload.TotalCostUSD),
+		Estimated:        usagePayload.Estimated,
+		Source:           normalizedString(usagePayload.Source, ""),
 		ExternalRequestID: normalizedString(
-			firstAny(payload["external_request_id"], payload["request_id"], payload["llm_response_id"]),
+			firstAny(usagePayload.ExternalRequest),
 			"",
 		),
-		Metadata: asMap(payload["metadata"]),
+		Metadata: usagePayload.Metadata,
 	}
-	if row.SchemaVersion != usageSchemaVersion {
-		return usecase.UsageLedgerRow{}, false, "schema_mismatch"
-	}
-	if createdAt := normalizedString(payload["created_at"], ""); createdAt != "" {
+	if createdAt := normalizedString(firstAny(envelope.OccurredAt, usagePayload.CreatedAt), ""); createdAt != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, createdAt); err == nil {
 			row.CreatedAt = parsed
 		}
@@ -93,78 +179,6 @@ func normalizedString(v any, fallback string) string {
 	return s
 }
 
-func asMap(v any) map[string]any {
-	if v == nil {
-		return nil
-	}
-	if m, ok := v.(map[string]any); ok {
-		return m
-	}
-	return nil
-}
-
-func asInt(v any) int {
-	switch t := v.(type) {
-	case int:
-		return t
-	case int32:
-		return int(t)
-	case int64:
-		return int(t)
-	case float32:
-		return int(t)
-	case float64:
-		return int(t)
-	case json.Number:
-		if i, err := t.Int64(); err == nil {
-			return int(i)
-		}
-	case string:
-		if n, err := strconv.Atoi(strings.TrimSpace(t)); err == nil {
-			return n
-		}
-	}
-	return 0
-}
-
-func asFloat(v any) float64 {
-	switch t := v.(type) {
-	case float64:
-		return t
-	case float32:
-		return float64(t)
-	case int:
-		return float64(t)
-	case int64:
-		return float64(t)
-	case json.Number:
-		if f, err := t.Float64(); err == nil {
-			return f
-		}
-	case string:
-		if f, err := strconv.ParseFloat(strings.TrimSpace(t), 64); err == nil {
-			return f
-		}
-	}
-	return 0
-}
-
-func asBool(v any) bool {
-	switch t := v.(type) {
-	case bool:
-		return t
-	case string:
-		b, err := strconv.ParseBool(strings.TrimSpace(t))
-		return err == nil && b
-	case int:
-		return t != 0
-	case float64:
-		return t != 0
-	default:
-		return false
-	}
-}
-
 func firstAny(values ...any) any {
 	for _, v := range values {
 		if strings.TrimSpace(ValueAsString(v)) != "" {
@@ -172,4 +186,21 @@ func firstAny(values ...any) any {
 		}
 	}
 	return nil
+}
+
+func hasRFC3339Timestamp(v string) bool {
+	s := strings.TrimSpace(v)
+	if s == "" {
+		return false
+	}
+	_, err := time.Parse(time.RFC3339Nano, s)
+	return err == nil
+}
+
+func isValidUSD(v float64) bool {
+	return !math.IsNaN(v) && !math.IsInf(v, 0) && v >= 0
+}
+
+func normalizeUSD(v float64) float64 {
+	return math.Round(v*1e8) / 1e8
 }

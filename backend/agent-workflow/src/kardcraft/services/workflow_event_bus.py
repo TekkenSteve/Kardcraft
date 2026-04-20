@@ -59,7 +59,7 @@ class WorkflowEventBus:
     async def publish_usage(self, *, ctx: EventContext, payload: dict[str, Any]) -> bool:
         return await self._publish(
             ctx=ctx,
-            event_type="LLM_USAGE",
+            event_type="LLM_USAGE_RECORDED",
             channel="usage",
             payload=payload,
         )
