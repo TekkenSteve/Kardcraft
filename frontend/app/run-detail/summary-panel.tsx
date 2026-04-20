@@ -1,12 +1,12 @@
 "use client";
 
+import { StatePanel } from "@/components/state-panel";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
-import { StatePanel } from "@/components/state-panel";
+import { SessionHistoryResponseRecord } from "@/lib/kardcraft/session-schemas";
+import { useTranslation } from "react-i18next";
 import { useRunDetailData } from "./run-detail-hooks";
 import { aggregateModelUsage, formatDuration } from "./run-detail-utils";
-import { useTranslation } from "react-i18next";
-import { SessionHistoryResponseRecord } from "@/lib/kardcraft/session-schemas";
 
 export function SummaryPanel() {
     const { t } = useTranslation();
@@ -29,10 +29,10 @@ export function SummaryPanel() {
                 <h2 className="text-xl font-bold">{t("runDetail.summaryTitle")}</h2>
                 <p className="text-sm text-muted-foreground">{t("runDetail.summarySubtitle")}</p>
                 {usagePendingCount > 0 && (
-                    <p className="text-xs text-amber-700 mt-1">{t("runDetail.usageProcessing", { count: usagePendingCount })}</p>
+                    <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">{t("runDetail.usageProcessing", { count: usagePendingCount })}</p>
                 )}
                 {usageInvalidCount > 0 && (
-                    <p className="text-xs text-red-700 mt-1">{t("runDetail.usageInvalid", { count: usageInvalidCount })}</p>
+                    <p className="text-xs text-red-700 dark:text-red-400 mt-1">{t("runDetail.usageInvalid", { count: usageInvalidCount })}</p>
                 )}
             </div>
 
