@@ -751,7 +751,6 @@ export async function getSessionWorkspace(sessionId: string): Promise<SessionWor
             version: 0,
             status: "not_started",
             card_count: 0,
-            projection_status: "empty",
             cards: [],
         };
     }
