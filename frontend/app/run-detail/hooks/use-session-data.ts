@@ -33,6 +33,7 @@ export function useSessionData({
     const lastWorkspaceSessionRef = useRef<string | null>(null);
     const lastWorkspaceCardCountRef = useRef<number>(0);
     const workspaceErrorStreakRef = useRef<number>(0);
+    const lastErrorRef = useRef<unknown>(null);
     const completionRetryTokenRef = useRef<number>(0);
     const cardsSessionId = resolvedSessionId;
     const { data: swrCards, isLoading, isValidating, error, mutate } = useSWR<SessionWorkspaceResponseRecord>(
@@ -65,6 +66,8 @@ export function useSessionData({
             lastWorkspaceSessionRef.current = cardsSessionId;
             lastWorkspaceVersionRef.current = null;
             lastWorkspaceCardCountRef.current = 0;
+            workspaceErrorStreakRef.current = 0;
+            lastErrorRef.current = null;
         }
         const prev = prevRunStatusRef.current;
         prevRunStatusRef.current = runStatus;
@@ -106,7 +109,10 @@ export function useSessionData({
         if (!cardsSessionId) return;
 
         if (error) {
-            workspaceErrorStreakRef.current += 1;
+            if (error !== lastErrorRef.current) {
+                lastErrorRef.current = error;
+                workspaceErrorStreakRef.current += 1;
+            }
             // A transient request failure should not permanently poison workspace UI
             // when we still have cached projection data.
             if (!swrCards) {
@@ -119,6 +125,7 @@ export function useSessionData({
             }
         } else {
             workspaceErrorStreakRef.current = 0;
+            lastErrorRef.current = null;
         }
 
         if (isLoading || isValidating) {
