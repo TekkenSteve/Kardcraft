@@ -1,9 +1,8 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { useSelector } from "react-redux";
-import { RootState } from "@/lib/store";
 import { radarStore } from "@/lib/radar/store";
+import { useActiveRunSession } from "@/lib/run/system";
 
 // Longer estimate = slower flight to center (more time to see the animation)
 const DEFAULT_ESTIMATE_MS = 45000; // ~45s to center (matches original dashboard)
@@ -24,7 +23,8 @@ const INTERNAL_AGENTS = new Set([
 function isInternalAgent(agentId: string): boolean {
   if (!agentId) return true;
   const normalized = agentId.toLowerCase().trim();
-  if (normalized.startsWith("agent-undefined")) return true;
+  const [namePrefix, nameMarker] = normalized.split("-", 2);
+  if (namePrefix === "agent" && nameMarker === "undefined") return true;
   if (normalized === "undefined" || normalized === "unknown") return true;
   return INTERNAL_AGENTS.has(normalized);
 }
@@ -34,8 +34,9 @@ function isInternalAgent(agentId: string): boolean {
  * Renders nothing - just keeps the radar store in sync with Redux events.
  */
 export function RadarBridge() {
-  const events = useSelector((state: RootState) => state.run.events);
-  const status = useSelector((state: RootState) => state.run.status);
+  const activeSession = useActiveRunSession();
+  const events = activeSession.events;
+  const status = activeSession.status;
   const processedRef = useRef<Set<string>>(new Set());
   const tickRef = useRef<number>(0);
   const timeoutRefs = useRef<Map<string, number>>(new Map());
@@ -223,7 +224,8 @@ export function RadarBridge() {
       if (ev.type === "WORKFLOW_COMPLETED") {
         const state = radarStore.getState();
         for (const [itemId, item] of Object.entries(state.items)) {
-          if (itemId.startsWith(workflowId + "::") && item.status === "in_progress") {
+          const itemWorkflowId = itemId.split("::")[0] || "";
+          if (itemWorkflowId === workflowId && item.status === "in_progress") {
             const tick = ++tickRef.current;
             radarStore.getState().applyTick({
               tick_id: tick,

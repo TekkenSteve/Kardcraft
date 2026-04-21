@@ -4,8 +4,9 @@ import { FileUpload, FileUploadHandle } from "@/components/file-upload";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Textarea } from "@/components/ui/textarea";
-import { clearTemplatePreflight, setTemplatePreflight } from "@/lib/features/runSlice";
 import { getSessionWorkspace } from "@/lib/kardcraft/session-repository";
+import { DEFAULT_TEMPLATE_PREFLIGHT } from "@/lib/run/types";
+import { useRunCommands } from "@/lib/run/system";
 import { FileUploadAPI } from "@/lib/file-upload/api";
 import { UploadedFile } from "@/lib/file-upload/types";
 import {
@@ -24,7 +25,6 @@ import { ChevronDown, LayoutTemplate, Loader2, Paperclip, Pause, Play, Save, Sen
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { useDispatch } from "react-redux";
 
 export type AgentSelection = "normal" | "card_template";
 export type ResearchStrategy = "quick" | "standard" | "deep" | "academic";
@@ -91,7 +91,7 @@ export function ChatInput({
     const fileUploadRef = useRef<FileUploadHandle>(null);
     const filePanelRef = useRef<HTMLDivElement>(null);
     const router = useRouter();
-    const dispatch = useDispatch();
+    const commands = useRunCommands();
     const uploadAPI = new FileUploadAPI();
     const allowAutoFocus =
         typeof window !== "undefined" &&
@@ -161,7 +161,7 @@ export function ChatInput({
     }, []);
 
     const runTemplatePreflight = async (templateId: string, templateVersion?: number) => {
-        dispatch(setTemplatePreflight({
+        commands.setTemplatePreflight(sessionId ?? null, {
             status: "running",
             templateId,
             templateVersion: templateVersion ?? null,
@@ -169,7 +169,7 @@ export function ChatInput({
             cardCount: null,
             checkedAt: new Date().toISOString(),
             message: "Running template precheck...",
-        }));
+        });
         try {
             const validation = await validateCardTemplate({
                 template_id: templateId,
@@ -202,7 +202,7 @@ export function ChatInput({
             if (precheck.card_count <= 0 || precheck.would_generate_empty) {
                 throw new Error("Selected template precheck failed (would generate empty cards). Please switch or fix template.");
             }
-            dispatch(setTemplatePreflight({
+            commands.setTemplatePreflight(sessionId ?? null, {
                 status: "passed",
                 templateId,
                 templateVersion: templateVersion ?? null,
@@ -210,13 +210,13 @@ export function ChatInput({
                 cardCount: precheck.card_count ?? 0,
                 checkedAt: new Date().toISOString(),
                 message: `Precheck passed (${precheck.card_count} sample cards).`,
-            }));
+            });
             return {
                 precheck,
                 questionTypes: nextQuestionTypes,
             };
         } catch (error) {
-            dispatch(setTemplatePreflight({
+            commands.setTemplatePreflight(sessionId ?? null, {
                 status: "failed",
                 templateId,
                 templateVersion: templateVersion ?? null,
@@ -224,7 +224,7 @@ export function ChatInput({
                 cardCount: null,
                 checkedAt: new Date().toISOString(),
                 message: error instanceof Error ? error.message : "Template precheck failed.",
-            }));
+            });
             throw error;
         }
     };
@@ -246,7 +246,7 @@ export function ChatInput({
         try {
             let selectedProfileForSubmit = "";
             if (selectedAgent !== "normal") {
-                dispatch(clearTemplatePreflight());
+                commands.clearTemplatePreflight(sessionId ?? null);
             }
             if (selectedAgent === "normal" && selectedTemplateId) {
                 const preflight = await runTemplatePreflight(selectedTemplateId, selectedTemplateVersion);
@@ -512,7 +512,7 @@ export function ChatInput({
     const handleTemplateSelect = async (template: CardTemplate) => {
         setSelectedTemplateId(template.template_id);
         setSelectedTemplateVersion(template.latest_version);
-        dispatch(clearTemplatePreflight());
+        commands.setTemplatePreflight(sessionId ?? null, { ...DEFAULT_TEMPLATE_PREFLIGHT });
         setError(null);
         setIsSavingTemplatePref(true);
         try {

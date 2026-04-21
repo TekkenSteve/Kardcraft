@@ -3,14 +3,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import useSWRInfinite from "swr/infinite";
-import { useDispatch, useSelector } from "react-redux";
-import { RootState } from "@/lib/store";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sparkles, User, Layers, Brain, CheckCircle2, Clock, FileText, Maximize2, Minimize2, X, LayoutGrid, List, SlidersHorizontal, Lock, Unlock, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { bulkUpdateStatus, updateCardQuestionType, updateCardStatus, CardData } from "@/lib/features/runSlice";
+import { CardData } from "@/lib/run/types";
+import { useRunCommands, useRunSession } from "@/lib/run/system";
 import { bulkUpdateCardQuestionType, bulkUpdateCardStatus, createApkgExport, getApkgExport, getApkgExportDownloadUrl, ApkgExportRecord, getTask } from "@/lib/kardcraft/api";
 import { getSessionHistory, getSessionWorkspace } from "@/lib/kardcraft/session-repository";
 
@@ -28,10 +27,11 @@ export function CardWorkspace({
     onClose?: () => void;
 }) {
     const { t } = useTranslation();
-    const cards = useSelector((state: RootState) => state.run.cards);
-    const cardsVersion = useSelector((state: RootState) => state.run.cardsVersion);
-    const templatePreflight = useSelector((state: RootState) => state.run.templatePreflight);
-    const dispatch = useDispatch();
+    const runSession = useRunSession(sessionId ?? null);
+    const { bulkUpdateStatus, updateCardQuestionType, updateCardStatus } = useRunCommands();
+    const cards = runSession.cards;
+    const cardsVersion = runSession.cardsVersion;
+    const templatePreflight = runSession.templatePreflight;
     const [activeTab, setActiveTab] = useState<"all" | "draft" | "active" | "confirmed">("all");
     const [selectedId, setSelectedId] = useState<string | null>(null);
     const [selectedQuestionType, setSelectedQuestionType] = useState<string>("");
@@ -236,7 +236,7 @@ export function CardWorkspace({
     const handleApproveAll = useCallback(async () => {
         const ids = filteredCards.map(card => card.card_id);
         if (!ids.length) return;
-        dispatch(bulkUpdateStatus({ card_ids: ids, status: "confirmed" }));
+        bulkUpdateStatus(sessionId ?? null, ids, "confirmed");
         try {
             if (sessionId) {
                 await bulkUpdateCardStatus(sessionId, ids, "confirmed");
@@ -244,11 +244,11 @@ export function CardWorkspace({
         } catch (err) {
             console.warn("[Workspace] Failed to persist approve all:", err);
         }
-    }, [dispatch, filteredCards, sessionId]);
+    }, [bulkUpdateStatus, filteredCards, sessionId]);
 
     const handleApplyQuestionType = useCallback(async () => {
         if (!selectedCard || !selectedQuestionType) return;
-        dispatch(updateCardQuestionType({ card_id: selectedCard.card_id, questionType: selectedQuestionType }));
+        updateCardQuestionType(sessionId ?? null, selectedCard.card_id, selectedQuestionType);
         try {
             if (sessionId) {
                 await bulkUpdateCardQuestionType(sessionId, [selectedCard.card_id], selectedQuestionType);
@@ -256,11 +256,11 @@ export function CardWorkspace({
         } catch (err) {
             console.warn("[Workspace] Failed to persist question type update:", err);
         }
-    }, [dispatch, selectedCard, selectedQuestionType, sessionId]);
+    }, [selectedCard, selectedQuestionType, sessionId, updateCardQuestionType]);
 
     const handleConfirmSelected = useCallback(async () => {
         if (!selectedCard) return;
-        dispatch(updateCardStatus({ card_id: selectedCard.card_id, status: "confirmed" }));
+        updateCardStatus(sessionId ?? null, selectedCard.card_id, "confirmed");
         try {
             if (sessionId) {
                 await bulkUpdateCardStatus(sessionId, [selectedCard.card_id], "confirmed");
@@ -268,11 +268,11 @@ export function CardWorkspace({
         } catch (err) {
             console.warn("[Workspace] Failed to persist confirm:", err);
         }
-    }, [dispatch, selectedCard, sessionId]);
+    }, [selectedCard, sessionId, updateCardStatus]);
 
     const handleRevertSelected = useCallback(async () => {
         if (!selectedCard) return;
-        dispatch(updateCardStatus({ card_id: selectedCard.card_id, status: "draft" }));
+        updateCardStatus(sessionId ?? null, selectedCard.card_id, "draft");
         try {
             if (sessionId) {
                 await bulkUpdateCardStatus(sessionId, [selectedCard.card_id], "draft");
@@ -280,7 +280,7 @@ export function CardWorkspace({
         } catch (err) {
             console.warn("[Workspace] Failed to persist revert:", err);
         }
-    }, [dispatch, selectedCard, sessionId]);
+    }, [selectedCard, sessionId, updateCardStatus]);
 
     const handleExportApkg = useCallback(async () => {
         if (!sessionId || exporting) return;

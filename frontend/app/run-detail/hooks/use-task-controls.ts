@@ -1,214 +1,182 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useDispatch } from "react-redux";
+import { useCallback, useEffect, useMemo } from "react";
+import { createActor } from "xstate";
+import { useSelector } from "@xstate/react";
 import { useTranslation } from "react-i18next";
 import {
+    ApiError,
     cancelTask,
     getTask,
     getTaskControlState,
     pauseTask,
     resumeTask,
 } from "@/lib/kardcraft/api";
-import { setPaused, setCancelled, setCancelling, setStatus, setStreamError } from "@/lib/features/runSlice";
+import { taskControlMachine } from "@/lib/run/task-control-machine";
+import { useRunCommands } from "@/lib/run/system";
+
+const TERMINAL_POLL_INTERVAL_MS = 2500;
+const CONTROL_POLL_INTERVAL_MS = 1500;
+
+const isControlTransitionError = (err: unknown): boolean => {
+    if (!(err instanceof ApiError)) return false;
+    return err.code === "invalid-transition";
+};
+
+const isControlTaskMissingError = (err: unknown): boolean => {
+    if (!(err instanceof ApiError)) return false;
+    return err.code === "task-not-found";
+};
 
 export function useTaskControls({
+    sessionId,
     currentTaskId,
     runStatus,
     isPaused,
     isCancelling,
 }: {
+    sessionId: string | null;
     currentTaskId: string | null;
     runStatus: "idle" | "running" | "completed" | "failed";
     isPaused: boolean;
     isCancelling: boolean;
 }) {
-    const dispatch = useDispatch();
+    const commands = useRunCommands();
     const { t } = useTranslation();
-    const [isPauseLoading, setIsPauseLoading] = useState(false);
-    const [isResumeLoading, setIsResumeLoading] = useState(false);
-    const [isPauseSyncing, setIsPauseSyncing] = useState(false);
-    const [canControlTask, setCanControlTask] = useState(false);
 
-    const taskPaused = (state: { is_paused: boolean }) => state.is_paused;
+    const actor = useMemo(() => {
+        const ref = createActor(taskControlMachine);
+        ref.start();
+        return ref;
+    }, []);
 
-    const taskCancelled = (state: { is_cancelled: boolean }) => state.is_cancelled;
-    const isTerminalTaskStatus = (status: unknown) => {
-        const normalized = String(status || "").toUpperCase();
-        return normalized === "TASK_STATUS_COMPLETED" || normalized === "TASK_STATUS_FAILED" || normalized === "TASK_STATUS_CANCELLED";
-    };
-    const syncTaskTerminalStatus = async () => {
+    useEffect(() => {
+        actor.send({
+            type: "SYNC_INPUT",
+            currentTaskId,
+            runStatus,
+            isCancelling,
+        });
+    }, [actor, currentTaskId, isCancelling, runStatus]);
+
+    const isPauseLoading = useSelector(actor, (snapshot) => snapshot.context.isPauseLoading);
+    const isResumeLoading = useSelector(actor, (snapshot) => snapshot.context.isResumeLoading);
+    const isPauseSyncing = useSelector(actor, (snapshot) => snapshot.context.isPauseSyncing);
+    const canControlTask = useSelector(actor, (snapshot) => snapshot.context.canControlTask);
+
+    const syncTaskTerminalStatus = useCallback(async () => {
         if (!currentTaskId) return;
         const task = await getTask(currentTaskId);
-        if (!isTerminalTaskStatus(task?.status)) {
-            setCanControlTask(true);
-            return;
-        }
-        setCanControlTask(false);
-        if (String(task?.status).toUpperCase() === "TASK_STATUS_COMPLETED") {
-            dispatch(setStatus("completed"));
-            return;
-        }
-        if (String(task?.status).toUpperCase() === "TASK_STATUS_CANCELLED") {
-            dispatch(setCancelled({ value: true, message: t("runDetail.cancelledMessage") }));
-            return;
-        }
-        dispatch(setStatus("failed"));
-    };
+        if (task.status === "running" || task.status === "queued") return;
 
-    useEffect(() => {
-        setCanControlTask(!!currentTaskId && runStatus === "running");
-    }, [currentTaskId, runStatus]);
+        actor.send({
+            type: "TERMINAL_STATUS_DETECTED",
+            status: task.status,
+        });
 
-    useEffect(() => {
-        if (currentTaskId && runStatus === "running") {
-            getTaskControlState(currentTaskId)
-                .then(state => {
-                    dispatch(setPaused({
-                        paused: taskPaused(state),
-                        reason: undefined,
-                    }));
-                    if (taskCancelled(state)) {
-                        dispatch(setCancelled({ value: true, message: t("runDetail.cancelledMessage") }));
-                    }
-                })
-                .catch(err => {
-                    console.warn("[RunDetail] Failed to fetch task control-state:", err);
-                });
-            syncTaskTerminalStatus().catch((err) => {
-                console.warn("[RunDetail] Failed to sync task terminal status:", err);
-            });
+        if (task.status === "completed") {
+            commands.setStatus(sessionId, "completed");
+            return;
         }
-    }, [currentTaskId, runStatus, dispatch, t]);
+        if (task.status === "cancelled") {
+            commands.setCancelled(sessionId, true);
+            return;
+        }
+        commands.setStatus(sessionId, "failed");
+    }, [actor, commands, currentTaskId, sessionId]);
+
+    const refreshControlState = useCallback(async () => {
+        if (!currentTaskId) return;
+        const state = await getTaskControlState(currentTaskId);
+        actor.send({
+            type: "CONTROL_STATE_UPDATED",
+            paused: state.is_paused,
+            cancelled: state.is_cancelled,
+        });
+        commands.setPaused(sessionId, state.is_paused, null, undefined);
+        if (state.is_cancelled) {
+            commands.setCancelled(sessionId, true);
+        }
+    }, [actor, commands, currentTaskId, sessionId]);
 
     useEffect(() => {
         if (!currentTaskId || runStatus !== "running") return;
-        const timer = setInterval(() => {
+        const run = () => {
             syncTaskTerminalStatus().catch((err) => {
                 console.warn("[RunDetail] Failed to poll task terminal status:", err);
             });
-        }, 2500);
+        };
+        run();
+        const timer = setInterval(run, TERMINAL_POLL_INTERVAL_MS);
         return () => clearInterval(timer);
-    }, [currentTaskId, runStatus]);
+    }, [currentTaskId, runStatus, syncTaskTerminalStatus]);
 
     useEffect(() => {
-        if ((!isPaused && !isPauseSyncing) || !currentTaskId) return;
+        if (!currentTaskId || runStatus !== "running") return;
+        if (!isPaused && !isPauseSyncing && !isCancelling) return;
 
-        const REFRESH_INTERVAL_MS = 1500;
-
-        const refreshControlState = async () => {
-            try {
-                const state = await getTaskControlState(currentTaskId);
-                const paused = taskPaused(state);
-                dispatch(setPaused({ paused }));
-                if (paused) {
-                    setIsPauseLoading(false);
-                    setIsResumeLoading(false);
-                }
-                if (!paused && isPauseSyncing) {
-                    setIsPauseSyncing(false);
-                    setIsPauseLoading(false);
-                    setIsResumeLoading(false);
-                }
-                if (taskCancelled(state)) {
-                    setIsPauseSyncing(false);
-                    setIsPauseLoading(false);
-                    setIsResumeLoading(false);
-                    dispatch(setCancelled({ value: true, message: t("runDetail.cancelledMessage") }));
-                }
-            } catch (err) {
+        const run = () => {
+            refreshControlState().catch((err) => {
                 console.warn("[RunDetail] Failed to refresh task control-state:", err);
-            }
+            });
         };
-
-        refreshControlState();
-        const interval = setInterval(refreshControlState, REFRESH_INTERVAL_MS);
-        return () => clearInterval(interval);
-    }, [isPaused, isPauseSyncing, currentTaskId, dispatch, t]);
-
-    useEffect(() => {
-        if (!isCancelling || !currentTaskId) return;
-
-        const CANCEL_POLL_INTERVAL_MS = 2000;
-
-        const checkCancelledState = async () => {
-            try {
-                const state = await getTaskControlState(currentTaskId);
-                if (taskCancelled(state)) {
-                    dispatch(setCancelled({ value: true, message: t("runDetail.cancelledMessage") }));
-                }
-            } catch (err) {
-                console.warn("[RunDetail] Failed to check cancelled task state:", err);
-            }
-        };
-
-        checkCancelledState();
-        const interval = setInterval(checkCancelledState, CANCEL_POLL_INTERVAL_MS);
-        return () => clearInterval(interval);
-    }, [isCancelling, currentTaskId, dispatch, t]);
-
-    useEffect(() => {
-        if (isPaused) {
-            setIsPauseLoading(false);
-            setIsResumeLoading(false);
-        } else {
-            setIsResumeLoading(false);
-            setIsPauseLoading(false);
-        }
-    }, [isPaused]);
+        run();
+        const timer = setInterval(run, CONTROL_POLL_INTERVAL_MS);
+        return () => clearInterval(timer);
+    }, [currentTaskId, isCancelling, isPauseSyncing, isPaused, refreshControlState, runStatus]);
 
     const handlePause = async () => {
         if (!currentTaskId || !canControlTask) {
-            dispatch(setStreamError(t("runDetail.pauseFailed")));
+            commands.setStreamError(sessionId, t("runDetail.pauseFailed"));
             return;
         }
-        setIsPauseLoading(true);
+        actor.send({ type: "PAUSE_REQUESTED" });
         try {
             await pauseTask(currentTaskId);
-            setIsPauseSyncing(true);
+            actor.send({ type: "CONTROL_SYNC_STARTED" });
         } catch (err) {
-            setIsPauseSyncing(false);
-            setIsPauseLoading(false);
-            if (err instanceof Error && err.message.includes("invalid-transition")) {
-                setCanControlTask(false);
-            }
-            dispatch(setStreamError(err instanceof Error ? err.message : t("runDetail.pauseFailed")));
+            actor.send({
+                type: "CONTROL_REQUEST_FAILED",
+                blockCurrentTask: isControlTransitionError(err),
+            });
+            commands.setStreamError(sessionId, err instanceof Error ? err.message : t("runDetail.pauseFailed"));
         }
     };
 
     const handleResume = async () => {
         if (!currentTaskId || !canControlTask) {
-            dispatch(setStreamError(t("runDetail.resumeFailed")));
+            commands.setStreamError(sessionId, t("runDetail.resumeFailed"));
             return;
         }
-        setIsResumeLoading(true);
+        actor.send({ type: "RESUME_REQUESTED" });
         try {
             await resumeTask(currentTaskId);
-            setIsPauseSyncing(true);
+            actor.send({ type: "CONTROL_SYNC_STARTED" });
         } catch (err) {
-            setIsPauseSyncing(false);
-            setIsResumeLoading(false);
-            if (err instanceof Error && err.message.includes("invalid-transition")) {
-                setCanControlTask(false);
-            }
-            dispatch(setStreamError(err instanceof Error ? err.message : t("runDetail.resumeFailed")));
+            actor.send({
+                type: "CONTROL_REQUEST_FAILED",
+                blockCurrentTask: isControlTransitionError(err),
+            });
+            commands.setStreamError(sessionId, err instanceof Error ? err.message : t("runDetail.resumeFailed"));
         }
     };
 
     const handleCancel = async () => {
         if (!currentTaskId || !canControlTask) {
-            dispatch(setStreamError(t("runDetail.cancelFailed")));
+            commands.setStreamError(sessionId, t("runDetail.cancelFailed"));
             return;
         }
-        dispatch(setCancelling({ value: true, message: t("runDetail.cancellingStatus") }));
+        commands.setCancelling(sessionId, true);
         try {
             await cancelTask(currentTaskId);
+            actor.send({ type: "CONTROL_SYNC_STARTED" });
         } catch (err) {
-            dispatch(setCancelling({ value: false }));
-            if (err instanceof Error && (err.message.includes("invalid-transition") || err.message.includes("task-not-found"))) {
-                setCanControlTask(false);
-            }
-            dispatch(setStreamError(err instanceof Error ? err.message : t("runDetail.cancelFailed")));
+            commands.setCancelling(sessionId, false);
+            actor.send({
+                type: "CONTROL_REQUEST_FAILED",
+                blockCurrentTask: isControlTransitionError(err) || isControlTaskMissingError(err),
+            });
+            commands.setStreamError(sessionId, err instanceof Error ? err.message : t("runDetail.cancelFailed"));
         }
     };
 

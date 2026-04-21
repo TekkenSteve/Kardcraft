@@ -17,7 +17,6 @@ export function ConversationPanel() {
         canControlTask,
         isCancelling,
         isNewSession,
-        sessionId,
         resolvedSessionId,
         currentTaskId,
     } = useRunDetailData();

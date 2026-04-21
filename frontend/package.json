@@ -32,6 +32,7 @@
     "@tailwindcss/typography": "^0.5.19",
     "@tauri-apps/api": "^2.9.0",
     "@tauri-apps/plugin-shell": "^2.3.3",
+    "@xstate/react": "^5.0.2",
     "@xyflow/react": "^12.9.3",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
@@ -52,7 +53,8 @@
     "rehype-highlight": "^7.0.2",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.4.0",
-    "zustand": "^5.0.9"
+    "zustand": "^5.0.9",
+    "xstate": "^5.19.2"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",

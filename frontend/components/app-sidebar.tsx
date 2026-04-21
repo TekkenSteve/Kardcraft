@@ -8,14 +8,13 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { UserPanel } from "@/components/user-panel";
 import { useEffect, useState, Suspense, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { useSelector } from "react-redux";
 import { RootState } from "@/lib/store";
 import { Session, updateSession, deleteSession } from "@/lib/kardcraft/api";
 import { listSessions } from "@/lib/kardcraft/session-repository";
 import useSWR from "swr";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,6 +36,9 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar";
+import { useRegistryViewModel } from "@/lib/run/system";
+import { toSessionKey } from "@/lib/run/types";
+import { useSelector } from "react-redux";
 
 function SidebarInner() {
   const pathname = usePathname();
@@ -52,10 +54,10 @@ function SidebarInner() {
   const { isMobile, setOpenMobile } = useSidebar();
   const { t } = useTranslation();
   
-  // Subscribe to run status for auto-refresh on task completion
-  const runStatus = useSelector((state: RootState) => state.run.status);
-  // Subscribe to session title from streaming events (title now generated at start of task)
-  const streamingTitle = useSelector((state: RootState) => state.run.sessionTitle);
+  const registry = useRegistryViewModel();
+  const activeSummary = registry.sessions.find((session) => session.sessionKey === toSessionKey(currentSessionId && currentSessionId !== "new" ? currentSessionId : null));
+  const runStatus = activeSummary?.status ?? "idle";
+  const streamingTitle = activeSummary?.sessionTitle ?? null;
   const userId = useSelector((state: RootState) => state.auth.userId);
 
   // Close sidebar on mobile after navigation
@@ -64,6 +66,12 @@ function SidebarInner() {
       setOpenMobile(false);
     }
   }, [isMobile, setOpenMobile]);
+
+  const navigateToFreshSession = useCallback((event?: React.MouseEvent) => {
+    event?.preventDefault();
+    handleNavClick();
+    router.push(`/run-detail?session_id=new&new_session=${Date.now()}`);
+  }, [handleNavClick, router]);
 
   const sessionsKey = userId ? ["recent-sessions", userId] : null;
   const sessionsFetcher = useCallback(async () => {
@@ -216,7 +224,7 @@ function SidebarInner() {
     <Sidebar collapsible="icon">
       <SidebarHeader>
         <div className="flex items-center justify-between w-full group-data-[collapsible=icon]:justify-center">
-          <Link href="/run-detail?session_id=new" onClick={handleNavClick} className="flex items-center gap-2 px-2 py-2 hover:opacity-90 transition-opacity group-data-[collapsible=icon]:hidden">
+          <Link href="/run-detail?session_id=new" onClick={navigateToFreshSession} className="flex items-center gap-2 px-2 py-2 hover:opacity-90 transition-opacity group-data-[collapsible=icon]:hidden">
             <Image
               src="/app-icon.png"
               alt="Kardcraft Agents"
@@ -247,6 +255,10 @@ function SidebarInner() {
                 <Link
                   href={route.href}
                   onClick={(e) => {
+                    if (route.href === "/run-detail?session_id=new") {
+                      navigateToFreshSession(e);
+                      return;
+                    }
                     if (route.active) {
                       e.preventDefault();
                       return;
@@ -372,6 +384,7 @@ function SidebarInner() {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>{t("sidebar.editTitleDialog")}</DialogTitle>
+            <DialogDescription>{t("sidebar.editTitlePlaceholder")}</DialogDescription>
           </DialogHeader>
           <Input
             value={editingTitle}

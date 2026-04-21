@@ -5,18 +5,17 @@ import { Button } from "@/components/ui/button";
 import { Sparkles, LayoutTemplate, ArrowRight } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useTranslation } from "react-i18next";
-import { useDispatch } from "react-redux";
-import { setSelectedAgent, setResearchStrategy } from "@/lib/features/runSlice";
+import { useRunCommands } from "@/lib/run/system";
 
 export default function AgentsPage() {
     const router = useRouter();
-    const dispatch = useDispatch();
+    const commands = useRunCommands();
     const { t } = useTranslation();
 
     const handleSelectAgent = (agentType: "normal" | "card_template") => {
-        dispatch(setSelectedAgent(agentType));
+        commands.setSelectedAgent(agentType);
         if (agentType === "card_template") {
-            dispatch(setResearchStrategy("standard"));
+            commands.setResearchStrategy("standard");
         }
         router.push("/run-detail?session_id=new");
     };

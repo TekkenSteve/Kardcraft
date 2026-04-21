@@ -3,11 +3,9 @@ import { persistStore, persistReducer } from 'redux-persist';
 import storage from 'redux-persist/lib/storage'; // defaults to localStorage for web
 import { combineReducers } from 'redux';
 
-import runReducer from './features/runSlice';
 import authReducer from './features/authSlice';
 
 const rootReducer = combineReducers({
-    run: runReducer,
     auth: authReducer,
 });
 

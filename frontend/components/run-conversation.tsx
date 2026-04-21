@@ -4,7 +4,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { RunMessage } from "@/lib/features/runSlice";
+import { RunMessage } from "@/lib/run/types";
 import { RootState } from "@/lib/store";
 import { cn, openExternalUrl } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
@@ -524,39 +524,7 @@ export function RunConversation({ messages, agentType = "normal" }: RunConversat
         }
     };
 
-    // Determine if a message is intermediate (from a specific agent in multi-agent flow)
-    // Per backend guidance: synthesis outputs are intermediate during streaming
-    // Final answers come via API fetch after WORKFLOW_COMPLETED, or directly from simple-agent
-    const isIntermediateMessage = (msg: Message) => {
-        if (msg.role !== "assistant") return false;
-        const sender = msg.sender || "";
-
-        // Check if it's a tool call message (JSON with selected_tools)
-        if (msg.content && msg.content.trim().startsWith('{') && msg.content.includes('"selected_tools"')) {
-            return true;
-        }
-
-        // Empty sender is treated as final output (API-fetched results, simple responses)
-        if (!sender) return false;
-
-        // WHITELIST: Only simple-agent shows directly during streaming
-        // Other final answers (synthesis) come from API fetch after completion
-        const directOutputAgents = [
-            "simple-agent",        // Simple task agent (non-research)
-        ];
-
-        // If it's a direct output agent, it's not intermediate
-        if (directOutputAgents.includes(sender)) return false;
-
-        // Everything else is intermediate (synthesis, reasoner-*, actor-*, etc.)
-        return true;
-    };
-
-    // Always filter out intermediate agent messages (they go to timeline panel)
-    const displayedMessages = useMemo(
-        () => messages.filter(msg => !isIntermediateMessage(msg)),
-        [messages]
-    );
+    const displayedMessages = useMemo(() => messages, [messages]);
 
     return (
         <div className="space-y-2 p-3 sm:p-4 overflow-hidden">

@@ -5,7 +5,7 @@ import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Eye, PanelRight, PanelRightClose, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -215,6 +215,9 @@ export function RunDetailView() {
                 <DialogContent className="max-w-3xl p-0">
                     <DialogHeader className="px-6 pt-6">
                         <DialogTitle>{t("runDetail.timelineTitle")}</DialogTitle>
+                        <DialogDescription>
+                            {t("runDetail.timelineStarting")}
+                        </DialogDescription>
                     </DialogHeader>
                     <div className="px-6 pb-6">
                         <div className="h-[60vh]">

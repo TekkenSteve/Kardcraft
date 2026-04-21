@@ -7,6 +7,19 @@ function apiUrl(path: string): string {
     return `${API_BASE_URL}${normalizedPath}`;
 }
 
+async function fetchWithTimeout(input: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        return await fetch(input, {
+            ...init,
+            signal: controller.signal,
+        });
+    } finally {
+        clearTimeout(timeout);
+    }
+}
+
 // Auth headers helper - Kratos uses cookies for authentication
 // We don't need to manually add Authorization headers since cookies are sent automatically
 function getAuthHeaders(): Record<string, string> {
@@ -35,6 +48,47 @@ export interface TaskSubmitResponse {
     created_at: string;
     stream_url?: string;
     session_id?: string;
+}
+
+export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
+
+const TASK_STATUS_MAP: Record<string, TaskStatus> = {
+    TASK_STATUS_QUEUED: "queued",
+    TASK_STATUS_RUNNING: "running",
+    TASK_STATUS_COMPLETED: "completed",
+    TASK_STATUS_FAILED: "failed",
+    TASK_STATUS_CANCELLED: "cancelled",
+    queued: "queued",
+    running: "running",
+    completed: "completed",
+    failed: "failed",
+    cancelled: "cancelled",
+};
+
+export function parseTaskStatus(value: unknown): TaskStatus {
+    if (typeof value !== "string") {
+        throw new Error("Invalid task status: non-string");
+    }
+    const mapped = TASK_STATUS_MAP[value];
+    if (!mapped) {
+        throw new Error(`Invalid task status: ${value}`);
+    }
+    return mapped;
+}
+
+export interface TaskDetailResponse {
+    task_id?: string;
+    workflow_id?: string;
+    query?: string;
+    created_at?: string;
+    session_id?: string;
+    status: TaskStatus;
+    raw_status: string;
+    error_message?: string;
+    final_output?: unknown;
+    result?: unknown;
+    metadata?: Record<string, unknown>;
+    [key: string]: unknown;
 }
 
 export async function submitTask(request: TaskSubmitRequest): Promise<TaskSubmitResponse> {
@@ -93,7 +147,7 @@ export async function submitTask(request: TaskSubmitRequest): Promise<TaskSubmit
     }
 }
 
-export async function getTask(taskId: string) {
+export async function getTask(taskId: string): Promise<TaskDetailResponse> {
     const response = await fetch(apiUrl(`/api/v1/tasks/${taskId}`), {
         credentials: "include",
     });
@@ -102,7 +156,13 @@ export async function getTask(taskId: string) {
         throw new Error(`Failed to get task: ${response.statusText}`);
     }
 
-    return response.json();
+    const payload = await response.json() as Record<string, unknown>;
+    const rawStatus = typeof payload.status === "string" ? payload.status : "";
+    return {
+        ...payload,
+        raw_status: rawStatus,
+        status: parseTaskStatus(rawStatus),
+    };
 }
 
 export interface TaskListResponse {
@@ -376,9 +436,9 @@ export async function listSessions(limit: number = 20, offset: number = 0): Prom
 }
 
 export async function getSession(sessionId: string): Promise<Session> {
-    const response = await fetch(apiUrl(`/api/v1/sessions/${sessionId}`), {
+    const response = await fetchWithTimeout(apiUrl(`/api/v1/sessions/${sessionId}`), {
         credentials: "include",
-    });
+    }, 10000);
 
     if (!response.ok) {
         throw new Error(`Failed to get session: ${response.statusText}`);
@@ -673,6 +733,25 @@ export interface ApiErrorEnvelope {
     };
 }
 
+export class ApiError extends Error {
+    code: string | null;
+    status: number;
+    details?: Record<string, unknown>;
+
+    constructor(params: {
+        message: string;
+        code?: string | null;
+        status: number;
+        details?: Record<string, unknown>;
+    }) {
+        super(params.message);
+        this.name = "ApiError";
+        this.code = params.code ?? null;
+        this.status = params.status;
+        this.details = params.details;
+    }
+}
+
 function nextIdempotencyKey(): string {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
         return crypto.randomUUID();
@@ -680,25 +759,33 @@ function nextIdempotencyKey(): string {
     return `session-control-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 }
 
-async function extractApiError(response: Response, fallbackPrefix: string): Promise<Error> {
+async function extractApiError(response: Response, fallbackPrefix: string): Promise<ApiError> {
     const text = await response.text();
     try {
         const payload = JSON.parse(text) as Partial<ApiErrorEnvelope>;
         const code = payload?.error?.code;
         const message = payload?.error?.message;
         if (code && message) {
-            return new Error(`${fallbackPrefix}: ${code} - ${message}`);
+            return new ApiError({
+                message: `${fallbackPrefix}: ${code} - ${message}`,
+                code,
+                status: response.status,
+                details: payload?.error?.details,
+            });
         }
     } catch {
         // fall through to text fallback
     }
-    return new Error(`${fallbackPrefix}: ${response.statusText}${text ? ` - ${text}` : ""}`);
+    return new ApiError({
+        message: `${fallbackPrefix}: ${response.statusText}${text ? ` - ${text}` : ""}`,
+        status: response.status,
+    });
 }
 
 export async function getSessionConversation(sessionId: string): Promise<SessionConversationResponse> {
-    const response = await fetch(apiUrl(`/api/v1/sessions/${sessionId}/conversation`), {
+    const response = await fetchWithTimeout(apiUrl(`/api/v1/sessions/${sessionId}/conversation`), {
         credentials: "include",
-    });
+    }, 10000);
 
     if (!response.ok) {
         throw new Error(`Failed to get session conversation: ${response.statusText}`);
@@ -717,9 +804,9 @@ export async function getSessionTimeline(sessionId: string, limit: number = 500,
         params.append('include_payload', 'true');
     }
 
-    const response = await fetch(apiUrl(`/api/v1/sessions/${sessionId}/timeline?${params.toString()}`), {
+    const response = await fetchWithTimeout(apiUrl(`/api/v1/sessions/${sessionId}/timeline?${params.toString()}`), {
         credentials: "include",
-    });
+    }, 10000);
 
     if (!response.ok) {
         throw new Error(`Failed to get session timeline: ${response.statusText}`);
@@ -729,9 +816,9 @@ export async function getSessionTimeline(sessionId: string, limit: number = 500,
 }
 
 export async function getSessionHistory(sessionId: string): Promise<SessionHistoryResponse> {
-    const response = await fetch(apiUrl(`/api/v1/sessions/${sessionId}/history`), {
+    const response = await fetchWithTimeout(apiUrl(`/api/v1/sessions/${sessionId}/history`), {
         credentials: "include",
-    });
+    }, 10000);
 
     if (!response.ok) {
         throw new Error(`Failed to get session history: ${response.statusText}`);

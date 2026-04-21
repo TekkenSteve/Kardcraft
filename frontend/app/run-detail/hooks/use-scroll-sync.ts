@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { TimelineDisplayEvent } from "./use-timeline";
-import { RunMessage } from "@/lib/features/runSlice";
+import { RunMessage } from "@/lib/run/types";
 
 export function useScrollSync({
     timelineScrollRef,

@@ -2,9 +2,8 @@
 
 import { createContext, useContext } from "react";
 import { SessionDataBundle, SessionHistoryData } from "./run-detail-types";
-import { RunMessage } from "@/lib/features/runSlice";
+import { RunMessage, CardData } from "@/lib/run/types";
 import { RunEvent } from "@/lib/kardcraft/types";
-import { CardData } from "@/lib/features/runSlice";
 import { TimelineDisplayEvent } from "./hooks/use-timeline";
 
 export interface RunDetailDataContextValue {
