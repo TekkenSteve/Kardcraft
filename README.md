@@ -1,35 +1,38 @@
 # Kardcraft
 
-Build knowledge workflows, not glue scripts.
+Automate flashcard production for spaced repetition workflows.
 
 ## What This Project Does
 
-Kardcraft is an AI-native cardcrafting system for Anki-style spaced repetition.
-It turns messy learning inputs (notes, PDFs, lecture material, highlights, Q&A context) into high-quality flashcards that are review-ready.
+Kardcraft is a card generation system for Anki-style spaced repetition.
+It converts raw learning inputs (notes, PDFs, lecture material, highlights, Q&A context) into flashcards that can be reviewed directly.
 
-Core idea: automate the expensive part of learning infrastructure, then keep improving card quality from review feedback over time.
+Core idea: automate card authoring, then improve output quality over time using review feedback.
 
-## Why This Bet Is Strong
+## Why This Project Is Worth Building
 
-### 1. Time Leverage
+### 1. Clear Time Savings
 
-This is not about saving a few minutes.  
-It compresses hours of manual card authoring into minutes, while the value compounds across hundreds of future review sessions.
+Manual card authoring is slow.
+Automation reduces authoring time from hours to minutes for large note sets.
 
-### 2. Foundation Models Are Ammunition, Not a Threat
+### 2. Better Models Improve Output
 
-Model upgrades do not kill this product category.  
-They make the agent better at extraction, abstraction, difficulty calibration, and format control.
+Model upgrades are more likely to help this project than replace it.
+The model is only one layer; the product value also depends on ingestion workflow, card quality rules, review integration, and user-specific adaptation.
+When models improve, the same pipeline usually gets better card extraction, summarization, and difficulty control with lower engineering cost.
 
-### 3. Dense Quality Feedback Loop
+### 3. Fast Quality Signal
 
-Users are forced to evaluate output daily during review.  
-Bad cards cause immediate pain and churn. Good cards create flow, trust, and long-term retention.
+Most AI content is used once and then ignored.
+Flashcards are different: users must read them during review, otherwise they cannot pass recall.
+If a card is bad, users immediately show it by editing it, skipping it, or failing recall.
+Those signals arrive daily and can be mapped to concrete generation problems, so quality iteration is fast.
 
-### 4. Data Flywheel
+### 4. Personalized Adaptation Over Time
 
-Every remember/forget event is training signal.  
-The system learns how each user encodes memory and adapts card generation. Usage builds defensibility.
+Each remember/forget event is useful signal.
+The system can learn user-specific memory patterns and adjust future card generation.
 
 ## Project Status
 
