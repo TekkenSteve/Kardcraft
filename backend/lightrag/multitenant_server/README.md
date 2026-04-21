@@ -8,7 +8,7 @@ For each workspace, it starts and reuses an official `lightrag-server` process.
 - Route by `LIGHTRAG-WORKSPACE` request header.
 - Per-workspace pooled clients (borrow/recycle model).
 - Global and per-workspace inflight concurrency limits.
-- Workspace idle eviction when workspace count reaches upper bound.
+- Strict LRU workspace eviction when workspace count reaches upper bound.
 - Per-workspace isolated runtime process with independent `working_dir` and `input_dir`.
 - API compatibility by proxying `/{path}` requests.
 
@@ -35,7 +35,6 @@ For each workspace, it starts and reuses an official `lightrag-server` process.
 - `LIGHTRAG_ENFORCE_WORKSPACE_HEADER` (default `false`)
 - `LIGHTRAG_POOL_SIZE_PER_WORKSPACE` (default `4`)
 - `LIGHTRAG_MAX_WORKSPACE_COUNT` (default `200`)
-- `LIGHTRAG_WORKSPACE_IDLE_TTL_SEC` (default `1800`)
 - `LIGHTRAG_BORROW_TIMEOUT_SEC` (default `10`)
 - `LIGHTRAG_GLOBAL_MAX_INFLIGHT` (default `128`)
 - `LIGHTRAG_PER_WORKSPACE_MAX_INFLIGHT` (default `16`)

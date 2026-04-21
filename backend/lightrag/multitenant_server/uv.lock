@@ -1034,6 +1034,7 @@ name = "lightrag-multitenant-server"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "cachetools" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "lightrag-hku", extra = ["api"] },
@@ -1045,6 +1046,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cachetools", specifier = ">=7.0.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "lightrag-hku", extras = ["api"], specifier = ">=1.4.13" },

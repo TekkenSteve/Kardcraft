@@ -23,7 +23,6 @@ class Settings:
 
     pool_size_per_workspace: int = int(os.getenv("LIGHTRAG_POOL_SIZE_PER_WORKSPACE", "4"))
     max_workspace_count: int = int(os.getenv("LIGHTRAG_MAX_WORKSPACE_COUNT", "200"))
-    workspace_idle_ttl_sec: int = int(os.getenv("LIGHTRAG_WORKSPACE_IDLE_TTL_SEC", "1800"))
     borrow_timeout_sec: float = float(os.getenv("LIGHTRAG_BORROW_TIMEOUT_SEC", "10"))
 
     global_max_inflight: int = int(os.getenv("LIGHTRAG_GLOBAL_MAX_INFLIGHT", "128"))
