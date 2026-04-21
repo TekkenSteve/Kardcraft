@@ -10,8 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Sparkles, User, Layers, Brain, CheckCircle2, Clock, FileText, Maximize2, Minimize2, X, LayoutGrid, List, SlidersHorizontal, Lock, Unlock, Download } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { bulkUpdateStatus, updateCardModel, updateCardStatus, CardData } from "@/lib/features/runSlice";
-import { bulkUpdateCardModel, bulkUpdateCardStatus, createApkgExport, getApkgExport, getApkgExportDownloadUrl, ApkgExportRecord, getTask } from "@/lib/kardcraft/api";
+import { bulkUpdateStatus, updateCardQuestionType, updateCardStatus, CardData } from "@/lib/features/runSlice";
+import { bulkUpdateCardQuestionType, bulkUpdateCardStatus, createApkgExport, getApkgExport, getApkgExportDownloadUrl, ApkgExportRecord, getTask } from "@/lib/kardcraft/api";
 import { getSessionHistory, getSessionWorkspace } from "@/lib/kardcraft/session-repository";
 
 export function CardWorkspace({
@@ -34,7 +34,7 @@ export function CardWorkspace({
     const dispatch = useDispatch();
     const [activeTab, setActiveTab] = useState<"all" | "draft" | "active" | "confirmed">("all");
     const [selectedId, setSelectedId] = useState<string | null>(null);
-    const [selectedTemplate, setSelectedTemplate] = useState<string>("");
+    const [selectedQuestionType, setSelectedQuestionType] = useState<string>("");
     const [searchTerm, setSearchTerm] = useState<string>("");
     const [viewMode, setViewMode] = useState<"list" | "grid">("list");
     const [density, setDensity] = useState<"comfortable" | "compact">("comfortable");
@@ -45,6 +45,7 @@ export function CardWorkspace({
     const [exporting, setExporting] = useState(false);
     const [exportError, setExportError] = useState("");
     const exportNotFoundRetriesRef = useRef(0);
+    const syncedQuestionTypeCardIdRef = useRef<string | null>(null);
     const [resolvedTemplateProfiles, setResolvedTemplateProfiles] = useState<string[]>([]);
     const PAGE_SIZE = 20;
     const VIRTUAL_THRESHOLD = 50;
@@ -55,7 +56,7 @@ export function CardWorkspace({
     const [containerHeight, setContainerHeight] = useState(0);
     const focusRing = "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 focus-visible:ring-offset-2 focus-visible:ring-offset-background";
 
-    const templateOptions = useMemo(() => {
+    const questionTypeOptions = useMemo(() => {
         // Real source only:
         // question type options must come from backend metadata, never inferred from card text/content.
         const merged = new Set<string>();
@@ -203,25 +204,28 @@ export function CardWorkspace({
     }, [sessionId, cardsVersion]);
 
     useEffect(() => {
-        if (!selectedCard) return;
-
-        const model = String(selectedCard.suggested_question_type || selectedCard.content.model || "").trim();
-        const hasOptions = templateOptions.length > 0;
-        const modelValid = !hasOptions || templateOptions.some((option) => option.id === model);
-        const next = model && modelValid
-            ? model
-            : (hasOptions ? templateOptions[0].id : "");
-
-        if (next !== selectedTemplate) {
-            setSelectedTemplate(next);
+        if (!selectedCard) {
+            syncedQuestionTypeCardIdRef.current = null;
+            return;
         }
-    }, [selectedCard, selectedTemplate, templateOptions]);
+        if (syncedQuestionTypeCardIdRef.current === selectedCard.card_id) return;
+        syncedQuestionTypeCardIdRef.current = selectedCard.card_id;
+
+        const questionType = String(selectedCard.suggested_question_type || selectedCard.content.model || "").trim();
+        const hasOptions = questionTypeOptions.length > 0;
+        const questionTypeValid = !hasOptions || questionTypeOptions.some((option) => option.id === questionType);
+        const next = questionType && questionTypeValid
+            ? questionType
+            : (hasOptions ? questionTypeOptions[0].id : "");
+
+        setSelectedQuestionType((prev) => (prev === next ? prev : next));
+    }, [selectedCard, questionTypeOptions]);
 
     const handleSelect = useCallback((cardId: string) => {
         setSelectedId(cardId);
         const card = cards.find((item) => item.card_id === cardId);
-        const model = String(card?.suggested_question_type || card?.content?.model || "").trim();
-        setSelectedTemplate(model);
+        const questionType = String(card?.suggested_question_type || card?.content?.model || "").trim();
+        setSelectedQuestionType(questionType);
         setInspectorOpen(true);
     }, [cards]);
 
@@ -243,16 +247,16 @@ export function CardWorkspace({
     }, [dispatch, filteredCards, sessionId]);
 
     const handleApplyQuestionType = useCallback(async () => {
-        if (!selectedCard || !selectedTemplate) return;
-        dispatch(updateCardModel({ card_id: selectedCard.card_id, model: selectedTemplate }));
+        if (!selectedCard || !selectedQuestionType) return;
+        dispatch(updateCardQuestionType({ card_id: selectedCard.card_id, questionType: selectedQuestionType }));
         try {
             if (sessionId) {
-                await bulkUpdateCardModel(sessionId, [selectedCard.card_id], selectedTemplate);
+                await bulkUpdateCardQuestionType(sessionId, [selectedCard.card_id], selectedQuestionType);
             }
         } catch (err) {
             console.warn("[Workspace] Failed to persist question type update:", err);
         }
-    }, [dispatch, selectedCard, selectedTemplate, sessionId]);
+    }, [dispatch, selectedCard, selectedQuestionType, sessionId]);
 
     const handleConfirmSelected = useCallback(async () => {
         if (!selectedCard) return;
@@ -336,16 +340,16 @@ export function CardWorkspace({
     }, [activeTab, searchTerm, cardsSignature, setSize]);
 
     useEffect(() => {
-        if (!selectedTemplate) return;
-        if (templateOptions.length === 0) return;
-        const valid = templateOptions.some((option) => option.id === selectedTemplate);
+        if (!selectedQuestionType) return;
+        if (questionTypeOptions.length === 0) return;
+        const valid = questionTypeOptions.some((option) => option.id === selectedQuestionType);
         if (!valid) {
-            const fallback = templateOptions[0]?.id || "";
-            if (fallback !== selectedTemplate) {
-                setSelectedTemplate(fallback);
+            const fallback = questionTypeOptions[0]?.id || "";
+            if (fallback !== selectedQuestionType) {
+                setSelectedQuestionType(fallback);
             }
         }
-    }, [selectedTemplate, templateOptions]);
+    }, [selectedQuestionType, questionTypeOptions]);
 
     const cardPadding = density === "compact" ? "p-2.5 pt-1.5" : "p-3 pt-2";
     const cardText = density === "compact" ? "text-[11px]" : "text-xs";
@@ -790,7 +794,7 @@ export function CardWorkspace({
                                             focusRing
                                         )}
                                         type="button"
-                                        disabled={!selectedCard || !selectedTemplate}
+                                        disabled={!selectedCard || !selectedQuestionType}
                                         onClick={handleApplyQuestionType}
                                     >
                                         {t("workspace.applyQuestionType")}
@@ -848,11 +852,11 @@ export function CardWorkspace({
                                                 "w-full text-xs rounded-md border bg-[var(--app-surface-1)] px-2 py-1.5 border-[var(--app-border-subtle)]",
                                                 focusRing
                                             )}
-                                            disabled={templateOptions.length === 0}
-                                            value={selectedTemplate}
-                                            onChange={(event) => setSelectedTemplate(event.target.value)}
+                                            disabled={questionTypeOptions.length === 0}
+                                            value={selectedQuestionType}
+                                            onChange={(event) => setSelectedQuestionType(event.target.value)}
                                         >
-                                            {templateOptions.map((option) => (
+                                            {questionTypeOptions.map((option) => (
                                                 <option key={option.id} value={option.id}>
                                                     {option.label}
                                                 </option>
@@ -931,7 +935,7 @@ export function CardWorkspace({
                                     type="button"
                                     size="sm"
                                     variant="outline"
-                                    disabled={!selectedCard || !selectedTemplate}
+                                    disabled={!selectedCard || !selectedQuestionType}
                                     onClick={handleApplyQuestionType}
                                 >
                                     {t("workspace.applyQuestionType")}
@@ -1056,7 +1060,7 @@ export function CardWorkspace({
                             focusRing
                         )}
                         type="button"
-                        disabled={!selectedCard || !selectedTemplate}
+                        disabled={!selectedCard || !selectedQuestionType}
                         onClick={handleApplyQuestionType}
                     >
                         {t("workspace.applyQuestionType")}
@@ -1113,11 +1117,11 @@ export function CardWorkspace({
                                     "w-full text-xs rounded-md border bg-[var(--app-surface-1)] px-2 py-1.5 border-[var(--app-border-subtle)]",
                                     focusRing
                                 )}
-                                disabled={templateOptions.length === 0}
-                                value={selectedTemplate}
-                                onChange={(event) => setSelectedTemplate(event.target.value)}
+                                disabled={questionTypeOptions.length === 0}
+                                value={selectedQuestionType}
+                                onChange={(event) => setSelectedQuestionType(event.target.value)}
                             >
-                                {templateOptions.map((option) => (
+                                {questionTypeOptions.map((option) => (
                                     <option key={option.id} value={option.id}>
                                         {option.label}
                                     </option>

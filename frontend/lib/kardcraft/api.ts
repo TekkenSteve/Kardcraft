@@ -1112,7 +1112,7 @@ export async function bulkUpdateCardStatus(sessionId: string, cardIds: string[],
     }
 }
 
-export async function bulkUpdateCardModel(sessionId: string, cardIds: string[], model: string): Promise<void> {
+export async function bulkUpdateCardQuestionType(sessionId: string, cardIds: string[], questionType: string): Promise<void> {
     const response = await fetch(apiUrl(`/api/v1/cards/${sessionId}/bulk`), {
         method: "POST",
         headers: {
@@ -1121,15 +1121,15 @@ export async function bulkUpdateCardModel(sessionId: string, cardIds: string[], 
         },
         credentials: "include",
         body: JSON.stringify({
-            action: "update_model",
+            action: "update_question_type",
             card_ids: cardIds,
-            model,
+            question_type: questionType,
         }),
     });
 
     if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Failed to update card model: ${response.statusText} - ${errorText}`);
+        throw new Error(`Failed to update card question type: ${response.statusText} - ${errorText}`);
     }
 }
 

@@ -1080,14 +1080,14 @@ const runSlice = createSlice({
                 state.cardsVersion += 1;
             }
         },
-        updateCardModel: (state, action: PayloadAction<{ card_id: string; model: CardData["content"]["model"] }>) => {
+        updateCardQuestionType: (state, action: PayloadAction<{ card_id: string; questionType: CardData["content"]["model"] }>) => {
             const index = state.cards.findIndex(card => card.card_id === action.payload.card_id);
             if (index !== -1) {
                 state.cards[index] = {
                     ...state.cards[index],
                     content: {
                         ...state.cards[index].content,
-                        model: action.payload.model,
+                        model: action.payload.questionType,
                     },
                 };
                 state.cardsVersion += 1;
@@ -1102,11 +1102,11 @@ const runSlice = createSlice({
             ));
             state.cardsVersion += 1;
         },
-        bulkUpdateModel: (state, action: PayloadAction<{ card_ids: string[]; model: CardData["content"]["model"] }>) => {
+        bulkUpdateQuestionType: (state, action: PayloadAction<{ card_ids: string[]; questionType: CardData["content"]["model"] }>) => {
             const idSet = new Set(action.payload.card_ids);
             state.cards = state.cards.map(card => (
                 idSet.has(card.card_id)
-                    ? { ...card, content: { ...card.content, model: action.payload.model } }
+                    ? { ...card, content: { ...card.content, model: action.payload.questionType } }
                     : card
             ));
             state.cardsVersion += 1;
@@ -1263,6 +1263,6 @@ export const {
     setResearchStrategy, setMainWorkflowId, setStatus,
     setPaused, setCancelling, setCancelled, setRunPhase, setTemplatePreflight, clearTemplatePreflight,
     upsertCard, upsertCardsBatch, setCards, removeCard,
-    updateCardStatus, updateCardModel, bulkUpdateStatus, bulkUpdateModel
+    updateCardStatus, updateCardQuestionType, bulkUpdateStatus, bulkUpdateQuestionType
 } = runSlice.actions;
 export default runSlice.reducer;

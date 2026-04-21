@@ -53,23 +53,31 @@ func handleBulkCards(w http.ResponseWriter, r *http.Request, sessionID string, d
 		return
 	}
 	var req struct {
-		Action  string   `json:"action"`
-		CardIDs []string `json:"card_ids"`
-		Status  string   `json:"status"`
-		Model   string   `json:"model"`
+		Action       string   `json:"action"`
+		CardIDs      []string `json:"card_ids"`
+		Status       string   `json:"status"`
+		QuestionType string   `json:"question_type"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	if len(req.CardIDs) == 0 {
 		http.Error(w, "card_ids required", http.StatusBadRequest)
 		return
 	}
-	if req.Action != "update_status" && req.Action != "update_model" {
+	if req.Action != "update_status" && req.Action != "update_question_type" {
 		http.Error(w, "invalid action", http.StatusBadRequest)
 		return
 	}
+	effectiveQuestionType := strings.TrimSpace(req.QuestionType)
+
 	if req.Action == "update_status" {
 		if req.Status != "draft" && req.Status != "ai_editing" && req.Status != "user_editing" && req.Status != "confirmed" {
 			http.Error(w, "invalid status", http.StatusBadRequest)
+			return
+		}
+	}
+	if req.Action == "update_question_type" {
+		if effectiveQuestionType == "" {
+			http.Error(w, "question_type required", http.StatusBadRequest)
 			return
 		}
 	}
@@ -116,8 +124,8 @@ func handleBulkCards(w http.ResponseWriter, r *http.Request, sessionID string, d
 		switch req.Action {
 		case "update_status":
 			editState["status"] = req.Status
-		case "update_model":
-			content["model"] = req.Model
+		case "update_question_type":
+			content["model"] = effectiveQuestionType
 		}
 		meta["modified_at"] = now
 		updated++
