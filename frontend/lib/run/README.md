@@ -6,7 +6,7 @@
 
 - `app-machine.ts`: root `AppActor`, lifecycle owner for child registries.
 - `session-registry-machine.ts`: session index + active-session selection + promotion mapping.
-- `session-machine.ts`: per-session lifecycle state machine (`idle/hydrating/ready/running/paused/completing/terminal`).
+- `session-machine.ts`: per-session lifecycle state machine (`idle/hydrating/ready/running/paused/terminal`).
 - `stream-actor.ts`: SSE transport effect actor; decodes wire events into `RunDomainEvent`.
 - `session-bundle-loader-machine.ts`: bootstrap loader actor for session/conversation/timeline/history.
 - `workspace-loader-machine.ts`: workspace projection loader actor.
