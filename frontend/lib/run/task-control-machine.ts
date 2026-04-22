@@ -1,5 +1,5 @@
-import { assign, createMachine } from "xstate";
 import { TaskStatus } from "@/lib/kardcraft/api";
+import { assign, createMachine } from "xstate";
 
 type RunStatus = "idle" | "running" | "completed" | "failed";
 
@@ -139,6 +139,9 @@ export const taskControlMachine = createMachine({
                 const blockedTaskId = isTerminalStatus(event.status) ? context.currentTaskId : context.blockedTaskId;
                 return {
                     blockedTaskId,
+                    isPauseLoading: false,
+                    isResumeLoading: false,
+                    isPauseSyncing: false,
                     canControlTask: computeCanControlTask(
                         context.currentTaskId,
                         context.runStatus,
