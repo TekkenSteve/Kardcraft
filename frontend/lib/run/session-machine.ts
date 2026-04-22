@@ -7,7 +7,6 @@ export type SessionLifecycleState =
     | "ready"
     | "running"
     | "paused"
-    | "completing"
     | "terminal.completed"
     | "terminal.failed"
     | "terminal.cancelled";
@@ -165,7 +164,7 @@ export function createSessionMachine() {
                     DOMAIN_EVENT: [
                         {
                             guard: ({ event }) => event.event.kind === "workflow.completed",
-                            target: "completing",
+                            target: "terminal.completed",
                             actions: assign({
                                 lastError: null,
                             }),
@@ -231,19 +230,6 @@ export function createSessionMachine() {
                             lastError: null,
                         }),
                     },
-                },
-            },
-            completing: {
-                always: {
-                    target: "terminal.completed",
-                },
-                on: {
-                    DOMAIN_EVENT: [
-                        {
-                            guard: ({ event }) => event.event.kind === "workflow.failed",
-                            target: "terminal.failed",
-                        },
-                    ],
                 },
             },
             terminal: {
