@@ -104,4 +104,49 @@ describe("stream actor machine", () => {
         expect(onCardsBatch.mock.calls[0][0][0].card_id).toBe("card-1");
         actor.stop();
     });
+
+    it("reports terminal reconnect failure exactly once", async () => {
+        vi.useFakeTimers();
+        let actor: ReturnType<typeof createActor> | null = null;
+        try {
+            const onConnectionState = vi.fn();
+            const onStreamError = vi.fn();
+            const machine = createStreamActorMachine({
+                getStreamUrl: () => "http://localhost/stream?workflow_id=wf-1",
+                createEventSource: () => new FakeEventSource(),
+                nowIso: () => "2026-01-01T00:00:00.000Z",
+                onConnectionState,
+                onStreamError,
+                onDomainEvent: vi.fn(),
+                onCardsBatch: vi.fn(),
+                onRejectWireEvent: vi.fn(),
+            });
+
+            actor = createActor(machine);
+            actor.start();
+            actor.send({ type: "START", workflowId: "wf-1", restartKey: 0 });
+            actor.send({ type: "OPEN" });
+            expect(actor.getSnapshot().value).toBe("connected");
+
+            for (let attempt = 1; attempt <= 9; attempt += 1) {
+                actor.send({ type: "ERROR", reason: "transport_error" });
+                await vi.runOnlyPendingTimersAsync();
+                if (attempt <= 8) {
+                    actor.send({ type: "OPEN" });
+                    expect(actor.getSnapshot().value).toBe("connected");
+                }
+            }
+
+            expect(actor.getSnapshot().value).toBe("failure");
+            expect(onConnectionState.mock.calls.filter(([state]) => state === "error")).toHaveLength(1);
+            expect(
+                onStreamError.mock.calls.filter(
+                    ([message]) => message === "Stream unavailable for workflow wf-1 after 9 attempts",
+                ),
+            ).toHaveLength(1);
+        } finally {
+            actor?.stop();
+            vi.useRealTimers();
+        }
+    });
 });

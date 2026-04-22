@@ -1,6 +1,6 @@
 import { assign, createMachine } from "xstate";
-import { CardData } from "./types";
 import { mapWireEventToDomainEvent, RunDomainEvent } from "./domain-events";
+import { CardData } from "./types";
 
 const MAX_RECONNECT_DELAY_MS = 10000;
 const BASE_RECONNECT_DELAY_MS = 1000;
@@ -145,6 +145,8 @@ const asCardData = (data: Record<string, unknown>): CardData | null => {
 };
 
 const reconnectDelay = (attempt: number) => Math.min(BASE_RECONNECT_DELAY_MS * Math.pow(2, attempt), MAX_RECONNECT_DELAY_MS);
+const streamUnavailableMessage = (workflowId: string, attempt: number) =>
+    `Stream unavailable for workflow ${workflowId} after ${attempt} attempts`;
 
 export function createStreamActorMachine(deps: StreamActorDeps) {
     return createMachine({
@@ -191,9 +193,12 @@ export function createStreamActorMachine(deps: StreamActorDeps) {
                     assign(({ context, self }) => {
                         if (!context.workflowId) return {};
                         const baseUrl = deps.getStreamUrl(context.workflowId);
-                        const url = context.lastEventId
-                            ? `${baseUrl}&last_event_id=${encodeURIComponent(context.lastEventId)}`
-                            : baseUrl;
+                        let url = baseUrl;
+                        if (context.lastEventId) {
+                            const urlObj = new URL(baseUrl, window.location.origin);
+                            urlObj.searchParams.set("last_event_id", context.lastEventId);
+                            url = urlObj.toString();
+                        }
                         const source = deps.createEventSource(url);
 
                         source.onopen = () => {
@@ -362,11 +367,6 @@ export function createStreamActorMachine(deps: StreamActorDeps) {
             reconnecting: {
                 entry: ({ context }) => {
                     if (!context.workflowId) return;
-                    if (context.attempt > MAX_RECONNECT_ATTEMPTS) {
-                        deps.onConnectionState("error");
-                        deps.onStreamError(`Stream unavailable for workflow ${context.workflowId} after ${context.attempt} attempts`);
-                        return;
-                    }
                     deps.onConnectionState("reconnecting");
                     deps.onStreamError(null);
                 },
@@ -392,8 +392,10 @@ export function createStreamActorMachine(deps: StreamActorDeps) {
                 },
             },
             failure: {
-                entry: () => {
+                entry: ({ context }) => {
                     deps.onConnectionState("error");
+                    if (!context.workflowId) return;
+                    deps.onStreamError(streamUnavailableMessage(context.workflowId, context.attempt));
                 },
                 on: {
                     START: {
