@@ -1,0 +1,9 @@
+dev:
+  disable_api_flow_enforcement: true
+
+log:
+  level: debug
+
+session:
+  cookie:
+    secure: "false"

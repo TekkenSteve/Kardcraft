@@ -1,6 +1,6 @@
 version: v0.13.0
 
-dsn: postgres://postgres:postgres123@postgres:5432/kardcraft?sslmode=disable&max_conns=20&max_idle_conns=4
+dsn: ""
 
 serve:
   public:
@@ -82,26 +82,20 @@ selfservice:
           hooks:
             - hook: session
 
-# Development settings - disable strict origin checking
-dev:
-  disable_api_flow_enforcement: true
-
 log:
-  level: debug
+  level: info
   format: text
-  leak_sensitive_values: true
+  leak_sensitive_values: false
 
 secrets:
-  cookie:
-    - PLEASE-CHANGE-ME-I-AM-VERY-INSECURE
-  cipher:
-    - 32-LONG-SECRET-NOT-SECURE-AT-ALL
+  cookie: []
+  cipher: []
 
 # Session cookie configuration
 session:
   cookie:
     same_site: Lax
-    secure: "false"  # Set to "true" in production with HTTPS
+    secure: "true"
     path: /
 
 ciphers:
@@ -110,7 +104,7 @@ ciphers:
 hashers:
   algorithm: bcrypt
   bcrypt:
-    cost: 8
+    cost: 12
 
 identity:
   default_schema_id: default
@@ -120,7 +114,7 @@ identity:
 
 courier:
   smtp:
-    connection_uri: smtps://test:test@mailslurper:1025/?skip_ssl_verify=true
+    connection_uri: ""
 
 feature_flags:
   use_continue_with_transitions: true

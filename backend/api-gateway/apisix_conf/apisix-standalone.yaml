@@ -89,13 +89,14 @@ routes:
         allow_credentials: true
       proxy-control:
         no_cache: true
-        proxy_buffering: "off"
+        proxy_buffering: false
 
   # WebSocket 事件路由（受保护，统一进入 Oathkeeper）
   -
     id: protected-websocket-events
     uri: "/api/events"
     priority: 2000
+    enable_websocket: true
     upstream:
       nodes:
         "oathkeeper:4455": 1
@@ -119,6 +120,30 @@ routes:
         allow_credentials: true
 
   # 受保护 API 统一路由：所有 /api/* 请求都经 Oathkeeper 鉴权并注入身份头
+  -
+    id: protected-files-api
+    uri: "/api/v1/files/*"
+    priority: 1500
+    upstream:
+      nodes:
+        "oathkeeper:4455": 1
+      type: roundrobin
+      timeout:
+        connect: 10
+        send: 10
+        read: 120
+    plugins:
+      proxy-rewrite:
+        host: "kardcraft-files.local"
+      cors:
+        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
+        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
+        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With,Idempotency-Key"
+        expose_headers: "Content-Type,Set-Cookie,Content-Disposition"
+        max_age: 3600
+        allow_credentials: true
+
+  # 受保护 API 统一路由：其余 /api/* 请求都经 Oathkeeper 鉴权并注入身份头
   -
     id: protected-api
     uri: "/api/*"

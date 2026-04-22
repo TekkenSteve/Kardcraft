@@ -16,7 +16,7 @@ errors:
     json:
       enabled: true
       config:
-        verbose: true
+        verbose: false
 
 authenticators:
   cookie_session:

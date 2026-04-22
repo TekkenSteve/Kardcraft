@@ -4,7 +4,7 @@
     url: http://file-storage:8080
     strip_path: /api
   match:
-    url: http://kardcraft.local/api/v1/files/<.*>
+    url: http://kardcraft-files.local/api/v1/files/<.*>
     methods:
       - GET
       - POST
