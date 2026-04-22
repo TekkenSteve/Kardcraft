@@ -1,12 +1,12 @@
 # ============================================================================
-# Kardcraft 完整开发环境 Docker Compose 配置
+# Kardcraft Complete Development Environment Docker Compose Configuration
 # ============================================================================
 services:
   # ============================================================================
-  # 核心服务
+  # Core Services
   # ============================================================================
 
-  # Redis服务
+  # Redis Service
   redis:
     image: redis:7-alpine
     container_name: kardcraft-redis
@@ -24,7 +24,7 @@ services:
       timeout: 3s
       retries: 5
 
-  # PostgreSQL服务
+  # PostgreSQL Service
   postgres:
     image: postgres:15-alpine
     container_name: kardcraft-postgres
@@ -65,21 +65,21 @@ services:
     networks:
       - kardcraft-network
 
-  # Ory Kratos 数据库表结构迁移服务 - 一次性任务  
-  # 迁移是幂等的，重复运行不会造成问题
-  # 生产环境升级 Kratos 时，迁移会自动处理表结构变更
-  # 可以使用 kratos migrate sql status 查看迁移状态
+  # Ory Kratos Database Table Structure Migration Service - One-Time Task
+  # Migration is idempotent, running it multiple times will not cause issues
+  # When upgrading Kratos in the production environment, the migration will automatically handle table structure changes
+  # You can use kratos migrate sql status to check the migration status
   kratos-migrate:
     image: oryd/kratos:v25.4.0
     container_name: kardcraft-kratos-migrate
     environment:
-      # 数据库连接字符串 - 生产环境应启用 SSL  
+      # Database connection string - SSL should be enabled in production environment  
       - DSN=postgres://postgres:postgres123@postgres:5432/kardcraft?sslmode=disable&max_conns=20&max_idle_conns=4
-      # 生产环境：sslmode=require 或 verify-full 
+      # Production environment: sslmode=require or verify-full 
     volumes:
       - ./backend/kratos/email-password:/etc/config/kratos
     command: -c /etc/config/kratos/kratos.yml migrate sql -e --yes
-    restart: on-failure # 迁移失败时重试  
+    restart: on-failure # Migration failed when retrying  
     depends_on:
       - postgres
     networks:
@@ -94,13 +94,13 @@ services:
       - "${KRATOS_ADMIN_HOST_PORT:-4434}:4434" # Admin API https://github.com/ory/kratos/blob/791b0d59/internal/httpclient/README.md
     environment:
       - DSN=postgres://postgres:postgres123@postgres:5432/kardcraft?sslmode=disable&max_conns=20&max_idle_conns=4
-      - LOG_LEVEL=trace # 生产环境：改为 info 或 warning 
+      - LOG_LEVEL=trace # Production environment: change to info or warning 
     command: serve -c /etc/config/kratos/kratos.yml --dev --watch-courier
-    # 生产环境：serve -c /etc/config/kratos/kratos.yml
+    # Production environment: serve -c /etc/config/kratos/kratos.yml
     volumes:
       - ./backend/kratos/email-password:/etc/config/kratos
     depends_on:
-      - kratos-migrate # 等待迁移完成  
+      - kratos-migrate # Wait for migration to complete
       - postgres
     healthcheck:
       test: [ "CMD", "wget", "--spider", "-q", "http://localhost:4433/health/ready" ]
@@ -113,20 +113,20 @@ services:
   mailslurper:
     image: oryd/mailslurper:latest-smtps
     ports:
-      - "${MAILSLURPER_SMTP_HOST_PORT:-4436}:4436" # SMTP 端口  
-      - "${MAILSLURPER_WEB_HOST_PORT:-4437}:4437" # Web 界面端口 /mail
+      - "${MAILSLURPER_SMTP_HOST_PORT:-4436}:4436" # SMTP Port  
+      - "${MAILSLURPER_WEB_HOST_PORT:-4437}:4437" # Web Interface Port /mail
     networks:
       - kardcraft-network
 
-  # MinIO对象存储
+  # MinIO Object Storage
   minio:
     # image: minio/minio:RELEASE.2023-03-20T20-16-18Z 
     image: minio/minio:latest
     container_name: kardcraft-minio
     restart: always
     ports:
-      - "${MINIO_API_HOST_PORT:-9000}:9000" # API端口
-      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001" # 控制台端口
+      - "${MINIO_API_HOST_PORT:-9000}:9000" # API Port
+      - "${MINIO_CONSOLE_HOST_PORT:-9001}:9001" # Console Port
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin
@@ -141,7 +141,7 @@ services:
       timeout: 3s
       retries: 5
 
-  # Milvus向量数据库
+  # Milvus Vector Database
   milvus:
     image: milvusdb/milvus:v2.5.5
     container_name: kardcraft-milvus
@@ -322,7 +322,7 @@ services:
     container_name: kardcraft-temporal-ui
     restart: always
     ports:
-      - "${TEMPORAL_UI_HOST_PORT:-8233}:8080" # 修复：Temporal Web UI 标准端口
+      - "${TEMPORAL_UI_HOST_PORT:-8233}:8080" # Fix: Temporal Web UI standard port
     environment:
       - TEMPORAL_ADDRESS=temporal:7233
     depends_on:
@@ -331,10 +331,10 @@ services:
       - kardcraft-network
 
   # ============================================================================
-  # 业务服务
+  # Business services
   # ============================================================================
 
-  # API网关层 (APISIX)
+  # APIGateway layer (APISIX)
   api-gateway:
     image: apache/apisix:${APISIX_IMAGE_TAG:-3.14.1-debian}
     container_name: kardcraft-api-gateway
@@ -354,7 +354,7 @@ services:
       # 集群
       # - ./backend/api-gateway/apisix_conf/config.yaml:/usr/local/apisix/conf/config.yaml:ro
     depends_on:
-      ## 集群配置需要 etcd 支持
+      ##Cluster configuration requires etcd support
       # - etcd
       task-orchestrator:
         condition: service_started
@@ -375,7 +375,7 @@ services:
     networks:
       - kardcraft-network
 
-  # 任务编排层 (Go)
+  # Task Orchestration Layer (Go)
   task-orchestrator:
     build:
       context: ./backend/task-orchestrator
@@ -437,7 +437,7 @@ services:
     command: [ "/app/task-worker" ]
     environment:
       - TEMPORAL_ENDPOINT=temporal:7233
-      - TASK_QUEUE=task-workflow-queue # Go Worker 只处理 Workflows
+      - TASK_QUEUE=task-workflow-queue # Go Worker Handle only Workflows
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_PASSWORD=redis123
@@ -459,7 +459,7 @@ services:
     networks:
       - kardcraft-network
 
-  # Agent工作流层 (Python)
+  # Agent Workflow layer (Python)
   agent-workflow:
     image: kardcraft-agent-workflow
     build:
@@ -474,7 +474,7 @@ services:
     command: ["python", "-m", "kardcraft.temporal.worker"]
     # ports removed since it's a consumer
     environment:
-      # 基础服务配置
+      # Basic service configuration
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - REDIS_DB=0
@@ -573,7 +573,7 @@ services:
     networks:
       - kardcraft-network
 
-  # Anki 模板渲染/预览服务 (独立于 agent-workflow)
+  # Anki Template Rendering/Preview Service (Independent of agent-workflow)
   anki-runtime:
     build:
       context: ./backend/anki-runtime
@@ -590,7 +590,7 @@ services:
     networks:
       - kardcraft-network
 
-  # 文件存储服务 (Go + MinIO)
+  # File Storage Service (Go + MinIO)
   file-storage:
     build:
       context: ./backend/file-storage
@@ -599,8 +599,8 @@ services:
     container_name: kardcraft-file-storage
     restart: always
     ports:
-      - "${FILE_STORAGE_GRPC_HOST_PORT:-50053}:50053" # gRPC端口
-      - "${FILE_STORAGE_HTTP_HOST_PORT:-8082}:8080" # HTTP端口 (for presigned URL API)
+      - "${FILE_STORAGE_GRPC_HOST_PORT:-50053}:50053" # gRPC Port
+      - "${FILE_STORAGE_HTTP_HOST_PORT:-8082}:8080" # HTTP Port (for presigned URL API)
     environment:
       - MINIO_ENDPOINT=minio:9000
       - MINIO_PUBLIC_ENDPOINT=http://localhost:9000
@@ -612,7 +612,7 @@ services:
     networks:
       - kardcraft-network
   # ============================================================================
-  # 开发工具
+  # Development Tools
   # ============================================================================
 
   # pgAdmin
@@ -661,7 +661,7 @@ services:
   #     - kardcraft-network
 
   # ============================================================================
-  # 网络配置
+  # Network Configuration
   # ============================================================================
 
 networks:
@@ -669,7 +669,7 @@ networks:
     driver: bridge
 
 # ============================================================================
-# 卷配置
+# Volume Configuration
 # ============================================================================
 
 volumes:
@@ -697,29 +697,29 @@ volumes:
     driver: local
 
 # ============================================================================
-# 使用说明
+# Instructions for use
 # ============================================================================
 
-# 1. 启动所有服务：
+# 1. Start all services:
 #    docker-compose up -d
 #
-# 2. 仅启动核心服务：
+# 2. Start only core services:
 #    docker-compose up -d redis postgres minio milvus
 #
-# 3. 启动业务服务：
+# 3. Start business services:
 #    docker-compose up -d api-gateway task-orchestrator agent-workflow file-storage
 #
-# 4. 查看日志：
+# 4. View logs:
 #    docker-compose logs -f agent-workflow
 #
-# 5. 停止服务：
+# 5. Stop services:
 #    docker-compose down
 #
-# 6. 停止并删除数据：
+# 6. Stop and remove data:
 #    docker-compose down -v
 
 # ============================================================================
-# 服务访问地址
+# Service Access Addresses
 # ============================================================================
 
 # API Gateway: http://localhost:8080
