@@ -15,6 +15,8 @@ const (
 	errCodeNoActiveTask              = "no-active-task"
 	errCodeInvalidTransition         = "invalid-transition"
 	errCodeAuthzDenied               = "authz-denied"
+	errCodeUnauthenticated           = "unauthenticated"
+	errCodeAuthProviderUnavailable   = "auth-provider-unavailable"
 	errCodeIdempotencyKeyRequired    = "idempotency-key-required"
 	errCodeIdempotencyReplayMismatch = "idempotency-key-replay-mismatch"
 )

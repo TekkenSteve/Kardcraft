@@ -43,7 +43,7 @@ export type SessionBundleLoadResult = {
 type SessionBundleLoaderContext = {
     sessionId: string | null;
     data: SessionBundleLoadResult | null;
-    error: string | null;
+    error: unknown | null;
 };
 
 type SessionBundleLoaderEvent =
@@ -105,7 +105,7 @@ export function createSessionBundleLoaderMachine(deps: SessionBundleLoaderDeps) 
                     onError: {
                         target: "failure",
                         actions: assign(({ event }) => ({
-                            error: event.error instanceof Error ? event.error.message : "Failed to load session bundle",
+                            error: event.error,
                             data: null,
                         })),
                     },

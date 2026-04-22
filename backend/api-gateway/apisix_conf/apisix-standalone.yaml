@@ -1,9 +1,4 @@
 routes:
-  # ============================================================================
-  # API 路由 - APISIX 只做流量网关
-  # 认证由 task-orchestrator 调用 Kratos 处理
-  # ============================================================================
-
   # Kratos 公开 API (注册、登录、恢复等)
   -
     id: kratos-public
@@ -27,301 +22,7 @@ routes:
         max_age: 3600
         allow_credentials: true
 
-  # 任务相关 API 路由
-  -
-    id: task-api
-    uri: "/api/v1/tasks*"
-    upstream:
-      nodes:
-        "task-orchestrator:50050": 1
-      type: roundrobin
-      timeout:
-        connect: 10
-        send: 10
-        read: 30
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
-        expose_headers: "Content-Type,Set-Cookie"
-        max_age: 3600
-        allow_credentials: true
-
-  # Agent 相关 API 路由
-  -
-    id: agent-api
-    uri: "/api/agents/*"
-    upstream:
-      nodes:
-        "task-orchestrator:50050": 1
-      type: roundrobin
-      timeout:
-        connect: 10
-        send: 10
-        read: 30
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
-        expose_headers: "Content-Type,Set-Cookie"
-        max_age: 3600
-        allow_credentials: true
-
-  # Sessions API
-  -
-    id: sessions-api
-    uri: "/api/v1/sessions*"
-    upstream:
-      nodes:
-        "task-orchestrator:50050": 1
-      type: roundrobin
-      timeout:
-        connect: 10
-        send: 10
-        read: 30
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
-        expose_headers: "Content-Type,Set-Cookie"
-        max_age: 3600
-        allow_credentials: true
-
-  # Card Templates API
-  -
-    id: card-templates-api
-    uris:
-      - "/api/v1/card-templates"
-      - "/api/v1/card-templates/*"
-    upstream:
-      nodes:
-        "task-orchestrator:50050": 1
-      type: roundrobin
-      timeout:
-        connect: 10
-        send: 10
-        read: 30
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
-        expose_headers: "Content-Type,Set-Cookie"
-        max_age: 3600
-        allow_credentials: true
-
-  # APKG Exports API
-  -
-    id: apkg-exports-api
-    uris:
-      - "/api/v1/exports/apkg"
-      - "/api/v1/exports/apkg/*"
-    upstream:
-      nodes:
-        "task-orchestrator:50050": 1
-      type: roundrobin
-      timeout:
-        connect: 10
-        send: 10
-        read: 120
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
-        expose_headers: "Content-Type,Set-Cookie,Content-Disposition"
-        max_age: 3600
-        allow_credentials: true
-
-  # Template Preference API
-  -
-    id: template-preferences-api
-    uri: "/api/v1/users/me/template-preferences"
-    upstream:
-      nodes:
-        "task-orchestrator:50050": 1
-      type: roundrobin
-      timeout:
-        connect: 10
-        send: 10
-        read: 30
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
-        expose_headers: "Content-Type,Set-Cookie"
-        max_age: 3600
-        allow_credentials: true
-
-
-  # Schedules API
-  -
-    id: schedules-api
-    uri: "/api/v1/schedules*"
-    upstream:
-      nodes:
-        "task-orchestrator:50050": 1
-      type: roundrobin
-      timeout:
-        connect: 10
-        send: 10
-        read: 30
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
-        expose_headers: "Content-Type,Set-Cookie"
-        max_age: 3600
-        allow_credentials: true
-
-  # Cards Workspace API
-  -
-    id: cards-api
-    uri: "/api/v1/cards/*"
-    upstream:
-      nodes:
-        "task-orchestrator:50050": 1
-      type: roundrobin
-      timeout:
-        connect: 10
-        send: 10
-        read: 30
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
-        expose_headers: "Content-Type,Set-Cookie"
-        max_age: 3600
-        allow_credentials: true
-
-  # Files API - Presigned URL flow via file-storage HTTP
-  -
-    id: files-health
-    uri: "/api/v1/files/health"
-    priority: 100
-    upstream:
-      nodes:
-        "file-storage:8080": 1
-      type: roundrobin
-      timeout:
-        connect: 5
-        send: 5
-        read: 5
-    plugins:
-      proxy-rewrite:
-        uri: "/health"
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With,X-User-Id"
-        expose_headers: "Content-Type,Set-Cookie"
-        max_age: 3600
-        allow_credentials: true
-
-  # Files API - Presigned URL flow via file-storage HTTP
-  -
-    id: files-api
-    uri: "/api/v1/files/*"
-    upstream:
-      nodes:
-        "file-storage:8080": 1
-      type: roundrobin
-      timeout:
-        connect: 10
-        send: 10
-        read: 60
-    plugins:
-      proxy-rewrite:
-        regex_uri: ["^/api/(.*)", "/$1"]
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With,X-User-Id"
-        expose_headers: "Content-Type,Set-Cookie"
-        max_age: 3600
-        allow_credentials: true
-
-  # Workflows API
-  -
-    id: workflows-api
-    uri: "/api/v1/workflows/*"
-    upstream:
-      nodes:
-        "task-orchestrator:50050": 1
-      type: roundrobin
-      timeout:
-        connect: 10
-        send: 10
-        read: 30
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
-        expose_headers: "Content-Type,Set-Cookie"
-        max_age: 3600
-        allow_credentials: true
-
-  # WebSocket/SSE 实时事件推送路由
-  -
-    id: websocket-events
-    uri: "/api/events"
-    upstream:
-      nodes:
-        "task-orchestrator:50050": 1
-      type: roundrobin
-      timeout:
-        connect: 10
-        send: 10
-        read: 300
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With,Upgrade,Connection"
-        expose_headers: "Content-Type,Set-Cookie"
-        max_age: 3600
-        allow_credentials: true
-      proxy-rewrite:
-        headers:
-          "Upgrade": "$http_upgrade"
-          "Connection": "$connection_upgrade"
-
-  # SSE 流式推送路由
-  -
-    id: sse-stream
-    uri: "/api/v1/stream/sse"
-    upstream:
-      nodes:
-        "task-orchestrator:50050": 1
-      type: roundrobin
-      timeout:
-        connect: 10
-        send: 10
-        read: 300
-    plugins:
-      cors:
-        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
-        allow_methods: "GET,OPTIONS"
-        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
-        expose_headers: "Content-Type,Set-Cookie"
-        max_age: 3600
-        allow_credentials: true
-      proxy-control:
-        no_cache: true
-        proxy_buffering: "off"
-
-  # ============================================================================
-  # 健康检查和监控路由
-  # ============================================================================
-
-  # 任务编排层健康检查
+  # 任务编排层健康检查（不走鉴权代理）
   -
     id: task-orchestrator-health
     uri: "/health/task-orchestrator"
@@ -339,17 +40,116 @@ routes:
         allow_methods: "GET"
         allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
 
-  # ============================================================================
-  # 测试路由 (保留原有)
-  # ============================================================================
+  # 文件服务健康检查（不走鉴权代理）
+  -
+    id: files-health
+    uri: "/api/v1/files/health"
+    priority: 3000
+    upstream:
+      nodes:
+        "file-storage:8080": 1
+      type: roundrobin
+      timeout:
+        connect: 5
+        send: 5
+        read: 5
+    plugins:
+      proxy-rewrite:
+        uri: "/health"
+      cors:
+        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
+        allow_methods: "GET,OPTIONS"
+        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
+        expose_headers: "Content-Type,Set-Cookie"
+        max_age: 3600
+        allow_credentials: true
 
+  # SSE 路由（受保护，统一进入 Oathkeeper）
+  -
+    id: protected-sse
+    uri: "/api/v1/stream/sse"
+    priority: 2000
+    upstream:
+      nodes:
+        "oathkeeper:4455": 1
+      type: roundrobin
+      timeout:
+        connect: 10
+        send: 10
+        read: 300
+    plugins:
+      proxy-rewrite:
+        host: "kardcraft.local"
+      cors:
+        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
+        allow_methods: "GET,OPTIONS"
+        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With"
+        expose_headers: "Content-Type,Set-Cookie"
+        max_age: 3600
+        allow_credentials: true
+      proxy-control:
+        no_cache: true
+        proxy_buffering: "off"
+
+  # WebSocket 事件路由（受保护，统一进入 Oathkeeper）
+  -
+    id: protected-websocket-events
+    uri: "/api/events"
+    priority: 2000
+    upstream:
+      nodes:
+        "oathkeeper:4455": 1
+      type: roundrobin
+      timeout:
+        connect: 10
+        send: 10
+        read: 300
+    plugins:
+      proxy-rewrite:
+        host: "kardcraft.local"
+        headers:
+          "Upgrade": "$http_upgrade"
+          "Connection": "$connection_upgrade"
+      cors:
+        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
+        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
+        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With,Upgrade,Connection"
+        expose_headers: "Content-Type,Set-Cookie"
+        max_age: 3600
+        allow_credentials: true
+
+  # 受保护 API 统一路由：所有 /api/* 请求都经 Oathkeeper 鉴权并注入身份头
+  -
+    id: protected-api
+    uri: "/api/*"
+    priority: 1000
+    upstream:
+      nodes:
+        "oathkeeper:4455": 1
+      type: roundrobin
+      timeout:
+        connect: 10
+        send: 10
+        read: 120
+    plugins:
+      proxy-rewrite:
+        host: "kardcraft.local"
+      cors:
+        allow_origins: "http://localhost:3000,http://127.0.0.1:3000"
+        allow_methods: "GET,POST,PUT,DELETE,OPTIONS"
+        allow_headers: "Content-Type,Authorization,Cookie,X-Requested-With,Idempotency-Key"
+        expose_headers: "Content-Type,Set-Cookie,Content-Disposition"
+        max_age: 3600
+        allow_credentials: true
+
+  # 测试路由
   -
     id: test-route
     uri: /get
     upstream:
-        nodes:
-            "web1:80": 1
-        type: roundrobin
+      nodes:
+        "web1:80": 1
+      type: roundrobin
 
 # 文件尾必须写 #END，否则 APISIX 不会加载;
 #END

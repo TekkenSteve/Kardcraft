@@ -2,11 +2,10 @@ package httpserver
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -267,76 +266,43 @@ type contextKey string
 
 const userIDContextKey contextKey = "user_id"
 
+var errAuthMissingGatewayIdentity = errors.New("missing trusted identity header")
+
 func (s *Server) withAuth(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		userID := s.resolveUserID(r)
+		if r.Method == http.MethodOptions || !requiresAuthPath(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		// Keep route-handler tests focused on business logic by honoring
+		// explicitly injected user IDs in request context.
+		if injected := strings.TrimSpace(userIDFromContext(r.Context())); injected != "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		userID, err := s.authenticateRequest(r)
+		if err != nil {
+			writeAPIError(w, http.StatusUnauthorized, errCodeUnauthenticated, "authentication required", map[string]any{"provider": "gateway"})
+			return
+		}
 		ctx := context.WithValue(r.Context(), userIDContextKey, userID)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-func (s *Server) resolveUserID(r *http.Request) string {
-	if v := strings.TrimSpace(r.Header.Get("X-User-ID")); v != "" {
-		return v
-	}
-	if v := strings.TrimSpace(r.URL.Query().Get("user_id")); v != "" {
-		return v
-	}
-	if c, err := r.Cookie("ory_kratos_session"); err == nil {
-		if token := strings.TrimSpace(c.Value); token != "" {
-			if userID, err := s.resolveUserIDFromKratos(r.Context(), token); err == nil && userID != "" {
-				return userID
-			}
-		}
-	}
-	auth := strings.TrimSpace(r.Header.Get("Authorization"))
-	if after, ok := strings.CutPrefix(auth, "Bearer "); ok {
-		if token := strings.TrimSpace(after); token != "" {
-			if userID, err := s.resolveUserIDFromKratos(r.Context(), token); err == nil && userID != "" {
-				return userID
-			}
-		}
-	}
-	return "demo-user"
+func requiresAuthPath(path string) bool {
+	return path == "/api" || strings.HasPrefix(path, "/api/")
 }
 
-func (s *Server) resolveUserIDFromKratos(ctx context.Context, sessionToken string) (string, error) {
-	kratosURL := strings.TrimSpace(os.Getenv("KRATOS_PUBLIC_URL"))
-	if kratosURL == "" {
-		kratosURL = "http://kratos:4433"
+func (s *Server) authenticateRequest(r *http.Request) (string, error) {
+	userID := strings.TrimSpace(r.Header.Get("X-User-Id"))
+	if userID == "" {
+		return "", errAuthMissingGatewayIdentity
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(kratosURL, "/")+"/sessions/whoami", nil)
-	if err != nil {
-		return "", err
-	}
-	req.AddCookie(&http.Cookie{Name: "ory_kratos_session", Value: sessionToken})
-	client := s.httpClient
-	if client == nil {
-		client = &http.Client{Timeout: 5 * time.Second}
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("kratos whoami status %d", resp.StatusCode)
-	}
-	var whoami struct {
-		Identity struct {
-			ID string `json:"id"`
-		} `json:"identity"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&whoami); err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(whoami.Identity.ID), nil
+	return userID, nil
 }
 
 func userIDFromContext(ctx context.Context) string {
 	v, _ := ctx.Value(userIDContextKey).(string)
-	if v == "" {
-		return "demo-user"
-	}
-	return v
+	return strings.TrimSpace(v)
 }

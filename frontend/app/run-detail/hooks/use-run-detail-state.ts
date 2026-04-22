@@ -1,7 +1,7 @@
 "use client";
 
 import { useRunStream } from "@/lib/kardcraft/stream";
-import { getTask } from "@/lib/kardcraft/api";
+import { getTask, isUnauthenticatedApiError, toUiErrorMessage } from "@/lib/kardcraft/api";
 import {
     getSession,
     getSessionConversation,
@@ -106,6 +106,9 @@ const normalizeWorkflowId = (value: string | null | undefined): string | null =>
     return trimmed.length > 0 ? trimmed : null;
 };
 
+const toRunDetailErrorMessage = (err: unknown, fallback: string): string =>
+    toUiErrorMessage(err, fallback);
+
 const mapHistoryTaskStatus = (value: string | undefined): "idle" | "running" | "completed" | "failed" | null => {
     if (!value) return null;
     const normalized = value.trim().toLowerCase().replace(/^task_status_/, "");
@@ -167,12 +170,18 @@ export function useRunDetailState(): RunDetailState {
     const [streamRestartKey, setStreamRestartKey] = useState(0);
     const [isPending, startTransition] = useTransition();
     const prevNewSessionIntentRef = useRef<string | null>(null);
+    const redirectToAuth = useCallback(() => {
+        const next = encodeURIComponent(`/run-detail?${searchParamsString}`);
+        router.replace(`/runs?auth_required=1&next=${next}`);
+    }, [router, searchParamsString]);
     const bundleLoaderActor = useMemo(() => {
         const actor = createActor(
             createSessionBundleLoaderMachine({
                 loadBundle: async (bundleSessionId: string) => {
-                    const [session, conversation, timeline, history, state] = await Promise.all([
-                        getSession(bundleSessionId),
+                    // Fetch session first so a missing/unauthorized session fails fast
+                    // without fan-out 404 requests for dependent endpoints.
+                    const session = await getSession(bundleSessionId);
+                    const [conversation, timeline, history, state] = await Promise.all([
                         getSessionConversation(bundleSessionId),
                         getSessionTimeline(bundleSessionId, 500, 0, true),
                         getSessionHistory(bundleSessionId),
@@ -417,10 +426,14 @@ export function useRunDetailState(): RunDetailState {
     useEffect(() => {
         if (!resolvedSessionId) return;
         if (bundleLoaderState !== "failure") return;
+        if (isUnauthenticatedApiError(bundleError)) {
+            redirectToAuth();
+            return;
+        }
         setIsLoading(false);
-        setError(bundleError || "Failed to load session bundle");
+        setError(toRunDetailErrorMessage(bundleError, "Failed to load session bundle"));
         commands.setRunPhase(actorSessionId, "error");
-    }, [actorSessionId, bundleError, bundleLoaderState, commands, resolvedSessionId]);
+    }, [actorSessionId, bundleError, bundleLoaderState, commands, redirectToAuth, resolvedSessionId]);
 
     useEffect(() => {
         if (!resolvedSessionId || !workspaceData) return;
@@ -528,7 +541,11 @@ export function useRunDetailState(): RunDetailState {
                 }
             } catch (err) {
                 if (!cancelled) {
-                    setError(err instanceof Error ? err.message : "Failed to load task");
+                    if (isUnauthenticatedApiError(err)) {
+                        redirectToAuth();
+                        return;
+                    }
+                    setError(toRunDetailErrorMessage(err, "Failed to load task"));
                 }
             } finally {
                 if (!cancelled) {
@@ -542,7 +559,7 @@ export function useRunDetailState(): RunDetailState {
         return () => {
             cancelled = true;
         };
-    }, [actorSessionId, commands, resolvedSessionId, router, searchParamsString, sessionId, workflowIdParam]);
+    }, [actorSessionId, commands, redirectToAuth, resolvedSessionId, router, searchParamsString, sessionId, workflowIdParam]);
 
     const streamHandlers = useMemo(
         () => ({
@@ -717,7 +734,7 @@ export function useRunDetailState(): RunDetailState {
             commands.setStatus(actorSessionId, "completed");
             commands.setStreamError(actorSessionId, null);
         } catch (err) {
-            commands.setStreamError(actorSessionId, err instanceof Error ? err.message : "Failed to fetch final output");
+            commands.setStreamError(actorSessionId, toRunDetailErrorMessage(err, "Failed to fetch final output"));
         }
     }, [activeWorkflowId, actorSessionId, commands]);
 

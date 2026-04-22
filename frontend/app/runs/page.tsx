@@ -8,7 +8,7 @@ import { StatePanel } from "@/components/state-panel";
 import { Search, Loader2, RefreshCw, MessageSquare, Layers, DollarSign, Sparkles, Microscope, CheckCircle2, XCircle, MoreHorizontal, Pencil, Pin, Trash2 } from "lucide-react";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
-import { Session, updateSession, deleteSession } from "@/lib/kardcraft/api";
+import { Session, updateSession, deleteSession, isUnauthenticatedApiError, toUiErrorMessage } from "@/lib/kardcraft/api";
 import { listSessions } from "@/lib/kardcraft/session-repository";
 import useSWRInfinite from "swr/infinite";
 import { useSearchParams } from "next/navigation";
@@ -25,6 +25,7 @@ export default function RunsPage() {
     const { t } = useTranslation();
     const searchParams = useSearchParams();
     const currentSessionId = searchParams.get("session_id");
+    const authRequired = searchParams.get("auth_required") === "1";
     const [sessions, setSessions] = useState<Session[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
@@ -67,13 +68,21 @@ export default function RunsPage() {
     }, [data]);
 
     useEffect(() => {
+        if (swrError && isUnauthenticatedApiError(swrError)) {
+            setSessions([]);
+            setTotalCount(0);
+            setIsLoading(false);
+            setIsLoadingMore(false);
+            setError(toUiErrorMessage(swrError, "Failed to load sessions"));
+            return;
+        }
         setSessions(mergedSessions);
         const counts = data?.map(page => page.total_count || 0) || [];
         const maxCount = counts.length > 0 ? Math.max(...counts) : null;
         setTotalCount(maxCount);
         setIsLoading(!data && !swrError);
         setIsLoadingMore(isValidating && size > 1);
-        setError(swrError instanceof Error ? swrError.message : swrError ? "Failed to load sessions" : null);
+        setError(swrError ? toUiErrorMessage(swrError, "Failed to load sessions") : null);
     }, [mergedSessions, data, swrError, isValidating, size]);
 
     // Prefetch next page for faster perceived navigation
@@ -236,6 +245,16 @@ export default function RunsPage() {
                     actions={[
                         { label: t("common.retry"), onClick: () => { setIsLoading(true); mutate(); }, variant: "outline" },
                         { label: t("common.reload"), onClick: () => window.location.reload(), variant: "outline" },
+                    ]}
+                />
+            )}
+            {!error && authRequired && (
+                <StatePanel
+                    tone="neutral"
+                    title="Authentication required"
+                    description="Your session has expired. Please sign in again before opening a historical session."
+                    actions={[
+                        { label: t("common.refresh"), onClick: () => window.location.reload(), variant: "outline" },
                     ]}
                 />
             )}

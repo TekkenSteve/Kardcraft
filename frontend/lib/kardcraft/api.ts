@@ -132,6 +132,9 @@ export async function submitTask(request: TaskSubmitRequest): Promise<TaskSubmit
 
         if (!response.ok) {
             const richError = await extractApiError(response, "Failed to submit task");
+            if (response.status === 401 || richError.code === "unauthenticated") {
+                notifyAuthStateChanged();
+            }
             console.error('API Error:', {
                 status: response.status,
                 statusText: response.statusText,
@@ -152,9 +155,7 @@ export async function getTask(taskId: string): Promise<TaskDetailResponse> {
         credentials: "include",
     });
 
-    if (!response.ok) {
-        throw new Error(`Failed to get task: ${response.statusText}`);
-    }
+    await assertApiOk(response, "Failed to get task");
 
     const payload = await response.json() as Record<string, unknown>;
     const rawStatus = typeof payload.status === "string" ? payload.status : "";
@@ -188,9 +189,7 @@ export async function listTasks(limit: number = 50, offset: number = 0): Promise
         credentials: "include",
     });
 
-    if (!response.ok) {
-        throw new Error(`Failed to list tasks: ${response.statusText}`);
-    }
+    await assertApiOk(response, "Failed to list tasks");
 
     return response.json();
 }
@@ -425,9 +424,7 @@ export async function listSessions(limit: number = 20, offset: number = 0): Prom
             signal: controller.signal,
         });
 
-        if (!response.ok) {
-            throw new Error(`Failed to list sessions: ${response.statusText}`);
-        }
+        await assertApiOk(response, "Failed to list sessions");
 
         return response.json();
     } finally {
@@ -440,9 +437,7 @@ export async function getSession(sessionId: string): Promise<Session> {
         credentials: "include",
     }, 10000);
 
-    if (!response.ok) {
-        throw new Error(`Failed to get session: ${response.statusText}`);
-    }
+    await assertApiOk(response, "Failed to get session");
 
     return response.json();
 }
@@ -458,10 +453,7 @@ export async function updateSession(sessionId: string, update: { title?: string;
         body: JSON.stringify(update),
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to update session: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to update session");
 }
 
 export async function deleteSession(sessionId: string): Promise<void> {
@@ -470,10 +462,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
         credentials: "include",
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to delete session: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to delete session");
 }
 
 export async function listCardTemplates(limit: number = 50, offset: number = 0): Promise<CardTemplateListResponse> {
@@ -482,10 +471,7 @@ export async function listCardTemplates(limit: number = 50, offset: number = 0):
         credentials: "include",
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to list card templates: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to list card templates");
 
     return response.json();
 }
@@ -496,10 +482,7 @@ export async function getUserTemplatePreference(): Promise<UserTemplatePreferenc
         credentials: "include",
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to get user template preference: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to get user template preference");
 
     return response.json();
 }
@@ -518,10 +501,7 @@ export async function setUserTemplatePreference(input: {
         body: JSON.stringify(input),
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to set user template preference: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to set user template preference");
 
     return response.json();
 }
@@ -537,10 +517,7 @@ export async function importCardTemplate(input: TemplatePackageV1 | TemplateImpo
         body: JSON.stringify(input),
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to import card template: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to import card template");
     return response.json();
 }
 
@@ -551,10 +528,7 @@ export async function exportCardTemplate(templateId: string, version?: number): 
         credentials: "include",
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to export card template: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to export card template");
     return response.json();
 }
 
@@ -569,10 +543,7 @@ export async function previewCardTemplate(input: TemplatePreviewRequest): Promis
         body: JSON.stringify(input),
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to preview card template: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to preview card template");
     return response.json();
 }
 
@@ -596,10 +567,7 @@ export async function validateCardTemplate(input: {
         credentials: "include",
         body: JSON.stringify(input),
     });
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to validate card template: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to validate card template");
     return response.json();
 }
 
@@ -619,10 +587,7 @@ export async function getTemplateRequiredFields(input: {
         credentials: "include",
         body: JSON.stringify(input),
     });
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to get template required fields: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to get template required fields");
     return response.json();
 }
 
@@ -644,10 +609,7 @@ export async function precheckCardTemplate(input: {
         credentials: "include",
         body: JSON.stringify(input),
     });
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to precheck card template: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to precheck card template");
     return response.json();
 }
 
@@ -752,6 +714,20 @@ export class ApiError extends Error {
     }
 }
 
+export function isUnauthenticatedApiError(err: unknown): err is ApiError {
+    return err instanceof ApiError && (err.status === 401 || err.code === "unauthenticated");
+}
+
+export function toUiErrorMessage(err: unknown, fallback: string): string {
+    if (isUnauthenticatedApiError(err)) {
+        return "Session expired or not authenticated. Please sign in again.";
+    }
+    if (err instanceof ApiError || err instanceof Error) {
+        return err.message || fallback;
+    }
+    return fallback;
+}
+
 function nextIdempotencyKey(): string {
     if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
         return crypto.randomUUID();
@@ -782,14 +758,27 @@ async function extractApiError(response: Response, fallbackPrefix: string): Prom
     });
 }
 
+function notifyAuthStateChanged() {
+    if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("auth-state-changed"));
+    }
+}
+
+async function assertApiOk(response: Response, fallbackPrefix: string): Promise<void> {
+    if (response.ok) return;
+    const error = await extractApiError(response, fallbackPrefix);
+    if (response.status === 401 || error.code === "unauthenticated") {
+        notifyAuthStateChanged();
+    }
+    throw error;
+}
+
 export async function getSessionConversation(sessionId: string): Promise<SessionConversationResponse> {
     const response = await fetchWithTimeout(apiUrl(`/api/v1/sessions/${sessionId}/conversation`), {
         credentials: "include",
     }, 10000);
 
-    if (!response.ok) {
-        throw new Error(`Failed to get session conversation: ${response.statusText}`);
-    }
+    await assertApiOk(response, "Failed to get session conversation");
 
     return response.json();
 }
@@ -808,9 +797,7 @@ export async function getSessionTimeline(sessionId: string, limit: number = 500,
         credentials: "include",
     }, 10000);
 
-    if (!response.ok) {
-        throw new Error(`Failed to get session timeline: ${response.statusText}`);
-    }
+    await assertApiOk(response, "Failed to get session timeline");
 
     return response.json();
 }
@@ -820,9 +807,7 @@ export async function getSessionHistory(sessionId: string): Promise<SessionHisto
         credentials: "include",
     }, 10000);
 
-    if (!response.ok) {
-        throw new Error(`Failed to get session history: ${response.statusText}`);
-    }
+    await assertApiOk(response, "Failed to get session history");
 
     return response.json();
 }
@@ -842,9 +827,7 @@ export async function getSessionWorkspace(sessionId: string): Promise<SessionWor
         };
     }
 
-    if (!response.ok) {
-        throw await extractApiError(response, "Failed to get session workspace");
-    }
+    await assertApiOk(response, "Failed to get session workspace");
 
     return response.json();
 }
@@ -854,9 +837,7 @@ export async function getSessionState(sessionId: string): Promise<SessionStateRe
         credentials: "include",
     });
 
-    if (!response.ok) {
-        throw new Error(`Failed to get session state: ${response.statusText}`);
-    }
+    await assertApiOk(response, "Failed to get session state");
 
     return response.json();
 }
@@ -892,9 +873,7 @@ export async function pauseTask(taskId: string, reason?: string): Promise<TaskCo
         body: JSON.stringify(reason ? { reason } : {}),
     });
 
-    if (!response.ok) {
-        throw await extractApiError(response, "Failed to pause task");
-    }
+    await assertApiOk(response, "Failed to pause task");
 
     return response.json();
 }
@@ -910,9 +889,7 @@ export async function resumeTask(taskId: string, reason?: string): Promise<TaskC
         body: JSON.stringify(reason ? { reason } : {}),
     });
 
-    if (!response.ok) {
-        throw await extractApiError(response, "Failed to resume task");
-    }
+    await assertApiOk(response, "Failed to resume task");
 
     return response.json();
 }
@@ -928,9 +905,7 @@ export async function cancelTask(taskId: string, reason?: string): Promise<TaskC
         body: JSON.stringify(reason ? { reason } : {}),
     });
 
-    if (!response.ok) {
-        throw await extractApiError(response, "Failed to cancel task");
-    }
+    await assertApiOk(response, "Failed to cancel task");
 
     return response.json();
 }
@@ -940,9 +915,7 @@ export async function getTaskControlState(taskId: string): Promise<ControlStateR
         credentials: "include",
     });
 
-    if (!response.ok) {
-        throw new Error(`Failed to get task control state: ${response.statusText}`);
-    }
+    await assertApiOk(response, "Failed to get task control state");
 
     return response.json();
 }
@@ -1042,9 +1015,7 @@ export async function listSchedules(
         credentials: "include",
     });
 
-    if (!response.ok) {
-        throw new Error(`Failed to list schedules: ${response.statusText}`);
-    }
+    await assertApiOk(response, "Failed to list schedules");
 
     return response.json();
 }
@@ -1055,9 +1026,7 @@ export async function getSchedule(scheduleId: string): Promise<ScheduleInfo> {
         credentials: "include",
     });
 
-    if (!response.ok) {
-        throw new Error(`Failed to get schedule: ${response.statusText}`);
-    }
+    await assertApiOk(response, "Failed to get schedule");
 
     return response.json();
 }
@@ -1077,9 +1046,7 @@ export async function getScheduleRuns(
         credentials: "include",
     });
 
-    if (!response.ok) {
-        throw new Error(`Failed to get schedule runs: ${response.statusText}`);
-    }
+    await assertApiOk(response, "Failed to get schedule runs");
 
     return response.json();
 }
@@ -1095,10 +1062,7 @@ export async function createSchedule(request: CreateScheduleRequest): Promise<Sc
         body: JSON.stringify(request),
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to create schedule: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to create schedule");
 
     return response.json();
 }
@@ -1117,10 +1081,7 @@ export async function updateSchedule(
         body: JSON.stringify(request),
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to update schedule: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to update schedule");
 
     return response.json();
 }
@@ -1136,10 +1097,7 @@ export async function pauseSchedule(scheduleId: string, reason?: string): Promis
         body: JSON.stringify(reason ? { reason } : {}),
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to pause schedule: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to pause schedule");
 
     return response.json();
 }
@@ -1155,10 +1113,7 @@ export async function resumeSchedule(scheduleId: string, reason?: string): Promi
         body: JSON.stringify(reason ? { reason } : {}),
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to resume schedule: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to resume schedule");
 
     return response.json();
 }
@@ -1170,10 +1125,7 @@ export async function deleteSchedule(scheduleId: string): Promise<void> {
         credentials: "include",
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to delete schedule: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to delete schedule");
 }
 
 // Legacy cards endpoint removed in favor of workspace.
@@ -1193,10 +1145,7 @@ export async function bulkUpdateCardStatus(sessionId: string, cardIds: string[],
         }),
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to update card status: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to update card status");
 }
 
 export async function bulkUpdateCardQuestionType(sessionId: string, cardIds: string[], questionType: string): Promise<void> {
@@ -1214,10 +1163,7 @@ export async function bulkUpdateCardQuestionType(sessionId: string, cardIds: str
         }),
     });
 
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to update card question type: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to update card question type");
 }
 
 export interface ApkgExportRecord {
@@ -1251,10 +1197,7 @@ export async function createApkgExport(input: {
         credentials: "include",
         body: JSON.stringify(input),
     });
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to create apkg export: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to create apkg export");
     return response.json();
 }
 
@@ -1263,10 +1206,7 @@ export async function getApkgExport(sessionId: string, exportId: string): Promis
         method: "GET",
         credentials: "include",
     });
-    if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to get apkg export: ${response.statusText} - ${errorText}`);
-    }
+    await assertApiOk(response, "Failed to get apkg export");
     return response.json();
 }
 

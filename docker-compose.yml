@@ -77,7 +77,7 @@ services:
       - DSN=postgres://postgres:postgres123@postgres:5432/kardcraft?sslmode=disable&max_conns=20&max_idle_conns=4
       # Production environment: sslmode=require or verify-full 
     volumes:
-      - ./backend/kratos/email-password:/etc/config/kratos
+      - ./backend/auth-gateway/kratos/email-password:/etc/config/kratos
     command: -c /etc/config/kratos/kratos.yml migrate sql -e --yes
     restart: on-failure # Migration failed when retrying  
     depends_on:
@@ -98,12 +98,37 @@ services:
     command: serve -c /etc/config/kratos/kratos.yml --dev --watch-courier
     # Production environment: serve -c /etc/config/kratos/kratos.yml
     volumes:
-      - ./backend/kratos/email-password:/etc/config/kratos
+      - ./backend/auth-gateway/kratos/email-password:/etc/config/kratos
     depends_on:
       - kratos-migrate # Wait for migration to complete
       - postgres
     healthcheck:
       test: [ "CMD", "wget", "--spider", "-q", "http://localhost:4433/health/ready" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - kardcraft-network
+
+  oathkeeper:
+    image: oryd/oathkeeper:v26.2.0
+    container_name: kardcraft-oathkeeper
+    restart: always
+    command: serve --config /etc/config/oathkeeper/oathkeeper.yml
+    ports:
+      - "${OATHKEEPER_PROXY_HOST_PORT:-4455}:4455"
+      - "${OATHKEEPER_API_HOST_PORT:-4456}:4456"
+    volumes:
+      - ./backend/auth-gateway/oathkeeper:/etc/config/oathkeeper:ro
+    depends_on:
+      kratos:
+        condition: service_healthy
+      task-orchestrator:
+        condition: service_started
+      file-storage:
+        condition: service_started
+    healthcheck:
+      test: [ "CMD", "wget", "--spider", "-q", "http://localhost:4456/health/ready" ]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -356,9 +381,9 @@ services:
     depends_on:
       ##Cluster configuration requires etcd support
       # - etcd
-      task-orchestrator:
-        condition: service_started
       kratos:
+        condition: service_healthy
+      oathkeeper:
         condition: service_healthy
     networks:
       - kardcraft-network
@@ -386,7 +411,6 @@ services:
     ports:
       - "${TASK_ORCHESTRATOR_HOST_PORT:-50050}:50050" # HTTP port for orchestrator (used by frontend/APISIX)
     environment:
-      - KRATOS_PUBLIC_URL=http://kratos:4433
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - POSTGRES_HOST=postgres
@@ -419,8 +443,6 @@ services:
         condition: service_healthy
       agent-workflow:
         condition: service_started
-      kratos:
-        condition: service_healthy
     # Distroless image has no shell/wget/curl; disable in-container healthcheck.
     healthcheck:
       disable: true

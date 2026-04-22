@@ -19,6 +19,7 @@ import {
     validateCardTemplate,
     getTemplateRequiredFields,
     precheckCardTemplate,
+    toUiErrorMessage,
     TemplatePreviewResponse,
     TemplateValidationResponse,
     TemplateRequiredFieldsResponse,
@@ -69,7 +70,7 @@ export default function TemplatesPage() {
             });
             await mutate();
         } catch (err) {
-            setError(err instanceof Error ? err.message : t("templates.saveFailed"));
+            setError(toUiErrorMessage(err, t("templates.saveFailed")));
         } finally {
             setSavingTemplateId(null);
         }
@@ -90,7 +91,7 @@ export default function TemplatesPage() {
             anchor.click();
             URL.revokeObjectURL(url);
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Export failed");
+            setError(toUiErrorMessage(err, "Export failed"));
         } finally {
             setExportingTemplateId(null);
         }
@@ -138,15 +139,15 @@ export default function TemplatesPage() {
                     });
                 } catch (validationErr) {
                     setError(
-                        validationErr instanceof Error
-                            ? `Template imported, but validation failed: ${validationErr.message}`
+                        validationErr instanceof Error || typeof validationErr === "object"
+                            ? `Template imported, but validation failed: ${toUiErrorMessage(validationErr, "validation failed")}`
                             : "Template imported, but validation failed."
                     );
                 }
             }
             await mutate();
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Import failed");
+            setError(toUiErrorMessage(err, "Import failed"));
         } finally {
             setImporting(false);
             event.target.value = "";
@@ -202,7 +203,7 @@ export default function TemplatesPage() {
                 }
             } catch (err) {
                 if (!active) return;
-                setError(err instanceof Error ? err.message : "Preview failed");
+                setError(toUiErrorMessage(err, "Preview failed"));
                 setPreviewData(null);
                 setValidationData(null);
                 setRequiredFieldsData(null);

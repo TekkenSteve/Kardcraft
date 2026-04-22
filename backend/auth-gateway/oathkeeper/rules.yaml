@@ -1,0 +1,46 @@
+- id: files-api-authenticated
+  version: v0.39.0
+  upstream:
+    url: http://file-storage:8080
+    strip_path: /api
+  match:
+    url: http://kardcraft.local/api/v1/files/<.*>
+    methods:
+      - GET
+      - POST
+      - PUT
+      - PATCH
+      - DELETE
+      - OPTIONS
+  authenticators:
+    - handler: cookie_session
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+      config:
+        headers:
+          X-User-Id: "{{ print .Subject }}"
+
+- id: task-orchestrator-api-authenticated
+  version: v0.39.0
+  upstream:
+    url: http://task-orchestrator:50050
+  match:
+    url: http://kardcraft.local/api/<.*>
+    methods:
+      - GET
+      - POST
+      - PUT
+      - PATCH
+      - DELETE
+      - OPTIONS
+  authenticators:
+    - handler: cookie_session
+  authorizer:
+    handler: allow
+  mutators:
+    - handler: header
+      config:
+        headers:
+          X-User-Id: "{{ print .Subject }}"

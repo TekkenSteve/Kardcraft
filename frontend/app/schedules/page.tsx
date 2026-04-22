@@ -71,6 +71,7 @@ import {
     ScheduleStatus,
     CreateScheduleRequest,
     UpdateScheduleRequest,
+    toUiErrorMessage,
 } from "@/lib/kardcraft/api";
 
 // Common timezones for dropdown
@@ -431,7 +432,7 @@ function ScheduleRow({
             setTotalRuns(data.total_count);
             setHasFetchedRuns(true);
         } catch (err) {
-            setRunsError(err instanceof Error ? err.message : "Failed to load runs");
+            setRunsError(toUiErrorMessage(err, "Failed to load runs"));
         } finally {
             setIsLoadingRuns(false);
         }
@@ -918,7 +919,7 @@ function ScheduleFormDialog({
             onSaved();
             onOpenChange(false);
         } catch (err) {
-            setError(err instanceof Error ? err.message : `Failed to ${isEditing ? "update" : "create"} schedule`);
+            setError(toUiErrorMessage(err, `Failed to ${isEditing ? "update" : "create"} schedule`));
         } finally {
             setIsSubmitting(false);
         }
@@ -1123,7 +1124,7 @@ export default function SchedulesPage() {
             setSchedules(data.schedules || []);
             setTotalCount(data.total_count);
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Failed to load schedules");
+            setError(toUiErrorMessage(err, "Failed to load schedules"));
         } finally {
             setIsLoading(false);
         }
@@ -1139,7 +1140,7 @@ export default function SchedulesPage() {
             await pauseSchedule(scheduleId);
             await fetchSchedules();
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Failed to pause schedule");
+            setError(toUiErrorMessage(err, "Failed to pause schedule"));
         } finally {
             setPendingAction(null);
         }
@@ -1151,7 +1152,7 @@ export default function SchedulesPage() {
             await resumeSchedule(scheduleId);
             await fetchSchedules();
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Failed to resume schedule");
+            setError(toUiErrorMessage(err, "Failed to resume schedule"));
         } finally {
             setPendingAction(null);
         }
@@ -1169,7 +1170,7 @@ export default function SchedulesPage() {
             await deleteSchedule(deleteConfirmId);
             await fetchSchedules();
         } catch (err) {
-            setError(err instanceof Error ? err.message : "Failed to delete schedule");
+            setError(toUiErrorMessage(err, "Failed to delete schedule"));
         } finally {
             setPendingAction(null);
             setDeleteConfirmId(null);
