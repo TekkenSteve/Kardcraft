@@ -173,6 +173,14 @@ export function useRunDetailState(): RunDetailState {
         const next = encodeURIComponent(`/run-detail?${searchParamsString}`);
         router.replace(`/runs?auth_required=1&next=${next}`);
     }, [router, searchParamsString]);
+    const handleUnauthenticatedApiError = useCallback(
+        (err: unknown): boolean => {
+            if (!isUnauthenticatedApiError(err)) return false;
+            redirectToAuth();
+            return true;
+        },
+        [redirectToAuth],
+    );
     const bundleLoaderMachine = useMemo(
         () =>
             createSessionBundleLoaderMachine({
@@ -425,14 +433,11 @@ export function useRunDetailState(): RunDetailState {
     useEffect(() => {
         if (!resolvedSessionId) return;
         if (bundleLoaderState !== "failure") return;
-        if (isUnauthenticatedApiError(bundleError)) {
-            redirectToAuth();
-            return;
-        }
+        if (handleUnauthenticatedApiError(bundleError)) return;
         setIsLoading(false);
         setError(toRunDetailErrorMessage(bundleError, "Failed to load session bundle"));
         commands.setRunPhase(actorSessionId, "error");
-    }, [actorSessionId, bundleError, bundleLoaderState, commands, redirectToAuth, resolvedSessionId]);
+    }, [actorSessionId, bundleError, bundleLoaderState, commands, handleUnauthenticatedApiError, resolvedSessionId]);
 
     useEffect(() => {
         if (!resolvedSessionId || !workspaceData) return;
@@ -540,10 +545,7 @@ export function useRunDetailState(): RunDetailState {
                 }
             } catch (err) {
                 if (!cancelled) {
-                    if (isUnauthenticatedApiError(err)) {
-                        redirectToAuth();
-                        return;
-                    }
+                    if (handleUnauthenticatedApiError(err)) return;
                     setError(toRunDetailErrorMessage(err, "Failed to load task"));
                 }
             } finally {
@@ -558,7 +560,7 @@ export function useRunDetailState(): RunDetailState {
         return () => {
             cancelled = true;
         };
-    }, [actorSessionId, commands, redirectToAuth, resolvedSessionId, router, searchParamsString, sessionId, workflowIdParam]);
+    }, [actorSessionId, commands, handleUnauthenticatedApiError, resolvedSessionId, router, searchParamsString, sessionId, workflowIdParam]);
 
     const streamHandlers = useMemo(
         () => ({
@@ -733,9 +735,10 @@ export function useRunDetailState(): RunDetailState {
             commands.setStatus(actorSessionId, "completed");
             commands.setStreamError(actorSessionId, null);
         } catch (err) {
+            if (handleUnauthenticatedApiError(err)) return;
             commands.setStreamError(actorSessionId, toRunDetailErrorMessage(err, "Failed to fetch final output"));
         }
-    }, [activeWorkflowId, actorSessionId, commands]);
+    }, [activeWorkflowId, actorSessionId, commands, handleUnauthenticatedApiError]);
 
     const handleRetryStream = useCallback(() => {
         setStreamRestartKey((key) => key + 1);
