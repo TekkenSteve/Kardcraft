@@ -76,6 +76,11 @@
     "systemDefault": "System default",
     "version": "Version v{{version}}",
     "saveFailed": "Failed to save default template",
+    "exportFailed": "Failed to export template",
+    "importFailed": "Failed to import template",
+    "previewFailed": "Failed to preview template",
+    "validationFailed": "Validation failed",
+    "importedValidationFailed": "Template imported, but validation failed: {{detail}}",
     "noDescription": "No description"
   },
   "runs": {

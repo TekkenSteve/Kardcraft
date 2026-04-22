@@ -91,7 +91,7 @@ export default function TemplatesPage() {
             anchor.click();
             URL.revokeObjectURL(url);
         } catch (err) {
-            setError(toUiErrorMessage(err, "Export failed"));
+            setError(toUiErrorMessage(err, t("templates.exportFailed")));
         } finally {
             setExportingTemplateId(null);
         }
@@ -138,16 +138,13 @@ export default function TemplatesPage() {
                         version: imported.version,
                     });
                 } catch (validationErr) {
-                    setError(
-                        validationErr instanceof Error || typeof validationErr === "object"
-                            ? `Template imported, but validation failed: ${toUiErrorMessage(validationErr, "validation failed")}`
-                            : "Template imported, but validation failed."
-                    );
+                    const validationMessage = toUiErrorMessage(validationErr, t("templates.validationFailed"));
+                    setError(t("templates.importedValidationFailed", { detail: validationMessage }));
                 }
             }
             await mutate();
         } catch (err) {
-            setError(toUiErrorMessage(err, "Import failed"));
+            setError(toUiErrorMessage(err, t("templates.importFailed")));
         } finally {
             setImporting(false);
             event.target.value = "";
@@ -203,7 +200,7 @@ export default function TemplatesPage() {
                 }
             } catch (err) {
                 if (!active) return;
-                setError(toUiErrorMessage(err, "Preview failed"));
+                setError(toUiErrorMessage(err, t("templates.previewFailed")));
                 setPreviewData(null);
                 setValidationData(null);
                 setRequiredFieldsData(null);

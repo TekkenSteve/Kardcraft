@@ -76,6 +76,11 @@
     "systemDefault": "系统默认",
     "version": "版本 v{{version}}",
     "saveFailed": "保存默认模板失败",
+    "exportFailed": "导出模板失败",
+    "importFailed": "导入模板失败",
+    "previewFailed": "预览模板失败",
+    "validationFailed": "校验失败",
+    "importedValidationFailed": "模板已导入，但校验失败：{{detail}}",
     "noDescription": "暂无描述"
   },
   "runs": {
