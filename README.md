@@ -4,8 +4,7 @@ Automate flashcard production for spaced repetition workflows.
 
 ## What This Project Does
 
-Kardcraft is a card generation system for Anki-style spaced repetition.
-It converts raw learning inputs (notes, PDFs, lecture material, highlights, Q&A context) into flashcards that can be reviewed directly.
+Kardcraft is a dual-mode, conversation-driven flashcard crafting system for spaced repetition. It supports both topic-driven generation—where users provide a subject and the system auto-researches and synthesizes cards—and content-driven generation—converting raw learning inputs (notes, PDFs, lecture material, highlights) into flashcards. Its defining feature is a multi-turn conversational interface that lets users iteratively refine cards through dialogue: editing content, adjusting difficulty, restructuring formats, or requesting elaboration, until each card meets their exact learning needs.
 
 Core idea: automate card authoring, then improve output quality over time using review feedback.
 
