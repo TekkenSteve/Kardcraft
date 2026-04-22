@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
-import { createActor } from "xstate";
-import { useSelector } from "@xstate/react";
+import { useCallback, useEffect } from "react";
+import { useActorRef, useSelector } from "@xstate/react";
 import { useTranslation } from "react-i18next";
 import {
     ApiError,
@@ -44,11 +43,7 @@ export function useTaskControls({
     const commands = useRunCommands();
     const { t } = useTranslation();
 
-    const actor = useMemo(() => {
-        const ref = createActor(taskControlMachine);
-        ref.start();
-        return ref;
-    }, []);
+    const actor = useActorRef(taskControlMachine);
 
     useEffect(() => {
         actor.send({
