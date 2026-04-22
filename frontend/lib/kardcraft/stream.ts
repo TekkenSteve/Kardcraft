@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { getStreamUrl } from "./api";
-import { CardData } from "@/lib/run/types";
 import { RunDomainEvent } from "@/lib/run/domain-events";
 import { createStreamActorMachine } from "@/lib/run/stream-actor";
+import { CardData } from "@/lib/run/types";
+import { useEffect, useRef } from "react";
 import { createActor } from "xstate";
+import { getStreamUrl } from "./api";
 
-type RunStreamHandlers = {
+export type RunStreamHandlers = {
     onConnectionState: (value: "idle" | "connecting" | "connected" | "reconnecting" | "error") => void;
     onStreamError: (value: string | null) => void;
     onDomainEvent: (event: RunDomainEvent) => void;
@@ -16,6 +16,11 @@ type RunStreamHandlers = {
 
 export function useRunStream(workflowId: string | null, handlers: RunStreamHandlers, restartKey: number = 0) {
     const actorRef = useRef<ReturnType<typeof createActor<ReturnType<typeof createStreamActorMachine>>> | null>(null);
+    const handlersRef = useRef(handlers);
+
+    useEffect(() => {
+        handlersRef.current = handlers;
+    }, [handlers]);
 
     useEffect(() => {
         if (!workflowId) return;
@@ -24,10 +29,18 @@ export function useRunStream(workflowId: string | null, handlers: RunStreamHandl
             getStreamUrl,
             createEventSource: (url: string) => new EventSource(url, { withCredentials: true }),
             nowIso: () => new Date().toISOString(),
-            onConnectionState: handlers.onConnectionState,
-            onStreamError: handlers.onStreamError,
-            onDomainEvent: handlers.onDomainEvent,
-            onCardsBatch: (cards: CardData[]) => handlers.onCardsBatch(cards),
+            onConnectionState: (value) => {
+                handlersRef.current.onConnectionState(value);
+            },
+            onStreamError: (value) => {
+                handlersRef.current.onStreamError(value);
+            },
+            onDomainEvent: (event) => {
+                handlersRef.current.onDomainEvent(event);
+            },
+            onCardsBatch: (cards: CardData[]) => {
+                handlersRef.current.onCardsBatch(cards);
+            },
             onRejectWireEvent: ({ type, reason, details }) => {
                 console.warn("[useRunStream] Rejected wire event at domain boundary", { type, reason, details });
             },
@@ -42,5 +55,5 @@ export function useRunStream(workflowId: string | null, handlers: RunStreamHandl
             actor.stop();
             actorRef.current = null;
         };
-    }, [workflowId, restartKey, handlers]);
+    }, [workflowId, restartKey]);
 }
