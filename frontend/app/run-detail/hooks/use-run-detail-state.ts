@@ -22,8 +22,7 @@ import { SessionDataBundle, SessionHistoryData } from "../run-detail-types";
 import { useScrollSync } from "./use-scroll-sync";
 import { useTaskControls } from "./use-task-controls";
 import { TimelineDisplayEvent, useTimeline } from "./use-timeline";
-import { createActor } from "xstate";
-import { useSelector as useActorSelector } from "@xstate/react";
+import { useActorRef, useSelector as useActorSelector } from "@xstate/react";
 
 export interface RunDetailState {
     sessionId: string | null;
@@ -174,8 +173,8 @@ export function useRunDetailState(): RunDetailState {
         const next = encodeURIComponent(`/run-detail?${searchParamsString}`);
         router.replace(`/runs?auth_required=1&next=${next}`);
     }, [router, searchParamsString]);
-    const bundleLoaderActor = useMemo(() => {
-        const actor = createActor(
+    const bundleLoaderMachine = useMemo(
+        () =>
             createSessionBundleLoaderMachine({
                 loadBundle: async (bundleSessionId: string) => {
                     // Fetch session first so a missing/unauthorized session fails fast
@@ -190,12 +189,12 @@ export function useRunDetailState(): RunDetailState {
                     return { session, conversation, timeline, history, state };
                 },
             }),
-        );
-        actor.start();
-        return actor;
-    }, []);
-    const workspaceLoaderActor = useMemo(() => {
-        const actor = createActor(
+        [],
+    );
+    const bundleLoaderActor = useActorRef(bundleLoaderMachine);
+
+    const workspaceLoaderMachine = useMemo(
+        () =>
             createWorkspaceLoaderMachine({
                 loadWorkspace: async (workspaceSessionId: string) => {
                     const workspace = await getSessionWorkspace(workspaceSessionId);
@@ -213,10 +212,9 @@ export function useRunDetailState(): RunDetailState {
                     };
                 },
             }),
-        );
-        actor.start();
-        return actor;
-    }, []);
+        [],
+    );
+    const workspaceLoaderActor = useActorRef(workspaceLoaderMachine);
 
     const selectedAgent = useRunSelector((ctx) => ctx.selectedAgent);
     const researchStrategy = useRunSelector((ctx) => ctx.researchStrategy);
@@ -385,10 +383,11 @@ export function useRunDetailState(): RunDetailState {
         const stateWorkflowId = normalizeWorkflowId(bundleData.state?.active_task_id);
         const latestWorkflowId = normalizeWorkflowId(latestTask?.workflow_id) || normalizeWorkflowId(latestTask?.task_id);
         const activeWorkflowFromBundle = stateWorkflowId || latestWorkflowId;
+        let mappedStatus: "idle" | "running" | "completed" | "failed" | null = null;
         if (activeWorkflowFromBundle) {
             commands.setMainWorkflowId(actorSessionId, activeWorkflowFromBundle);
             if (!hasLiveRuntime) {
-                const mappedStatus = mapSessionRuntimeStatus(bundleData.state) || mapHistoryTaskStatus(latestTask?.status);
+                mappedStatus = mapSessionRuntimeStatus(bundleData.state) || mapHistoryTaskStatus(latestTask?.status);
                 if (mappedStatus) {
                     commands.setStatus(actorSessionId, mappedStatus);
                     commands.setRunPhase(actorSessionId, mappedStatus === "running" ? "streaming" : "hydrated");
@@ -416,7 +415,7 @@ export function useRunDetailState(): RunDetailState {
 
         setWorkspacePhase("loading");
         setLoadPhase("hydrated");
-        if (!hasLiveRuntime) {
+        if (!hasLiveRuntime && mappedStatus !== "running") {
             commands.setRunPhase(actorSessionId, "hydrated");
         }
         setError(null);
