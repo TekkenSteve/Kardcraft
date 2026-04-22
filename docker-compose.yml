@@ -490,7 +490,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin
       - MINIO_SECURE=false
       - MILVUS_HOST=milvus
-      - TAVILY_API_KEY=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
+      - TAVILY_API_KEY=${TAVILY_API_KEY:-enter-your-key} # Tavily API Key
       - MILVUS_PORT=19530
       - LOGGING_LEVEL=DEBUG
       - LIGHTRAG_BASE_URL=http://lightrag:9621
