@@ -215,6 +215,11 @@ async def run_evidence_react_node(
             "budget_exhausted": "candidate exploration ended without grounded evidence",
         }
         hint = reason_hints.get(stop_reason, "grounded evidence was not found")
+        if tool_context.degraded_zero_ref_count > 0:
+            hint = (
+                "retrieval repeatedly returned responses without any source references "
+                "(possible workspace/runtime degradation)"
+            )
         pending_questions = _build_evidence_pending_questions(
             session_id,
             f"No valid information was extracted because {hint}. "
@@ -237,6 +242,7 @@ async def run_evidence_react_node(
             "hit": tool_context.hit_count,
             "miss": tool_context.miss_count,
             "ungrounded": tool_context.ungrounded_count,
+            "backend_degraded": tool_context.degraded_zero_ref_count,
             "low_quality": tool_context.low_quality_count,
             "duplicate": tool_context.duplicate_queries,
             "coverage_gap": max(0, len(candidates) - len(tool_context.selected_nodes)),

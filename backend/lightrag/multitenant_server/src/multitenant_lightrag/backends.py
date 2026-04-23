@@ -7,6 +7,7 @@ import os
 import shutil
 import socket
 import time
+from collections import deque
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from pathlib import Path
@@ -164,6 +165,7 @@ class WorkspaceRuntimeRegistry:
         ws_root = Path(self._settings.workspaces_root) / workspace
         working_dir = ws_root / "rag_storage"
         input_dir = ws_root / "inputs"
+        runtime_log_path = ws_root / "runtime.log"
         working_dir.mkdir(parents=True, exist_ok=True)
         input_dir.mkdir(parents=True, exist_ok=True)
 
@@ -183,13 +185,22 @@ class WorkspaceRuntimeRegistry:
             "--workspace",
             workspace,
         ]
-
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            env=env,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+        logger.info(
+            "workspace_runtime_starting",
+            extra={
+                "workspace": workspace,
+                "port": port,
+                "cmd": " ".join(cmd),
+            },
         )
+
+        with runtime_log_path.open("ab") as runtime_log:
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                env=env,
+                stdout=runtime_log,
+                stderr=runtime_log,
+            )
 
         headers: dict[str, str] = {}
         if self._settings.api_key:
@@ -210,9 +221,32 @@ class WorkspaceRuntimeRegistry:
             await client.aclose()
             if process.returncode is None:
                 process.terminate()
+            runtime_log_tail = self._tail_file(
+                runtime_log_path,
+                max_lines=80,
+                max_chars=8000,
+            )
+            logger.error(
+                "workspace_runtime_startup_timeout",
+                extra={
+                    "workspace": workspace,
+                    "port": port,
+                    "timeout_sec": self._settings.process_startup_timeout_sec,
+                    "runtime_log_path": str(runtime_log_path),
+                    "runtime_log_tail": runtime_log_tail,
+                },
+            )
             raise RuntimeError(
                 f"workspace runtime startup timeout: workspace={workspace} port={port}"
             )
+
+        logger.info(
+            "workspace_runtime_started",
+            extra={
+                "workspace": workspace,
+                "port": port,
+            },
+        )
 
         return WorkspaceRuntime(
             workspace=workspace,
@@ -223,6 +257,13 @@ class WorkspaceRuntimeRegistry:
         )
 
     async def _shutdown_runtime(self, runtime: WorkspaceRuntime) -> None:
+        logger.info(
+            "workspace_runtime_stopping",
+            extra={
+                "workspace": runtime.workspace,
+                "port": runtime.port,
+            },
+        )
         await runtime.client.aclose()
         if runtime.process.returncode is None:
             runtime.process.terminate()
@@ -230,6 +271,14 @@ class WorkspaceRuntimeRegistry:
                 await asyncio.wait_for(runtime.process.wait(), timeout=5)
             except asyncio.TimeoutError:
                 runtime.process.kill()
+        logger.info(
+            "workspace_runtime_stopped",
+            extra={
+                "workspace": runtime.workspace,
+                "port": runtime.port,
+                "returncode": runtime.process.returncode,
+            },
+        )
 
     async def _purge_workspace_data(
         self,
@@ -353,6 +402,22 @@ class WorkspaceRuntimeRegistry:
             if self._port_available(port):
                 return port
         raise RuntimeError("cannot allocate free port for workspace runtime")
+
+    @staticmethod
+    def _tail_file(path: Path, *, max_lines: int, max_chars: int) -> str:
+        if not path.exists():
+            return ""
+        try:
+            lines = deque(maxlen=max_lines)
+            with path.open("r", encoding="utf-8", errors="replace") as f:
+                for line in f:
+                    lines.append(line.rstrip("\n"))
+            text = "\n".join(lines).strip()
+            if len(text) > max_chars:
+                return text[-max_chars:]
+            return text
+        except Exception:
+            return ""
 
     @staticmethod
     def _port_available(port: int) -> bool:

@@ -81,7 +81,8 @@ services:
     command: -c /etc/config/kratos/kratos.yml migrate sql -e --yes
     restart: on-failure # Migration failed when retrying  
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     networks:
       - kardcraft-network
 
@@ -107,8 +108,10 @@ services:
     volumes:
       - ./backend/auth-gateway/kratos/email-password:/etc/config/kratos
     depends_on:
-      - kratos-migrate # Wait for migration to complete
-      - postgres
+      kratos-migrate:
+        condition: service_completed_successfully
+      postgres:
+        condition: service_healthy
     healthcheck:
       test: [ "CMD", "wget", "--spider", "-q", "http://localhost:4433/health/ready" ]
       interval: 10s

@@ -76,6 +76,9 @@ func (s *ReadModelService) GetAccessibleTemplate(ctx context.Context, userID, te
 func (s *ReadModelService) GetUserTemplatePreference(ctx context.Context, userID string) (*TemplateCatalogRow, error) {
 	return s.store.GetUserTemplatePreference(ctx, userID)
 }
+func (s *ReadModelService) GetResolvedDefaultTemplate(ctx context.Context, userID string) (*TemplateCatalogRow, error) {
+	return s.store.GetResolvedDefaultTemplate(ctx, userID)
+}
 func (s *ReadModelService) UpsertUserTemplatePreference(ctx context.Context, userID, templateID string, version int) error {
 	return s.store.UpsertUserTemplatePreference(ctx, userID, templateID, version)
 }

@@ -104,7 +104,7 @@ backend/__pycache__/
 backend/*.log
 
 # Go
-backend/*/bin/
+backend/**/bin/
 backend/*/vendor/
 *.test
 *.out
@@ -144,10 +144,10 @@ dump.rdb
 appendonly.aof
 
 # Neo4j data
-data/
-logs/
-plugins/
-run/
+/data/
+/logs/
+/plugins/
+/run/
 
 # Generated documentation
 docs/_build/

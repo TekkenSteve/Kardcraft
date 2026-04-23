@@ -80,6 +80,8 @@ test-guard:
 	./scripts/check_no_direct_litellm_calls.sh
 	./scripts/check_execution_arch_guardrails.sh
 	./scripts/check_no_runtime_ddl.sh
+	./backend/database/scripts/check_no_template_seed.sh
+	./backend/database/scripts/check_no_template_overwrite_in_migrations.sh
 	./scripts/check_schema_drift.sh
 	./scripts/check_protobuf_codegen.sh
 
@@ -161,6 +163,26 @@ deploy-prod:
 db-migrate:
 	@echo "运行数据库迁移..."
 	cd backend/database/scripts && ./migrate.sh
+
+db-bootstrap-templates:
+	@echo "引导模板内容（默认不覆盖）..."
+	cd backend/database/scripts && ./bootstrap_templates.sh
+
+db-bootstrap-templates-force:
+	@echo "强制覆盖模板内容版本（需显式确认使用场景）..."
+	cd backend/database/scripts && ./bootstrap_templates.sh --force
+
+db-check-template-bootstrap:
+	@echo "检查模板引导状态..."
+	cd backend/database/scripts && ./check_template_bootstrap.sh
+
+db-cutover-template-governance:
+	@echo "执行模板治理切换流水线..."
+	cd backend/database/scripts && ./cutover_template_governance.sh
+
+db-verify-template-governance-empty-db:
+	@echo "验证空库模板治理链路（migration/bootstrap/create-task）..."
+	cd backend/database/scripts && ./verify_template_governance_empty_db.sh
 
 db-seed:
 	@echo "填充种子数据..."

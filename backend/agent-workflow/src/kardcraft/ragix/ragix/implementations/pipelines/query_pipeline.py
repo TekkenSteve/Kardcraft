@@ -36,11 +36,16 @@ class QueryPipeline:
         self._server_rerank_enabled: Optional[bool] = None
         self._rewriter = QueryRewriter(QueryRewriteConfig(enabled=self.config.enable_query_rewrite))
 
-    async def _detect_rerank_enabled(self, client: LightRAGRESTClient) -> Optional[bool]:
+    async def _detect_rerank_enabled(
+        self,
+        client: LightRAGRESTClient,
+        *,
+        session_id: Optional[str],
+    ) -> Optional[bool]:
         if self._server_rerank_enabled is not None:
             return self._server_rerank_enabled
         try:
-            health = await client.get_health()
+            health = await client.get_health(workspace=session_id)
             enabled = (
                 health.get("configuration", {})
                 .get("enable_rerank")
@@ -127,7 +132,7 @@ class QueryPipeline:
 
         effective_rerank = enable_rerank
         if effective_rerank is None:
-            detected = await self._detect_rerank_enabled(client)
+            detected = await self._detect_rerank_enabled(client, session_id=session_id)
             if detected is not None:
                 effective_rerank = detected
 
@@ -166,7 +171,7 @@ class QueryPipeline:
     ) -> Answer:
         effective_rerank = enable_rerank
         if effective_rerank is None:
-            detected = await self._detect_rerank_enabled(client)
+            detected = await self._detect_rerank_enabled(client, session_id=session_id)
             if detected is not None:
                 effective_rerank = detected
 
@@ -307,7 +312,7 @@ class QueryPipeline:
     ) -> Answer:
         effective_rerank = enable_rerank
         if effective_rerank is None:
-            detected = await self._detect_rerank_enabled(client)
+            detected = await self._detect_rerank_enabled(client, session_id=session_id)
             if detected is not None:
                 effective_rerank = detected
 

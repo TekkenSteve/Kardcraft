@@ -252,12 +252,18 @@ func runApkgExportTask(deps ExportsDeps, record apkgExportRecord) {
 		return
 	}
 	record.ConfirmedCount = len(confirmed)
-	if strings.TrimSpace(record.TemplateID) == "" {
-		record.TemplateID = strings.TrimSpace(valueFromAny(normalizedWorkspace["template_id"]))
+	templateID, err := resolveExportTemplateID(record.TemplateID, normalizedWorkspace, func() (string, error) {
+		resolved, err := deps.ReadModel.GetResolvedDefaultTemplate(ctx, record.UserID)
+		if err != nil || resolved == nil {
+			return "", err
+		}
+		return strings.TrimSpace(resolved.DefaultTemplateID), nil
+	})
+	if err != nil {
+		fail("no default template configured")
+		return
 	}
-	if strings.TrimSpace(record.TemplateID) == "" {
-		record.TemplateID = "anki-quizify"
-	}
+	record.TemplateID = templateID
 	templateRow, err := deps.ReadModel.GetAccessibleTemplate(ctx, record.UserID, record.TemplateID)
 	if err != nil {
 		fail("template not found or inaccessible")
@@ -336,6 +342,30 @@ func runApkgExportTask(deps ExportsDeps, record apkgExportRecord) {
 	})
 }
 
+func resolveExportTemplateID(
+	explicitTemplateID string,
+	normalizedWorkspace map[string]any,
+	resolveDefault func() (string, error),
+) (string, error) {
+	templateID := strings.TrimSpace(explicitTemplateID)
+	if templateID != "" {
+		return templateID, nil
+	}
+	templateID = strings.TrimSpace(valueFromAny(normalizedWorkspace["template_id"]))
+	if templateID != "" {
+		return templateID, nil
+	}
+	resolved, err := resolveDefault()
+	if err != nil {
+		return "", err
+	}
+	templateID = strings.TrimSpace(resolved)
+	if templateID == "" {
+		return "", fmt.Errorf("no default template")
+	}
+	return templateID, nil
+}
+
 func updateExportRecord(ctx context.Context, deps ExportsDeps, sessionID, exportID string, mutate func(apkgExportRecord) apkgExportRecord) {
 	workspace, err := deps.ReadModel.LoadWorkspace(ctx, sessionID)
 	if err != nil {
@@ -384,41 +414,41 @@ func findExportRecord(workspace map[string]any, exportID, userID string) (apkgEx
 
 func sanitizeExportRecord(rec apkgExportRecord) map[string]any {
 	return map[string]any{
-		"export_id":        rec.ExportID,
-		"session_id":       rec.SessionID,
-		"template_id":      rec.TemplateID,
-		"status":           rec.Status,
-		"deck_name":        rec.DeckName,
-		"package_name":     rec.PackageName,
-		"confirmed_count":  rec.ConfirmedCount,
-		"file_name":        rec.FileName,
-		"file_size":        rec.FileSize,
-		"download_path":    rec.DownloadPath,
-		"created_at":       rec.CreatedAt,
-		"updated_at":       rec.UpdatedAt,
-		"completed_at":     rec.CompletedAt,
-		"error":            rec.Error,
+		"export_id":       rec.ExportID,
+		"session_id":      rec.SessionID,
+		"template_id":     rec.TemplateID,
+		"status":          rec.Status,
+		"deck_name":       rec.DeckName,
+		"package_name":    rec.PackageName,
+		"confirmed_count": rec.ConfirmedCount,
+		"file_name":       rec.FileName,
+		"file_size":       rec.FileSize,
+		"download_path":   rec.DownloadPath,
+		"created_at":      rec.CreatedAt,
+		"updated_at":      rec.UpdatedAt,
+		"completed_at":    rec.CompletedAt,
+		"error":           rec.Error,
 	}
 }
 
 func recordToMap(rec apkgExportRecord) map[string]any {
 	return map[string]any{
-		"export_id":        rec.ExportID,
-		"session_id":       rec.SessionID,
-		"user_id":          rec.UserID,
-		"template_id":      rec.TemplateID,
-		"status":           rec.Status,
-		"deck_name":        rec.DeckName,
-		"package_name":     rec.PackageName,
-		"confirmed_count":  rec.ConfirmedCount,
-		"file_name":        rec.FileName,
-		"file_size":        rec.FileSize,
-		"download_path":    rec.DownloadPath,
-		"created_at":       rec.CreatedAt,
-		"updated_at":       rec.UpdatedAt,
-		"completed_at":     rec.CompletedAt,
-		"error":            rec.Error,
-		"apkg_base64":      rec.APKGBase64,
+		"export_id":       rec.ExportID,
+		"session_id":      rec.SessionID,
+		"user_id":         rec.UserID,
+		"template_id":     rec.TemplateID,
+		"status":          rec.Status,
+		"deck_name":       rec.DeckName,
+		"package_name":    rec.PackageName,
+		"confirmed_count": rec.ConfirmedCount,
+		"file_name":       rec.FileName,
+		"file_size":       rec.FileSize,
+		"download_path":   rec.DownloadPath,
+		"created_at":      rec.CreatedAt,
+		"updated_at":      rec.UpdatedAt,
+		"completed_at":    rec.CompletedAt,
+		"error":           rec.Error,
+		"apkg_base64":     rec.APKGBase64,
 	}
 }
 

@@ -208,6 +208,7 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 		query = strings.TrimSpace(req.Input.Query)
 	}
 	req.Input.Query = query
+	userID := deps.UserID(r)
 	switch taskType {
 	case ucdto.TaskTypeMain:
 		if query == "" {
@@ -215,8 +216,18 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 			return
 		}
 		if strings.TrimSpace(req.Input.Context.TemplateID) == "" {
-			http.Error(w, "template_id is required in input.context.template_id for main task", http.StatusBadRequest)
-			return
+			if deps.ReadModel != nil && deps.ReadModel.Ready() {
+				if resolved, err := deps.ReadModel.GetResolvedDefaultTemplate(r.Context(), userID); err == nil && resolved != nil && strings.TrimSpace(resolved.DefaultTemplateID) != "" {
+					req.Input.Context.TemplateID = strings.TrimSpace(resolved.DefaultTemplateID)
+					if req.Input.Context.TemplateVersion <= 0 {
+						req.Input.Context.TemplateVersion = resolved.DefaultTemplateVersion
+					}
+				}
+			}
+			if strings.TrimSpace(req.Input.Context.TemplateID) == "" {
+				http.Error(w, "template_id is required in input.context.template_id for main task (or configure a default template)", http.StatusBadRequest)
+				return
+			}
 		}
 	case ucdto.TaskTypeCardTemplate:
 		if strings.TrimSpace(req.Input.TemplateID) == "" {
@@ -224,7 +235,6 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 			return
 		}
 	}
-	userID := deps.UserID(r)
 	sessionID := resolveSessionID(req.Input.SessionID)
 	req.Input.SessionID = sessionID
 	req.Input.FilePolicy = normalizeFilePolicy(req.Input.FilePolicy)

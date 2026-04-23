@@ -84,6 +84,7 @@ async def query_knowledge(
         normalized_mode = str(result.get("mode") or mode or "mix").strip().lower()
         result_text = str(result.get("content") or "")
         result_refs = result.get("refs") or []
+        diagnostics = result.get("diagnostics") if isinstance(result, dict) else {}
 
         query_record = {
             "query": query,
@@ -100,6 +101,7 @@ async def query_knowledge(
             "query": query,
             "mode": normalized_mode,
             "file_ids": file_ids or [],
+            "diagnostics": diagnostics if isinstance(diagnostics, dict) else {},
         }
 
         logger.info(
@@ -113,6 +115,7 @@ async def query_knowledge(
             "query": query,
             "mode": normalized_mode,
             "file_ids": file_ids or [],
+            "diagnostics": diagnostics if isinstance(diagnostics, dict) else {},
             "query_record": query_record,
             "context_entry": context_entry,
         }

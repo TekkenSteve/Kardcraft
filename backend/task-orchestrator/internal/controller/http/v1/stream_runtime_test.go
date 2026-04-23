@@ -28,9 +28,12 @@ func TestBuildUsageLedgerRowRejectsLegacyFlatPayload(t *testing.T) {
 
 func TestBuildUsageLedgerRowRejectsMalformedPayload(t *testing.T) {
 	payload := map[string]any{
-		"task_id": "task-1",
+		"event_id":    "evt-malformed-1",
+		"occurred_at": "2026-04-16T08:00:00Z",
+		"task_id":     "task-1",
 		"usage": map[string]any{
 			"provider": "openai",
+			"created_at": "2026-04-16T08:00:00Z",
 			// model and idempotency_key intentionally missing
 		},
 	}

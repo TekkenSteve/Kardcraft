@@ -288,6 +288,7 @@ class ToolBroker:
 
         refs = [ref.dict() for ref in result_refs] if result_refs else []
         normalized_refs = _normalize_refs(refs)
+        zero_references = bool(file_ids) and len(normalized_refs) == 0
         payload = {
             "content": result_text or "",
             "refs": normalized_refs,
@@ -296,18 +297,34 @@ class ToolBroker:
             "mode": normalized_mode,
             "session_id": session_id,
             "file_ids": file_ids or [],
+            "diagnostics": {
+                "zero_references": zero_references,
+                "response_chars": len(result_text or ""),
+            },
         }
+        if zero_references:
+            logger.warning(
+                "ragix_query_zero_references",
+                session_id=session_id,
+                user_id=user_id,
+                mode=normalized_mode,
+                top_k=top_k,
+                file_count=len(file_ids or []),
+                response_chars=len(result_text or ""),
+                query_preview=(query or "")[:160],
+            )
         self._audit(
             tool_name="search_ragix",
             session_id=session_id,
             user_id=user_id,
-            status="ok",
+            status="degraded_zero_references" if zero_references else "ok",
             details={
                 "query_len": len(query or ""),
                 "mode": normalized_mode,
                 "top_k": top_k,
                 "hit_count": len(normalized_refs),
                 "file_count": len(file_ids or []),
+                "response_chars": len(result_text or ""),
             },
         )
         return payload

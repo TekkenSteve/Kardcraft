@@ -46,17 +46,9 @@ class LightRAGRESTClient:
             logger.error(f"Failed to connect to LightRAG server: {e}")  
             return False  
 
-    async def get_health(self) -> Dict[str, Any]:
+    async def get_health(self, workspace: Optional[str] = None) -> Dict[str, Any]:
         """Get runtime health status from /health."""
-        if not self._initialized:
-            ok = await self.initialize()
-            if not ok:
-                raise RuntimeError("Client not initialized")
-
-        assert self._client is not None
-        response = await self._client.get("/health")
-        response.raise_for_status()
-        return response.json()
+        return await self._make_request("GET", "/health", workspace=workspace)
 
     async def get_gateway_health(self) -> Dict[str, Any]:
         """Get gateway health status from /gateway/health."""

@@ -3,6 +3,7 @@ package persistence
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	redissvc "task-orchestrator/internal/repo/redis"
@@ -434,6 +436,68 @@ func (s *SessionStore) GetUserTemplatePreference(ctx context.Context, userID str
 		return nil, err
 	}
 	return item, nil
+}
+
+func (s *SessionStore) GetResolvedDefaultTemplate(ctx context.Context, userID string) (*TemplateCatalogRow, error) {
+	if s == nil || s.pg == nil {
+		return nil, fmt.Errorf("postgres not configured")
+	}
+
+	// 1) Legacy-compatible explicit user preference takes highest priority.
+	pref := &TemplateCatalogRow{}
+	err := s.pg.QueryRow(ctx, `
+		SELECT pref.default_template_id, pref.default_template_version
+		FROM kc_user_template_preferences pref
+		JOIN kc_card_templates t
+		  ON t.template_id = pref.default_template_id
+		 AND t.status = 'active'
+		 AND (t.scope = 'system' OR t.owner_user_id = $1)
+		JOIN kc_card_template_versions v
+		  ON v.template_id = pref.default_template_id
+		 AND v.version = pref.default_template_version
+		WHERE pref.user_id = $1
+		LIMIT 1
+	`, userID).Scan(&pref.DefaultTemplateID, &pref.DefaultTemplateVersion)
+	if err == nil {
+		return pref, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+
+	// 2) Policy-based resolution fallback: user scope then system scope.
+	policy := &TemplateCatalogRow{}
+	err = s.pg.QueryRow(ctx, `
+		SELECT p.default_template_id, p.default_template_version
+		FROM kc_template_default_policies p
+		JOIN kc_card_templates t
+		  ON t.template_id = p.default_template_id
+		 AND t.status = 'active'
+		 AND (t.scope = 'system' OR t.owner_user_id = $1)
+		JOIN kc_card_template_versions v
+		  ON v.template_id = p.default_template_id
+		 AND v.version = p.default_template_version
+		WHERE
+			(p.scope_type = 'user' AND p.scope_id = $1)
+			OR p.scope_type = 'system'
+		ORDER BY
+			CASE WHEN p.scope_type = 'user' THEN 0 ELSE 1 END,
+			p.updated_at DESC,
+			p.default_template_id ASC
+		LIMIT 1
+	`, userID).Scan(&policy.DefaultTemplateID, &policy.DefaultTemplateVersion)
+	if err == nil {
+		return policy, nil
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, pgx.ErrNoRows
+	}
+	var pgErr *pgconn.PgError
+	// Table may not exist before migration cutover; treat as no-default.
+	if errors.As(err, &pgErr) && pgErr.Code == "42P01" {
+		return nil, pgx.ErrNoRows
+	}
+	return nil, err
 }
 
 func (s *SessionStore) UpsertUserTemplatePreference(ctx context.Context, userID, templateID string, version int) error {

@@ -1,113 +1,16 @@
 -- ============================================================================
--- Kardcraft 数据库初始化脚本
+-- Kardcraft unified baseline schema (first-run only)
+-- ============================================================================
+--
+-- Governance rules:
+-- 1) Migration is schema-only. No template content seed in migration SQL.
+-- 2) Template content must be imported via backend/database/scripts/bootstrap_templates.sh.
 -- ============================================================================
 
--- 设置搜索路径
 SET search_path TO public;
 
 -- ============================================================================
--- 创建工作空间表
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS workspaces (
-    workspace_id VARCHAR(36) PRIMARY KEY,
-    user_id VARCHAR(255) NOT NULL,
-    storage_path VARCHAR(1024) NOT NULL,
-    minio_bucket VARCHAR(255) NOT NULL,
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-
-    UNIQUE(user_id)
-);
-
-COMMENT ON TABLE workspaces IS '用户工作空间表';
-COMMENT ON COLUMN workspaces.workspace_id IS '工作空间ID';
-COMMENT ON COLUMN workspaces.user_id IS '用户ID';
-COMMENT ON COLUMN workspaces.storage_path IS '存储路径';
-COMMENT ON COLUMN workspaces.minio_bucket IS 'MinIO桶名称';
-COMMENT ON COLUMN workspaces.metadata IS '元数据（JSON格式）';
-COMMENT ON COLUMN workspaces.created_at IS '创建时间';
-COMMENT ON COLUMN workspaces.updated_at IS '更新时间';
-
-CREATE INDEX IF NOT EXISTS idx_workspaces_user_id ON workspaces (user_id);
-CREATE INDEX IF NOT EXISTS idx_workspaces_created_at ON workspaces (created_at DESC);
-
--- ============================================================================
--- 创建工作空间文件表
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS workspace_files (
-    file_id VARCHAR(36) PRIMARY KEY,
-    workspace_id VARCHAR(36) NOT NULL REFERENCES workspaces(workspace_id) ON DELETE CASCADE,
-    filename VARCHAR(512) NOT NULL,
-    filepath VARCHAR(1024) NOT NULL,
-    size BIGINT NOT NULL,
-    mime_type VARCHAR(255),
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-);
-
-COMMENT ON TABLE workspace_files IS '工作空间文件表';
-COMMENT ON COLUMN workspace_files.file_id IS '文件ID';
-COMMENT ON COLUMN workspace_files.workspace_id IS '工作空间ID';
-COMMENT ON COLUMN workspace_files.filename IS '文件名';
-COMMENT ON COLUMN workspace_files.filepath IS '文件路径';
-COMMENT ON COLUMN workspace_files.size IS '文件大小（字节）';
-COMMENT ON COLUMN workspace_files.mime_type IS 'MIME类型';
-COMMENT ON COLUMN workspace_files.metadata IS '元数据（JSON格式）';
-COMMENT ON COLUMN workspace_files.created_at IS '创建时间';
-COMMENT ON COLUMN workspace_files.updated_at IS '更新时间';
-
-CREATE INDEX IF NOT EXISTS idx_workspace_files_workspace_id ON workspace_files (workspace_id);
-CREATE INDEX IF NOT EXISTS idx_workspace_files_filename ON workspace_files (filename);
-CREATE INDEX IF NOT EXISTS idx_workspace_files_created_at ON workspace_files (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_workspace_files_mime_type ON workspace_files (mime_type);
-
--- ============================================================================
--- 创建工作流任务表
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS workflow_tasks (
-    task_id VARCHAR(36) PRIMARY KEY,
-    user_id VARCHAR(255) NOT NULL,
-    workflow_type VARCHAR(100) NOT NULL,
-    status VARCHAR(50) NOT NULL DEFAULT 'pending',
-    progress FLOAT DEFAULT 0.0,
-    input_data JSONB DEFAULT '{}'::jsonb,
-    result_data JSONB DEFAULT '{}'::jsonb,
-    error_message TEXT,
-    checkpoint_id VARCHAR(255),
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    completed_at TIMESTAMP WITH TIME ZONE
-);
-
-COMMENT ON TABLE workflow_tasks IS '工作流任务表';
-COMMENT ON COLUMN workflow_tasks.task_id IS '任务ID';
-COMMENT ON COLUMN workflow_tasks.user_id IS '用户ID';
-COMMENT ON COLUMN workflow_tasks.workflow_type IS '工作流类型';
-COMMENT ON COLUMN workflow_tasks.status IS '状态（pending, running, completed, failed, cancelled）';
-COMMENT ON COLUMN workflow_tasks.progress IS '进度（0.0-1.0）';
-COMMENT ON COLUMN workflow_tasks.input_data IS '输入数据（JSON格式）';
-COMMENT ON COLUMN workflow_tasks.result_data IS '结果数据（JSON格式）';
-COMMENT ON COLUMN workflow_tasks.error_message IS '错误信息';
-COMMENT ON COLUMN workflow_tasks.checkpoint_id IS '检查点ID';
-COMMENT ON COLUMN workflow_tasks.metadata IS '元数据（JSON格式）';
-COMMENT ON COLUMN workflow_tasks.created_at IS '创建时间';
-COMMENT ON COLUMN workflow_tasks.updated_at IS '更新时间';
-COMMENT ON COLUMN workflow_tasks.completed_at IS '完成时间';
-
-CREATE INDEX IF NOT EXISTS idx_workflow_tasks_user_id ON workflow_tasks (user_id);
-CREATE INDEX IF NOT EXISTS idx_workflow_tasks_status ON workflow_tasks (status);
-CREATE INDEX IF NOT EXISTS idx_workflow_tasks_workflow_type ON workflow_tasks (workflow_type);
-CREATE INDEX IF NOT EXISTS idx_workflow_tasks_created_at ON workflow_tasks (created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_workflow_tasks_checkpoint_id ON workflow_tasks (checkpoint_id);
-
--- ============================================================================
--- 创建会话与任务元数据表（用于 Sessions API）
+-- Core session/task control plane
 -- ============================================================================
 
 CREATE TABLE IF NOT EXISTS kc_sessions (
@@ -117,9 +20,9 @@ CREATE TABLE IF NOT EXISTS kc_sessions (
     pinned BOOLEAN NOT NULL DEFAULT FALSE,
     task_count INTEGER NOT NULL DEFAULT 0,
     tokens_used INTEGER NOT NULL DEFAULT 0,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    last_activity_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_activity_at TIMESTAMPTZ,
     latest_task_query TEXT,
     latest_task_status VARCHAR(50)
 );
@@ -137,19 +40,15 @@ CREATE TABLE IF NOT EXISTS kc_tasks (
     query TEXT,
     result JSONB,
     error_message TEXT,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
-    completed_at TIMESTAMP WITH TIME ZONE
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    completed_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_kc_tasks_user_id ON kc_tasks (user_id);
 CREATE INDEX IF NOT EXISTS idx_kc_tasks_session_id ON kc_tasks (session_id);
 CREATE INDEX IF NOT EXISTS idx_kc_tasks_status ON kc_tasks (status);
 CREATE INDEX IF NOT EXISTS idx_kc_tasks_created_at ON kc_tasks (created_at DESC);
-
--- ============================================================================
--- LLM 调用用量账本（审计与聚合真相源）
--- ============================================================================
 
 CREATE TABLE IF NOT EXISTS kc_llm_usage_ledger (
     id BIGSERIAL PRIMARY KEY,
@@ -175,7 +74,7 @@ CREATE TABLE IF NOT EXISTS kc_llm_usage_ledger (
     source VARCHAR(32) NOT NULL DEFAULT 'exact',
     external_request_id VARCHAR(160),
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CONSTRAINT ck_kc_llm_usage_ledger_non_negative_tokens CHECK (
         prompt_tokens >= 0 AND
         completion_tokens >= 0 AND
@@ -196,10 +95,6 @@ CREATE INDEX IF NOT EXISTS idx_kc_llm_usage_ledger_session_id ON kc_llm_usage_le
 CREATE INDEX IF NOT EXISTS idx_kc_llm_usage_ledger_user_id ON kc_llm_usage_ledger (user_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_kc_llm_usage_ledger_model_provider ON kc_llm_usage_ledger (model, provider, created_at DESC);
 
--- ============================================================================
--- 事件表（用于 Sessions Events API）
--- ============================================================================
-
 CREATE TABLE IF NOT EXISTS kc_events (
     id BIGSERIAL PRIMARY KEY,
     session_id VARCHAR(64) NOT NULL REFERENCES kc_sessions(session_id) ON DELETE CASCADE,
@@ -209,36 +104,19 @@ CREATE TABLE IF NOT EXISTS kc_events (
     message TEXT,
     payload JSONB,
     stream_id VARCHAR(64),
-    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_kc_events_session_id ON kc_events (session_id);
 CREATE INDEX IF NOT EXISTS idx_kc_events_task_id ON kc_events (task_id);
 CREATE INDEX IF NOT EXISTS idx_kc_events_workflow_id ON kc_events (workflow_id);
 CREATE INDEX IF NOT EXISTS idx_kc_events_created_at ON kc_events (created_at);
--- Existing deployments may contain duplicated stream_id rows caused by earlier
--- non-atomic event ingestion. Keep the newest row before enforcing uniqueness.
-WITH duplicated AS (
-    SELECT
-        id,
-        ROW_NUMBER() OVER (
-            PARTITION BY workflow_id, stream_id
-            ORDER BY created_at DESC, id DESC
-        ) AS rn
-    FROM kc_events
-    WHERE stream_id IS NOT NULL
-      AND workflow_id IS NOT NULL
-)
-DELETE FROM kc_events e
-USING duplicated d
-WHERE e.id = d.id
-  AND d.rn > 1;
 CREATE UNIQUE INDEX IF NOT EXISTS uq_kc_events_workflow_stream
     ON kc_events (workflow_id, stream_id)
     WHERE stream_id IS NOT NULL;
 
 -- ============================================================================
--- 创建卡片相关表（对齐 SQLAlchemy models）
+-- Card storage domain tables
 -- ============================================================================
 
 DO $$
@@ -268,23 +146,12 @@ CREATE TABLE IF NOT EXISTS cards (
     modified_at TIMESTAMP WITHOUT TIME ZONE NOT NULL DEFAULT NOW(),
     deleted_at TIMESTAMP WITHOUT TIME ZONE,
     manual_edits INTEGER NOT NULL DEFAULT 0,
-
     CONSTRAINT ck_card_version_positive CHECK (version >= 1)
 );
 
 CREATE INDEX IF NOT EXISTS idx_cards_user_modified ON cards (user_id, modified_at);
 CREATE INDEX IF NOT EXISTS idx_cards_edit_status ON cards (edit_status, locked_at);
 CREATE INDEX IF NOT EXISTS idx_cards_concepts ON cards USING gin (concepts);
-
-COMMENT ON TABLE cards IS '卡片表';
-COMMENT ON COLUMN cards.card_id IS '卡片ID';
-COMMENT ON COLUMN cards.user_id IS '用户ID';
-COMMENT ON COLUMN cards.data IS '卡片内容（JSON）';
-COMMENT ON COLUMN cards.model IS '卡片模型';
-COMMENT ON COLUMN cards.edit_status IS '编辑状态';
-COMMENT ON COLUMN cards.concepts IS '概念标签';
-COMMENT ON COLUMN cards.created_at IS '创建时间';
-COMMENT ON COLUMN cards.modified_at IS '更新时间';
 
 CREATE TABLE IF NOT EXISTS card_versions (
     id UUID PRIMARY KEY,
@@ -342,252 +209,165 @@ CREATE TABLE IF NOT EXISTS media (
 CREATE INDEX IF NOT EXISTS idx_media_user_id ON media (user_id);
 
 -- ============================================================================
--- 创建文档元数据表
+-- Template governance schema (structure only)
 -- ============================================================================
 
-CREATE TABLE IF NOT EXISTS document_metadata (
-    document_id VARCHAR(36) PRIMARY KEY,
-    user_id VARCHAR(255) NOT NULL,
-    filename VARCHAR(512) NOT NULL,
-    file_hash VARCHAR(64) NOT NULL,
-    file_size BIGINT NOT NULL,
-    mime_type VARCHAR(255),
-    status VARCHAR(50) DEFAULT 'uploaded',
-    processing_result JSONB DEFAULT '{}'::jsonb,
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    processed_at TIMESTAMP WITH TIME ZONE,
-    file_path VARCHAR(1024)
+CREATE TABLE IF NOT EXISTS kc_card_templates (
+    template_id VARCHAR(128) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    description TEXT,
+    scope VARCHAR(32) NOT NULL DEFAULT 'system',
+    owner_user_id VARCHAR(255),
+    status VARCHAR(32) NOT NULL DEFAULT 'active',
+    is_default BOOLEAN NOT NULL DEFAULT FALSE,
+    latest_version INTEGER NOT NULL DEFAULT 1,
+    tags JSONB NOT NULL DEFAULT '[]'::jsonb,
+    metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_kc_card_templates_scope CHECK (scope IN ('system', 'user', 'org')),
+    CONSTRAINT ck_kc_card_templates_status CHECK (status IN ('active', 'archived', 'disabled')),
+    CONSTRAINT ck_kc_card_templates_latest_version CHECK (latest_version >= 1)
 );
 
-COMMENT ON TABLE document_metadata IS '文档元数据表';
-COMMENT ON COLUMN document_metadata.document_id IS '文档ID';
-COMMENT ON COLUMN document_metadata.user_id IS '用户ID';
-COMMENT ON COLUMN document_metadata.filename IS '文件名';
-COMMENT ON COLUMN document_metadata.file_hash IS '文件哈希值';
-COMMENT ON COLUMN document_metadata.file_size IS '文件大小（字节）';
-COMMENT ON COLUMN document_metadata.mime_type IS 'MIME类型';
-COMMENT ON COLUMN document_metadata.status IS '状态（uploaded, processing, completed, failed）';
-COMMENT ON COLUMN document_metadata.processing_result IS '处理结果（JSON格式）';
-COMMENT ON COLUMN document_metadata.metadata IS '元数据（JSON格式）';
-COMMENT ON COLUMN document_metadata.created_at IS '创建时间';
-COMMENT ON COLUMN document_metadata.processed_at IS '处理时间';
-COMMENT ON COLUMN document_metadata.file_path IS '文件存储路径';
+CREATE INDEX IF NOT EXISTS idx_kc_card_templates_scope_status
+    ON kc_card_templates (scope, status, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kc_card_templates_owner_status
+    ON kc_card_templates (owner_user_id, status, updated_at DESC);
 
-CREATE INDEX IF NOT EXISTS idx_document_metadata_user_id ON document_metadata (user_id);
-CREATE INDEX IF NOT EXISTS idx_document_metadata_filename ON document_metadata (filename);
-CREATE INDEX IF NOT EXISTS idx_document_metadata_file_hash ON document_metadata (file_hash);
-CREATE INDEX IF NOT EXISTS idx_document_metadata_status ON document_metadata (status);
-CREATE INDEX IF NOT EXISTS idx_document_metadata_created_at ON document_metadata (created_at DESC);
-
--- ============================================================================
--- 创建向量嵌入表
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS vector_embeddings (
-    embedding_id VARCHAR(36) PRIMARY KEY,
-    user_id VARCHAR(255) NOT NULL,
-    content TEXT NOT NULL,
-    embedding_vector FLOAT[] NOT NULL,
-    model_name VARCHAR(100) NOT NULL,
-    metadata JSONB DEFAULT '{}'::jsonb,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS kc_card_template_versions (
+    template_id VARCHAR(128) NOT NULL REFERENCES kc_card_templates(template_id) ON DELETE CASCADE,
+    version INTEGER NOT NULL,
+    front_html TEXT NOT NULL,
+    back_html TEXT NOT NULL,
+    css TEXT NOT NULL,
+    js TEXT,
+    mapping_spec JSONB NOT NULL DEFAULT '{}'::jsonb,
+    is_published BOOLEAN NOT NULL DEFAULT TRUE,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (template_id, version),
+    CONSTRAINT ck_kc_card_template_versions_version CHECK (version >= 1)
 );
 
-COMMENT ON TABLE vector_embeddings IS '向量嵌入表';
-COMMENT ON COLUMN vector_embeddings.embedding_id IS '嵌入ID';
-COMMENT ON COLUMN vector_embeddings.user_id IS '用户ID';
-COMMENT ON COLUMN vector_embeddings.content IS '原始内容';
-COMMENT ON COLUMN vector_embeddings.embedding_vector IS '嵌入向量';
-COMMENT ON COLUMN vector_embeddings.model_name IS '模型名称';
-COMMENT ON COLUMN vector_embeddings.metadata IS '元数据（JSON格式）';
-COMMENT ON COLUMN vector_embeddings.created_at IS '创建时间';
+CREATE INDEX IF NOT EXISTS idx_kc_card_template_versions_template_published
+    ON kc_card_template_versions (template_id, is_published, version DESC);
 
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_user_id ON vector_embeddings (user_id);
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_model_name ON vector_embeddings (model_name);
-CREATE INDEX IF NOT EXISTS idx_vector_embeddings_created_at ON vector_embeddings (created_at DESC);
-
--- ============================================================================
--- 创建系统指标表
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS system_metrics (
-    metric_id SERIAL PRIMARY KEY,
-    service_name VARCHAR(100) NOT NULL,
-    metric_name VARCHAR(200) NOT NULL,
-    metric_value DOUBLE PRECISION NOT NULL,
-    labels JSONB DEFAULT '{}'::jsonb,
-    timestamp TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS kc_user_template_preferences (
+    user_id VARCHAR(255) PRIMARY KEY,
+    default_template_id VARCHAR(128) NOT NULL REFERENCES kc_card_templates(template_id) ON DELETE CASCADE,
+    default_template_version INTEGER NOT NULL DEFAULT 1,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_kc_user_template_preferences_version CHECK (default_template_version >= 1),
+    CONSTRAINT fk_kc_user_template_preferences_template_version
+        FOREIGN KEY (default_template_id, default_template_version)
+        REFERENCES kc_card_template_versions (template_id, version)
+        ON DELETE CASCADE
 );
 
-COMMENT ON TABLE system_metrics IS '系统指标表';
-COMMENT ON COLUMN system_metrics.metric_id IS '指标ID';
-COMMENT ON COLUMN system_metrics.service_name IS '服务名称';
-COMMENT ON COLUMN system_metrics.metric_name IS '指标名称';
-COMMENT ON COLUMN system_metrics.metric_value IS '指标值';
-COMMENT ON COLUMN system_metrics.labels IS '标签（JSON格式）';
-COMMENT ON COLUMN system_metrics.timestamp IS '时间戳';
-
-CREATE INDEX IF NOT EXISTS idx_system_metrics_service_name ON system_metrics (service_name);
-CREATE INDEX IF NOT EXISTS idx_system_metrics_metric_name ON system_metrics (metric_name);
-CREATE INDEX IF NOT EXISTS idx_system_metrics_timestamp ON system_metrics (timestamp DESC);
-
--- ============================================================================
--- 创建审计日志表
--- ============================================================================
-
-CREATE TABLE IF NOT EXISTS audit_logs (
-    log_id SERIAL PRIMARY KEY,
-    user_id VARCHAR(255),
-    action VARCHAR(100) NOT NULL,
-    resource_type VARCHAR(100),
-    resource_id VARCHAR(255),
-    details JSONB DEFAULT '{}'::jsonb,
-    ip_address INET,
-    user_agent TEXT,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+CREATE TABLE IF NOT EXISTS kc_template_default_policies (
+    id BIGSERIAL PRIMARY KEY,
+    scope_type VARCHAR(16) NOT NULL,
+    scope_id VARCHAR(255),
+    default_template_id VARCHAR(128) NOT NULL,
+    default_template_version INTEGER NOT NULL DEFAULT 1,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_kc_template_default_policies_scope_type
+        CHECK (scope_type IN ('system', 'user', 'org')),
+    CONSTRAINT ck_kc_template_default_policies_scope_id
+        CHECK (
+            (scope_type = 'system' AND scope_id IS NULL) OR
+            (scope_type IN ('user', 'org') AND scope_id IS NOT NULL)
+        ),
+    CONSTRAINT ck_kc_template_default_policies_version
+        CHECK (default_template_version >= 1),
+    CONSTRAINT fk_kc_template_default_policies_template_version
+        FOREIGN KEY (default_template_id, default_template_version)
+        REFERENCES kc_card_template_versions (template_id, version)
+        ON DELETE CASCADE
 );
 
-COMMENT ON TABLE audit_logs IS '审计日志表';
-COMMENT ON COLUMN audit_logs.log_id IS '日志ID';
-COMMENT ON COLUMN audit_logs.user_id IS '用户ID';
-COMMENT ON COLUMN audit_logs.action IS '操作类型';
-COMMENT ON COLUMN audit_logs.resource_type IS '资源类型';
-COMMENT ON COLUMN audit_logs.resource_id IS '资源ID';
-COMMENT ON COLUMN audit_logs.details IS '详细信息（JSON格式）';
-COMMENT ON COLUMN audit_logs.ip_address IS 'IP地址';
-COMMENT ON COLUMN audit_logs.user_agent IS '用户代理';
-COMMENT ON COLUMN audit_logs.created_at IS '创建时间';
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kc_template_default_policies_system
+    ON kc_template_default_policies (scope_type)
+    WHERE scope_type = 'system';
 
-CREATE INDEX IF NOT EXISTS idx_audit_logs_user_id ON audit_logs (user_id);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_action ON audit_logs (action);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_resource_type ON audit_logs (resource_type);
-CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs (created_at DESC);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kc_template_default_policies_user
+    ON kc_template_default_policies (scope_type, scope_id)
+    WHERE scope_type = 'user';
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_kc_template_default_policies_org
+    ON kc_template_default_policies (scope_type, scope_id)
+    WHERE scope_type = 'org';
+
+CREATE TABLE IF NOT EXISTS kc_template_bootstrap_audit (
+    id BIGSERIAL PRIMARY KEY,
+    template_id VARCHAR(128) NOT NULL,
+    template_version INTEGER NOT NULL,
+    operation VARCHAR(32) NOT NULL,
+    force_overwrite BOOLEAN NOT NULL DEFAULT FALSE,
+    operator_id VARCHAR(255) NOT NULL,
+    source VARCHAR(255) NOT NULL,
+    payload_digest VARCHAR(128),
+    details JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT ck_kc_template_bootstrap_audit_version CHECK (template_version >= 1)
+);
+
+CREATE INDEX IF NOT EXISTS idx_kc_template_bootstrap_audit_template
+    ON kc_template_bootstrap_audit (template_id, template_version, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_kc_template_bootstrap_audit_operator
+    ON kc_template_bootstrap_audit (operator_id, created_at DESC);
 
 -- ============================================================================
--- 创建函数和触发器
+-- Common trigger helpers
 -- ============================================================================
 
--- 自动更新updated_at字段的函数
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.updated_at = NOW();
     RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$ LANGUAGE plpgsql;
 
--- 自动更新modified_at字段的函数
 CREATE OR REPLACE FUNCTION update_modified_at_column()
 RETURNS TRIGGER AS $$
 BEGIN
     NEW.modified_at = NOW();
     RETURN NEW;
 END;
-$$ language 'plpgsql';
+$$ LANGUAGE plpgsql;
 
--- 为所有需要自动更新时间的表创建触发器（幂等）
-DROP TRIGGER IF EXISTS update_workspaces_updated_at ON workspaces;
-CREATE TRIGGER update_workspaces_updated_at BEFORE UPDATE ON workspaces
+DROP TRIGGER IF EXISTS update_kc_sessions_updated_at ON kc_sessions;
+CREATE TRIGGER update_kc_sessions_updated_at BEFORE UPDATE ON kc_sessions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-DROP TRIGGER IF EXISTS update_workspace_files_updated_at ON workspace_files;
-CREATE TRIGGER update_workspace_files_updated_at BEFORE UPDATE ON workspace_files
+DROP TRIGGER IF EXISTS update_kc_tasks_updated_at ON kc_tasks;
+CREATE TRIGGER update_kc_tasks_updated_at BEFORE UPDATE ON kc_tasks
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
-DROP TRIGGER IF EXISTS update_workflow_tasks_updated_at ON workflow_tasks;
-CREATE TRIGGER update_workflow_tasks_updated_at BEFORE UPDATE ON workflow_tasks
+DROP TRIGGER IF EXISTS update_kc_card_templates_updated_at ON kc_card_templates;
+CREATE TRIGGER update_kc_card_templates_updated_at BEFORE UPDATE ON kc_card_templates
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_kc_card_template_versions_updated_at ON kc_card_template_versions;
+CREATE TRIGGER update_kc_card_template_versions_updated_at BEFORE UPDATE ON kc_card_template_versions
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_kc_user_template_preferences_updated_at ON kc_user_template_preferences;
+CREATE TRIGGER update_kc_user_template_preferences_updated_at BEFORE UPDATE ON kc_user_template_preferences
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+DROP TRIGGER IF EXISTS update_kc_template_default_policies_updated_at ON kc_template_default_policies;
+CREATE TRIGGER update_kc_template_default_policies_updated_at BEFORE UPDATE ON kc_template_default_policies
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 DROP TRIGGER IF EXISTS update_cards_modified_at ON cards;
 CREATE TRIGGER update_cards_modified_at BEFORE UPDATE ON cards
     FOR EACH ROW EXECUTE FUNCTION update_modified_at_column();
 
--- ============================================================================
--- 创建视图
--- ============================================================================
-
--- 工作流任务统计视图
-CREATE OR REPLACE VIEW workflow_stats AS
-SELECT
-    workflow_type,
-    status,
-    COUNT(*) as task_count,
-    AVG(EXTRACT(EPOCH FROM (completed_at - created_at))) as avg_duration_seconds,
-    MIN(created_at) as first_task,
-    MAX(created_at) as last_task
-FROM workflow_tasks
-GROUP BY workflow_type, status;
-
--- 用户活动统计视图
-CREATE OR REPLACE VIEW user_activity_stats AS
-SELECT
-    user_id,
-    COUNT(DISTINCT CASE WHEN source = 'workflow' THEN id END) as total_tasks,
-    COUNT(DISTINCT CASE WHEN source = 'card' THEN id END) as total_cards,
-    COUNT(DISTINCT CASE WHEN source = 'document' THEN id END) as total_documents,
-    MIN(created_at) as first_activity,
-    MAX(created_at) as last_activity
-FROM (
-    SELECT user_id, task_id as id, created_at, 'workflow' as source FROM workflow_tasks
-    UNION ALL
-    SELECT user_id, card_id as id, created_at, 'card' as source FROM cards
-    UNION ALL
-    SELECT user_id, document_id as id, created_at, 'document' as source FROM document_metadata
-) activities
-GROUP BY user_id;
-
--- ============================================================================
--- 插入初始数据（可选）
--- ============================================================================
-
--- 插入系统用户（如果需要）
--- INSERT INTO workspaces (workspace_id, user_id, storage_path, minio_bucket, metadata)
--- VALUES (
---     'system-workspace',
---     'system',
---     'workspaces/system',
---     'system-bucket',
---     '{"description": "System workspace"}'::jsonb
--- );
-
--- ============================================================================
--- 创建角色和权限（生产环境需要）
--- ============================================================================
-
--- 创建只读角色
--- CREATE ROLE kardcraft_readonly;
--- GRANT CONNECT ON DATABASE kardcraft TO kardcraft_readonly;
--- GRANT USAGE ON SCHEMA public TO kardcraft_readonly;
--- GRANT SELECT ON ALL TABLES IN SCHEMA public TO kardcraft_readonly;
-
--- 创建读写角色
--- CREATE ROLE kardcraft_readwrite;
--- GRANT CONNECT ON DATABASE kardcraft TO kardcraft_readwrite;
--- GRANT USAGE ON SCHEMA public TO kardcraft_readwrite;
--- GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO kardcraft_readwrite;
-
--- ============================================================================
--- 完成消息
--- ============================================================================
-
 DO $$
 BEGIN
-    RAISE NOTICE 'Kardcraft 数据库初始化完成！';
-    RAISE NOTICE '已创建的表：';
-    RAISE NOTICE '  - workspaces (工作空间表)';
-    RAISE NOTICE '  - workspace_files (工作空间文件表)';
-    RAISE NOTICE '  - workflow_tasks (工作流任务表)';
-    RAISE NOTICE '  - cards (卡片表)';
-    RAISE NOTICE '  - document_metadata (文档元数据表)';
-    RAISE NOTICE '  - vector_embeddings (向量嵌入表)';
-    RAISE NOTICE '  - system_metrics (系统指标表)';
-    RAISE NOTICE '  - audit_logs (审计日志表)';
-    RAISE NOTICE '';
-    RAISE NOTICE '已创建的视图：';
-    RAISE NOTICE '  - workflow_stats (工作流统计视图)';
-    RAISE NOTICE '  - user_activity_stats (用户活动统计视图)';
-    RAISE NOTICE '';
-    RAISE NOTICE '已创建的触发器：';
-    RAISE NOTICE '  - 自动更新updated_at字段的触发器';
+    RAISE NOTICE 'Kardcraft unified baseline schema initialized.';
 END $$;

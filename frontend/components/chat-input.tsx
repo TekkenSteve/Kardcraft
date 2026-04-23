@@ -128,11 +128,8 @@ export function ChatInput({
                 const nextTemplates = Array.isArray(data.templates) ? data.templates : [];
                 setTemplates(nextTemplates);
 
-                const systemDefault = nextTemplates.find((item) => item.is_default);
                 const targetTemplateId =
                     data.user_default_template_id ||
-                    systemDefault?.template_id ||
-                    nextTemplates[0]?.template_id ||
                     "";
 
                 const selectedTemplate = nextTemplates.find((item) => item.template_id === targetTemplateId);

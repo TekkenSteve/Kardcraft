@@ -5,6 +5,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import AsyncIterator
+import logging
 
 from .backends import BackendClient, BackendFactory
 from .config import Settings
@@ -86,6 +87,14 @@ class WorkspaceClientPool:
                         raise RuntimeError(f"eviction policy/state desync for workspace={victim}")
                     evicted_state.evicted = True
                     evicted = (victim, evicted_state)
+                    logger.warning(
+                        "workspace_evicted",
+                        extra={
+                            "workspace": victim,
+                            "admitted_workspace": workspace,
+                            "max_workspace_count": self._settings.max_workspace_count,
+                        },
+                    )
 
                 state = WorkspaceState(queue=asyncio.Queue(self._settings.pool_size_per_workspace))
                 self._states[workspace] = state
@@ -117,6 +126,15 @@ class WorkspaceClientPool:
 
         if run_runtime_cleanup:
             await self._factory.on_workspace_evicted(name)
+        logger.info(
+            "workspace_cleanup_complete",
+            extra={
+                "workspace": name,
+                "closed_idle_clients": closed_idle_clients,
+                "checked_out_clients": state.checked_out_clients,
+                "runtime_cleanup_done": run_runtime_cleanup,
+            },
+        )
 
     async def _borrow_client(self, workspace: str, state: WorkspaceState) -> BackendClient:
         async with state.lock:
@@ -133,9 +151,22 @@ class WorkspaceClientPool:
                 await self._touch_workspace(workspace)
                 return client
 
-        client = await asyncio.wait_for(
-            state.queue.get(), timeout=self._settings.borrow_timeout_sec
-        )
+        try:
+            client = await asyncio.wait_for(
+                state.queue.get(), timeout=self._settings.borrow_timeout_sec
+            )
+        except TimeoutError:
+            logger.error(
+                "workspace_pool_borrow_timeout",
+                extra={
+                    "workspace": workspace,
+                    "borrow_timeout_sec": self._settings.borrow_timeout_sec,
+                    "created_clients": state.created_clients,
+                    "checked_out_clients": state.checked_out_clients,
+                    "idle_clients": state.queue.qsize(),
+                },
+            )
+            raise
         async with state.lock:
             state.checked_out_clients += 1
         await self._touch_workspace(workspace)
@@ -194,3 +225,4 @@ class WorkspaceClientPool:
             }
         payload["runtime"] = await self._factory.stats()
         return payload
+logger = logging.getLogger(__name__)

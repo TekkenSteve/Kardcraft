@@ -150,6 +150,15 @@ func (s *UsecaseReadModelStore) GetUserTemplatePreference(ctx context.Context, u
 	return &converted, nil
 }
 
+func (s *UsecaseReadModelStore) GetResolvedDefaultTemplate(ctx context.Context, userID string) (*dto.TemplateCatalogRow, error) {
+	row, err := s.store.GetResolvedDefaultTemplate(ctx, userID)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	converted := convertTemplateRow(*row)
+	return &converted, nil
+}
+
 func (s *UsecaseReadModelStore) UpsertUserTemplatePreference(ctx context.Context, userID, templateID string, version int) error {
 	return s.store.UpsertUserTemplatePreference(ctx, userID, templateID, version)
 }

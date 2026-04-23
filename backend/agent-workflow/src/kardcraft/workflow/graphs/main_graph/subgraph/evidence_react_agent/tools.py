@@ -123,6 +123,7 @@ class EvidenceReactToolContext:
     hit_count: int = 0
     miss_count: int = 0
     ungrounded_count: int = 0
+    degraded_zero_ref_count: int = 0
     low_quality_count: int = 0
     retrieval_events: List[Dict[str, Any]] = field(default_factory=list)
     stop_reason: str = "budget_exhausted"
@@ -179,10 +180,14 @@ class EvidenceReactToolContext:
         content = str(result.get("content") or "").strip()
         raw_refs = result.get("refs") or []
         refs = [item for item in raw_refs if isinstance(item, dict)]
+        diagnostics = result.get("diagnostics") if isinstance(result, dict) else {}
+        zero_ref_degraded = bool(isinstance(diagnostics, dict) and diagnostics.get("zero_references"))
         hit_eval = _evaluate_grounded_hit(node=node, content=content, refs=refs)
         source_count = int(hit_eval.get("source_count") or 0)
         grounded = bool(hit_eval.get("hit"))
         reason_code = str(hit_eval.get("reason_code") or "miss")
+        if reason_code == "ungrounded" and zero_ref_degraded:
+            reason_code = "backend_degraded"
         gain = information_gain(content, self.aggregated_knowledge) if grounded else 0.0
         self.gains.append(round(gain, 4))
 
@@ -205,6 +210,8 @@ class EvidenceReactToolContext:
             self.miss_count += 1
             if reason_code == "ungrounded":
                 self.ungrounded_count += 1
+            elif reason_code == "backend_degraded":
+                self.degraded_zero_ref_count += 1
             elif reason_code == "low_quality":
                 self.low_quality_count += 1
             self.retrieval_events.append({"query": query, "reason_code": reason_code})

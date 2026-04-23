@@ -26,6 +26,7 @@ type ReadModelStore interface {
 	ListAccessibleTemplates(ctx context.Context, userID string, limit, offset int) ([]dto.TemplateCatalogRow, int, error)
 	GetAccessibleTemplate(ctx context.Context, userID, templateID string) (*dto.TemplateCatalogRow, error)
 	GetUserTemplatePreference(ctx context.Context, userID string) (*dto.TemplateCatalogRow, error)
+	GetResolvedDefaultTemplate(ctx context.Context, userID string) (*dto.TemplateCatalogRow, error)
 	UpsertUserTemplatePreference(ctx context.Context, userID, templateID string, version int) error
 	InsertEvent(ctx context.Context, sessionID, taskID, workflowID, eventType, message, payload, streamID string, ts time.Time) error
 	InsertLLMUsage(ctx context.Context, row dto.UsageLedgerRow) (bool, error)

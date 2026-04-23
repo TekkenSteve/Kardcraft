@@ -12,7 +12,17 @@ PGPASSWORD="${POSTGRES_PASSWORD:-postgres123}"
 export PGPASSWORD
 
 run_psql() {
-    psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 "$@"
+    if command -v psql >/dev/null 2>&1; then
+        psql -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 "$@"
+        return
+    fi
+    if command -v docker >/dev/null 2>&1 && docker ps --format '{{.Names}}' | grep -qx "kardcraft-postgres"; then
+        docker exec -i -e PGPASSWORD="$PGPASSWORD" kardcraft-postgres \
+            psql -U "$PGUSER" -d "$PGDATABASE" -v ON_ERROR_STOP=1 "$@"
+        return
+    fi
+    echo "[fail] psql not found and docker fallback unavailable (container: kardcraft-postgres)"
+    exit 1
 }
 
 run_psql <<'SQL'
@@ -31,7 +41,7 @@ for migration in "$MIGRATIONS_DIR"/*.sql; do
     fi
 
     echo "[apply] $version"
-    run_psql -f "$migration"
+    run_psql < "$migration"
     run_psql -c "INSERT INTO kc_schema_migrations(version) VALUES ('$version');"
 done
 

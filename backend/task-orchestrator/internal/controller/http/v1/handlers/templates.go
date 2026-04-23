@@ -53,8 +53,15 @@ func NewCardTemplatesHandler(deps TemplatesDeps) http.HandlerFunc {
 				http.Error(w, "failed to list templates", http.StatusInternalServerError)
 				return
 			}
+			resolvedDefaultID := ""
+			resolvedDefaultVersion := 0
+			if resolved, err := deps.ReadModel.GetResolvedDefaultTemplate(r.Context(), userID); err == nil && resolved != nil {
+				resolvedDefaultID = strings.TrimSpace(resolved.DefaultTemplateID)
+				resolvedDefaultVersion = resolved.DefaultTemplateVersion
+			}
 			list := make([]map[string]any, 0, len(rows))
 			for _, row := range rows {
+				isResolvedDefault := resolvedDefaultID != "" && row.TemplateID == resolvedDefaultID
 				list = append(list, map[string]any{
 					"template_id":       row.TemplateID,
 					"name":              row.Name,
@@ -62,7 +69,7 @@ func NewCardTemplatesHandler(deps TemplatesDeps) http.HandlerFunc {
 					"scope":             row.Scope,
 					"owner_user_id":     row.OwnerUserID,
 					"status":            row.Status,
-					"is_default":        row.IsDefault,
+					"is_default":        isResolvedDefault,
 					"latest_version":    row.LatestVersion,
 					"version_published": row.VersionPublished,
 					"created_at":        row.CreatedAt.UTC().Format(time.RFC3339),
@@ -70,9 +77,9 @@ func NewCardTemplatesHandler(deps TemplatesDeps) http.HandlerFunc {
 				})
 			}
 			resp := map[string]any{"templates": list, "total_count": total}
-			if pref, err := deps.ReadModel.GetUserTemplatePreference(r.Context(), userID); err == nil {
-				resp["user_default_template_id"] = pref.DefaultTemplateID
-				resp["user_default_template_version"] = pref.DefaultTemplateVersion
+			if resolvedDefaultID != "" {
+				resp["user_default_template_id"] = resolvedDefaultID
+				resp["user_default_template_version"] = resolvedDefaultVersion
 			}
 			deps.WriteJSON(w, http.StatusOK, resp)
 		case http.MethodPost:
@@ -113,6 +120,10 @@ func NewCardTemplateDetailHandler(deps TemplatesDeps) http.HandlerFunc {
 			http.Error(w, "failed to load template", http.StatusInternalServerError)
 			return
 		}
+		isResolvedDefault := false
+		if resolved, err := deps.ReadModel.GetResolvedDefaultTemplate(r.Context(), deps.UserID(r)); err == nil && resolved != nil {
+			isResolvedDefault = strings.TrimSpace(resolved.DefaultTemplateID) == row.TemplateID
+		}
 		deps.WriteJSON(w, http.StatusOK, map[string]any{
 			"template_id":       row.TemplateID,
 			"name":              row.Name,
@@ -120,7 +131,7 @@ func NewCardTemplateDetailHandler(deps TemplatesDeps) http.HandlerFunc {
 			"scope":             row.Scope,
 			"owner_user_id":     row.OwnerUserID,
 			"status":            row.Status,
-			"is_default":        row.IsDefault,
+			"is_default":        isResolvedDefault,
 			"latest_version":    row.LatestVersion,
 			"version_published": row.VersionPublished,
 			"created_at":        row.CreatedAt.UTC().Format(time.RFC3339),
@@ -298,8 +309,12 @@ func NewUserTemplatePreferencesHandler(deps TemplatesDeps) http.HandlerFunc {
 		userID := deps.UserID(r)
 		switch r.Method {
 		case http.MethodGet:
-			pref, err := deps.ReadModel.GetUserTemplatePreference(r.Context(), userID)
+			pref, err := deps.ReadModel.GetResolvedDefaultTemplate(r.Context(), userID)
 			if err != nil {
+				if err == pgx.ErrNoRows {
+					http.Error(w, "no default template configured", http.StatusNotFound)
+					return
+				}
 				http.Error(w, "failed to load user template preference", http.StatusInternalServerError)
 				return
 			}

@@ -67,6 +67,54 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		}
 	})
 
+	t.Run("main task without template and without resolved default returns 400", func(t *testing.T) {
+		readStore := &fakeReadModelStore{ready: true}
+		s := newCommandTestServerWithReadStore(newFakeCommandStore(), &fakeCommandRuntime{runID: "run-no-default"}, true, readStore)
+		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
+			"task_type":"main",
+			"input":{"query":"hello"}
+		}`)
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		if !strings.Contains(rr.Body.String(), "configure a default template") {
+			t.Fatalf("expected explicit default template guidance, got body=%s", rr.Body.String())
+		}
+	})
+
+	t.Run("main task uses resolved default template when missing input template", func(t *testing.T) {
+		readStore := &fakeReadModelStore{
+			ready: true,
+			resolvedDefaultTemplate: &ucdto.TemplateCatalogRow{
+				DefaultTemplateID:      "tpl-default",
+				DefaultTemplateVersion: 7,
+			},
+		}
+		runtime := &fakeCommandRuntime{runID: "run-with-default"}
+		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
+			"task_type":"main",
+			"input":{"query":"hello"}
+		}`)
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		if got := runtime.lastCmd.Input.Context.TemplateID; got != "tpl-default" {
+			t.Fatalf("expected template_id resolved to tpl-default, got %q", got)
+		}
+		if got := runtime.lastCmd.Input.Context.TemplateVersion; got != 7 {
+			t.Fatalf("expected template_version resolved to 7, got %d", got)
+		}
+	})
+
 	t.Run("persistence failure", func(t *testing.T) {
 		store := newFakeCommandStore()
 		store.upsertErr = errors.New("db down")
@@ -569,6 +617,9 @@ type fakeReadModelStore struct {
 	workspace      map[string]any
 	workflowEvents []ucdto.EventRow
 	insertedEvents []capturedEventInsert
+
+	resolvedDefaultTemplate *ucdto.TemplateCatalogRow
+	resolvedDefaultErr      error
 }
 
 type capturedEventInsert struct {
@@ -636,6 +687,9 @@ func (f *fakeReadModelStore) GetAccessibleTemplate(ctx context.Context, userID, 
 }
 func (f *fakeReadModelStore) GetUserTemplatePreference(ctx context.Context, userID string) (*ucdto.TemplateCatalogRow, error) {
 	return nil, nil
+}
+func (f *fakeReadModelStore) GetResolvedDefaultTemplate(ctx context.Context, userID string) (*ucdto.TemplateCatalogRow, error) {
+	return f.resolvedDefaultTemplate, f.resolvedDefaultErr
 }
 func (f *fakeReadModelStore) UpsertUserTemplatePreference(ctx context.Context, userID, templateID string, version int) error {
 	return nil
