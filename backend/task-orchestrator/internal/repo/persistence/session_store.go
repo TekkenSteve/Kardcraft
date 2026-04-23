@@ -1150,6 +1150,7 @@ func (s *SessionStore) GetSession(ctx context.Context, sessionID, userID string)
                 COALESCE(SUM(total_tokens), 0) AS total_tokens,
                 COALESCE(SUM(total_cost_usd::double precision), 0) AS total_cost_usd
             FROM kc_llm_usage_ledger
+            WHERE session_id = $1 AND user_id = $2
             GROUP BY session_id, user_id
         ) u ON u.session_id = s.session_id AND u.user_id = s.user_id
         WHERE s.session_id = $1 AND s.user_id = $2
