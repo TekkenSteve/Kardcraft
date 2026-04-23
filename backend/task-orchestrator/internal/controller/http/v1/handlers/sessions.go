@@ -144,13 +144,14 @@ func handleSessionDetail(w http.ResponseWriter, r *http.Request, sessionID strin
 
 func sessionRowToResponse(row usecase.SessionRow) map[string]any {
 	resp := map[string]any{
-		"session_id":  row.SessionID,
-		"user_id":     row.UserID,
-		"pinned":      row.Pinned,
-		"task_count":  row.TaskCount,
-		"tokens_used": row.TokensUsed,
-		"created_at":  row.CreatedAt.UTC().Format(time.RFC3339),
-		"updated_at":  row.UpdatedAt.UTC().Format(time.RFC3339),
+		"session_id":     row.SessionID,
+		"user_id":        row.UserID,
+		"pinned":         row.Pinned,
+		"task_count":     row.TaskCount,
+		"tokens_used":    row.TokensUsed,
+		"total_cost_usd": row.TotalCostUSD,
+		"created_at":     row.CreatedAt.UTC().Format(time.RFC3339),
+		"updated_at":     row.UpdatedAt.UTC().Format(time.RFC3339),
 	}
 	if row.Title != nil {
 		resp["title"] = *row.Title

@@ -9,6 +9,7 @@ type SessionRow struct {
 	Pinned           bool
 	TaskCount        int
 	TokensUsed       int
+	TotalCostUSD     float64
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 	LastActivityAt   *time.Time

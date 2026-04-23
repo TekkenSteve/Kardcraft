@@ -203,6 +203,7 @@ func convertSessionRow(row SessionRow) dto.SessionRow {
 		Pinned:           row.Pinned,
 		TaskCount:        row.TaskCount,
 		TokensUsed:       row.TokensUsed,
+		TotalCostUSD:     row.TotalCostUSD,
 		CreatedAt:        row.CreatedAt,
 		UpdatedAt:        row.UpdatedAt,
 		LastActivityAt:   row.LastActivityAt,

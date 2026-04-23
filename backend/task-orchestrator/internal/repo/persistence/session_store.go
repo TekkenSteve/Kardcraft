@@ -36,6 +36,7 @@ type SessionRow struct {
 	Pinned           bool       `json:"pinned"`
 	TaskCount        int        `json:"task_count"`
 	TokensUsed       int        `json:"tokens_used"`
+	TotalCostUSD     float64    `json:"total_cost_usd"`
 	CreatedAt        time.Time  `json:"created_at"`
 	UpdatedAt        time.Time  `json:"updated_at"`
 	LastActivityAt   *time.Time `json:"last_activity_at,omitempty"`
@@ -1128,9 +1129,30 @@ func (s *SessionStore) GetSession(ctx context.Context, sessionID, userID string)
 
 	row := &SessionRow{}
 	err := s.pg.QueryRow(ctx, `
-        SELECT session_id, user_id, title, pinned, task_count, tokens_used, created_at, updated_at, last_activity_at, latest_task_query, latest_task_status
-        FROM kc_sessions
-        WHERE session_id = $1 AND user_id = $2
+        SELECT
+            s.session_id,
+            s.user_id,
+            s.title,
+            s.pinned,
+            s.task_count,
+            COALESCE(u.total_tokens, 0) AS tokens_used,
+            COALESCE(u.total_cost_usd, 0) AS total_cost_usd,
+            s.created_at,
+            s.updated_at,
+            s.last_activity_at,
+            s.latest_task_query,
+            s.latest_task_status
+        FROM kc_sessions s
+        LEFT JOIN (
+            SELECT
+                session_id,
+                user_id,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COALESCE(SUM(total_cost_usd::double precision), 0) AS total_cost_usd
+            FROM kc_llm_usage_ledger
+            GROUP BY session_id, user_id
+        ) u ON u.session_id = s.session_id AND u.user_id = s.user_id
+        WHERE s.session_id = $1 AND s.user_id = $2
     `, sessionID, userID).Scan(
 		&row.SessionID,
 		&row.UserID,
@@ -1138,6 +1160,7 @@ func (s *SessionStore) GetSession(ctx context.Context, sessionID, userID string)
 		&row.Pinned,
 		&row.TaskCount,
 		&row.TokensUsed,
+		&row.TotalCostUSD,
 		&row.CreatedAt,
 		&row.UpdatedAt,
 		&row.LastActivityAt,
@@ -1161,10 +1184,32 @@ func (s *SessionStore) ListSessions(ctx context.Context, userID string, limit, o
 		return nil, 0, err
 	}
 	rows, err := s.pg.Query(ctx, `
-        SELECT session_id, user_id, title, pinned, task_count, tokens_used, created_at, updated_at, last_activity_at, latest_task_query, latest_task_status
-        FROM kc_sessions
-        WHERE user_id = $1
-        ORDER BY pinned DESC, updated_at DESC NULLS LAST
+        SELECT
+            s.session_id,
+            s.user_id,
+            s.title,
+            s.pinned,
+            s.task_count,
+            COALESCE(u.total_tokens, 0) AS tokens_used,
+            COALESCE(u.total_cost_usd, 0) AS total_cost_usd,
+            s.created_at,
+            s.updated_at,
+            s.last_activity_at,
+            s.latest_task_query,
+            s.latest_task_status
+        FROM kc_sessions s
+        LEFT JOIN (
+            SELECT
+                session_id,
+                user_id,
+                COALESCE(SUM(total_tokens), 0) AS total_tokens,
+                COALESCE(SUM(total_cost_usd::double precision), 0) AS total_cost_usd
+            FROM kc_llm_usage_ledger
+            WHERE user_id = $1
+            GROUP BY session_id, user_id
+        ) u ON u.session_id = s.session_id AND u.user_id = s.user_id
+        WHERE s.user_id = $1
+        ORDER BY s.pinned DESC, s.updated_at DESC NULLS LAST
         LIMIT $2 OFFSET $3
     `, userID, limit, offset)
 	if err != nil {
@@ -1182,6 +1227,7 @@ func (s *SessionStore) ListSessions(ctx context.Context, userID string, limit, o
 			&row.Pinned,
 			&row.TaskCount,
 			&row.TokensUsed,
+			&row.TotalCostUSD,
 			&row.CreatedAt,
 			&row.UpdatedAt,
 			&row.LastActivityAt,
