@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any, Dict, List
 
 from .contracts import DocumentNode, DocumentTree, PageIndexBuildConfig
-from .page_index import page_index_main
+from .page_index import page_index_main_async
 
 
 def _normalize_text(value: Any, fallback: str = "") -> str:
@@ -92,7 +92,7 @@ def _build_options(config: PageIndexBuildConfig | None) -> SimpleNamespace:
     return SimpleNamespace(**cfg.to_options_dict())
 
 
-def build_document_tree(
+async def build_document_tree_async(
     file_obj: str | Path | BytesIO,
     *,
     file_id: str,
@@ -102,7 +102,7 @@ def build_document_tree(
     """Build a normalized document tree for one file."""
     # page_index_main still contains legacy prints; silence stdout for workflow usage.
     with contextlib.redirect_stdout(io.StringIO()):
-        raw = page_index_main(file_obj, _build_options(config), doc_name=doc_name)
+        raw = await page_index_main_async(file_obj, _build_options(config), doc_name=doc_name)
     if not isinstance(raw, dict):
         raise ValueError("page_index_main returned invalid payload")
     return _to_document_tree(raw, file_id=file_id)

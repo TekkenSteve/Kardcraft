@@ -1,6 +1,6 @@
 """Local PageIndex facade."""
 
-from .api import build_document_tree
+from .api import build_document_tree_async
 from .contracts import (
     DocumentNode,
     DocumentTree,
@@ -16,7 +16,7 @@ __all__ = [
     "DocumentTree",
     "NodeRef",
     "PageIndexBuildConfig",
-    "build_document_tree",
+    "build_document_tree_async",
     "create_node_mapping",
     "flatten_nodes",
     "prune_nodes",

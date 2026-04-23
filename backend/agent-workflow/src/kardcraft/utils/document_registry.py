@@ -14,7 +14,11 @@ from typing import Any, Dict, List, Tuple
 import pymupdf
 
 from kardcraft.llm.client import chat_complete
-from kardcraft.pageindex import PageIndexBuildConfig, build_document_tree, flatten_nodes
+from kardcraft.pageindex import (
+    PageIndexBuildConfig,
+    build_document_tree_async,
+    flatten_nodes,
+)
 from kardcraft.ragix.ragix.utils.gotenberg_client import (
     GotenbergConversionError,
     GotenbergConverterClient,
@@ -255,8 +259,7 @@ async def _build_one_document_tree(
     pdf_page_count = await asyncio.to_thread(_count_pdf_pages, pdf_bytes)
     stream = io.BytesIO(pdf_bytes)
     config = PageIndexBuildConfig(model=model)
-    tree = await asyncio.to_thread(
-        build_document_tree,
+    tree = await build_document_tree_async(
         stream,
         file_id=file_id,
         doc_name=str(filename),

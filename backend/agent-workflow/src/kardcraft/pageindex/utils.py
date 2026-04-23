@@ -4,7 +4,6 @@ from datetime import datetime
 import json
 import copy
 import asyncio
-import concurrent.futures
 import uuid
 import pymupdf
 import re
@@ -83,20 +82,10 @@ async def _chat_complete_with_retry(messages, model, max_retries=10):
             reset_runtime_context(ctx_token)
 
 
-def llm_completion(model, prompt, chat_history=None, return_finish_reason=False):
+async def llm_completion_async(model, prompt, chat_history=None, return_finish_reason=False):
     messages = list(chat_history) + [{"role": "user", "content": prompt}] if chat_history else [{"role": "user", "content": prompt}]
-
-    async def _run():
-        return await _chat_complete_with_retry(messages=messages, model=model, max_retries=10)
-
     try:
-        try:
-            _loop = asyncio.get_running_loop()
-        except RuntimeError:
-            response = asyncio.run(_run())
-        else:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                response = pool.submit(asyncio.run, _run()).result()
+        response = await _chat_complete_with_retry(messages=messages, model=model, max_retries=10)
         content = response.choices[0].message.content
         if return_finish_reason:
             finish_reason = "max_output_reached" if response.choices[0].finish_reason == "length" else "finished"
@@ -109,15 +98,8 @@ def llm_completion(model, prompt, chat_history=None, return_finish_reason=False)
         return ""
 
 
-
 async def llm_acompletion(model, prompt):
-    messages = [{"role": "user", "content": prompt}]
-    try:
-        response = await _chat_complete_with_retry(messages=messages, model=model, max_retries=10)
-        return response.choices[0].message.content
-    except Exception as exc:
-        logger.error("pageindex llm acompletion failed", error=str(exc))
-        return ""
+    return await llm_completion_async(model=model, prompt=prompt, chat_history=None, return_finish_reason=False)
             
             
 def get_json_content(response):
@@ -664,7 +646,7 @@ def create_clean_structure_for_description(structure):
         return structure
 
 
-def generate_doc_description(structure, model=None):
+async def generate_doc_description_async(structure, model=None):
     prompt = f"""Your are an expert in generating descriptions for a document.
     You are given a structure of a document. Your task is to generate a one-sentence description for the document, which makes it easy to distinguish the document from other documents.
         
@@ -672,7 +654,7 @@ def generate_doc_description(structure, model=None):
     
     Directly return the description, do not include any other text.
     """
-    response = llm_completion(model, prompt)
+    response = await llm_acompletion(model, prompt)
     return response
 
 
