@@ -105,6 +105,43 @@ describe("stream actor machine", () => {
         actor.stop();
     });
 
+    it("maps done into workflow.completed before closing stream", async () => {
+        const fake = new FakeEventSource();
+        const onDomainEvent = vi.fn();
+        const onConnectionState = vi.fn();
+        const machine = createStreamActorMachine({
+            getStreamUrl: () => "http://localhost/stream?workflow_id=wf-1",
+            createEventSource: () => fake,
+            nowIso: () => "2026-01-01T00:00:00.000Z",
+            onConnectionState,
+            onStreamError: vi.fn(),
+            onDomainEvent,
+            onCardsBatch: vi.fn(),
+            onRejectWireEvent: vi.fn(),
+        });
+
+        const actor = createActor(machine);
+        actor.start();
+        actor.send({ type: "START", workflowId: "wf-1", restartKey: 0 });
+        fake.emitOpen();
+
+        fake.emit("done", {
+            type: "done",
+            workflow_id: "wf-1",
+            stream_id: "done-1",
+            result: { ok: true },
+        });
+
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(onDomainEvent).toHaveBeenCalledTimes(1);
+        expect(onDomainEvent.mock.calls[0][0]).toMatchObject({
+            kind: "workflow.completed",
+            workflowId: "wf-1",
+        });
+        expect(onConnectionState).toHaveBeenCalledWith("idle");
+        actor.stop();
+    });
+
     it("reports terminal reconnect failure exactly once", async () => {
         vi.useFakeTimers();
         let actor: ReturnType<typeof createActor> | null = null;

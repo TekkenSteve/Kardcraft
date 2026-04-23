@@ -73,6 +73,14 @@ const COMPLETED_EVENT_TYPES = new Set<string>([
     "done",
 ]);
 
+const TERMINAL_EVENT_TYPES = new Set<string>([
+    "WORKFLOW_COMPLETED",
+    "WORKFLOW_FAILED",
+    "workflow.cancelled",
+    "done",
+    "STREAM_END",
+]);
+
 function stringifyPayloadForTimeline(payload: unknown): string {
     const seen = new WeakSet<object>();
     const redactedKeys = new Set([
@@ -233,16 +241,20 @@ export function useTimeline({
 
         const deduplicatedEvents = filteredRunEvents;
 
-        const completedWorkflows = new Set(
-            runEvents
-                .filter((e) => e.type === "WORKFLOW_COMPLETED")
-                .map((e) => e.workflow_id)
-        );
+        const terminalWorkflows = new Map<string, "completed" | "failed">();
+        runEvents.forEach((event) => {
+            if (!TERMINAL_EVENT_TYPES.has(event.type)) return;
+            const nextStatus: "completed" | "failed" =
+                event.type === "WORKFLOW_FAILED" || event.type === "workflow.cancelled"
+                    ? "failed"
+                    : "completed";
+            terminalWorkflows.set(event.workflow_id, nextStatus);
+        });
 
         return deduplicatedEvents.map((event, index): TimelineDisplayEvent => {
-            const workflowCompleted = completedWorkflows.has(event.workflow_id);
-            const eventStatus = workflowCompleted
-                ? "completed"
+            const workflowTerminalStatus = terminalWorkflows.get(event.workflow_id);
+            const eventStatus = workflowTerminalStatus
+                ? workflowTerminalStatus
                 : getEventStatus(event.type);
 
             const uniqueId = event.stream_id ||

@@ -19,6 +19,7 @@ import { CardData, createDraftSessionId, RunMessage } from "@/lib/run/types";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { SessionDataBundle, SessionHistoryData } from "../run-detail-types";
+import { extractResultContent } from "../run-detail-utils";
 import { useScrollSync } from "./use-scroll-sync";
 import { useTaskControls } from "./use-task-controls";
 import { TimelineDisplayEvent, useTimeline } from "./use-timeline";
@@ -107,6 +108,14 @@ const normalizeWorkflowId = (value: string | null | undefined): string | null =>
 
 const toRunDetailErrorMessage = (err: unknown, fallback: string): string =>
     toUiErrorMessage(err, fallback);
+
+const extractResultMetadata = (value: unknown): Record<string, unknown> | undefined => {
+    if (!value || typeof value !== "object") return undefined;
+    const record = value as Record<string, unknown>;
+    const metadata = record.metadata;
+    if (!metadata || typeof metadata !== "object") return undefined;
+    return metadata as Record<string, unknown>;
+};
 
 const mapHistoryTaskStatus = (value: string | undefined): "idle" | "running" | "completed" | "failed" | null => {
     if (!value) return null;
@@ -598,6 +607,17 @@ export function useRunDetailState(): RunDetailState {
                     commands.setRunPhase(targetSessionId, "hydrated");
                     commands.clearGeneratingMessages(targetSessionId, event.workflowId);
                     commands.clearStatusMessages(targetSessionId, event.workflowId);
+                    const completionContent = extractResultContent(event.result);
+                    if (completionContent.trim()) {
+                        commands.upsertMessage(targetSessionId, {
+                            id: `assistant-final-${event.workflowId}`,
+                            role: "assistant",
+                            content: completionContent,
+                            timestamp: new Date().toLocaleTimeString(),
+                            taskId: event.workflowId,
+                            metadata: extractResultMetadata(event.result),
+                        });
+                    }
                     return;
                 }
                 if (event.kind === "workflow.failed") {
@@ -610,12 +630,16 @@ export function useRunDetailState(): RunDetailState {
                 }
                 if (event.kind === "message.completed") {
                     if (!event.content.trim()) return;
+                    const messageWorkflowId = event.workflowId || activeWorkflowId || undefined;
+                    const messageId = messageWorkflowId
+                        ? `assistant-final-${messageWorkflowId}`
+                        : `assistant-${event.messageId || Date.now()}`;
                     commands.upsertMessage(targetSessionId, {
-                        id: `assistant-${event.messageId || Date.now()}`,
+                        id: messageId,
                         role: "assistant",
                         content: event.content,
                         timestamp: new Date().toLocaleTimeString(),
-                        taskId: event.workflowId || activeWorkflowId || undefined,
+                        taskId: messageWorkflowId,
                         metadata: event.metadata,
                     });
                     return;
@@ -721,7 +745,7 @@ export function useRunDetailState(): RunDetailState {
                 return;
             }
             const raw = task.final_output || task.result;
-            const content = typeof raw === "string" ? raw : raw ? JSON.stringify(raw) : "";
+            const content = extractResultContent(raw);
             if (!content.trim()) return;
             commands.clearGeneratingMessages(actorSessionId, activeWorkflowId);
             commands.upsertMessage(actorSessionId, {

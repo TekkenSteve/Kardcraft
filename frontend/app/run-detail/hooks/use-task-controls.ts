@@ -13,6 +13,7 @@ import {
 } from "@/lib/kardcraft/api";
 import { taskControlMachine } from "@/lib/run/task-control-machine";
 import { useRunCommands } from "@/lib/run/system";
+import { extractResultContent } from "../run-detail-utils";
 
 const TERMINAL_POLL_INTERVAL_MS = 2500;
 const CONTROL_POLL_INTERVAL_MS = 1500;
@@ -69,15 +70,56 @@ export function useTaskControls({
             status: task.status,
         });
 
+        commands.clearGeneratingMessages(sessionId, currentTaskId);
+        commands.clearStatusMessages(sessionId, currentTaskId);
+        commands.clearGeneratingMessages(sessionId);
+
         if (task.status === "completed") {
+            const finalRawOutput = task.final_output ?? task.result;
+            const finalContent = extractResultContent(finalRawOutput);
+            if (finalContent.trim()) {
+                commands.upsertMessage(sessionId, {
+                    id: `assistant-final-${currentTaskId}`,
+                    role: "assistant",
+                    content: finalContent,
+                    timestamp: new Date().toLocaleTimeString(),
+                    taskId: currentTaskId,
+                    metadata: task.metadata,
+                });
+            }
+            commands.addEvent(sessionId, {
+                type: "WORKFLOW_COMPLETED",
+                workflow_id: currentTaskId,
+                stream_id: `terminal-sync:completed:${currentTaskId}`,
+                timestamp: new Date().toISOString(),
+                message: "Workflow completed",
+            });
             commands.setStatus(sessionId, "completed");
+            commands.setRunPhase(sessionId, "hydrated");
+            commands.setStreamError(sessionId, null);
             return;
         }
         if (task.status === "cancelled") {
+            commands.addEvent(sessionId, {
+                type: "workflow.cancelled",
+                workflow_id: currentTaskId,
+                stream_id: `terminal-sync:cancelled:${currentTaskId}`,
+                timestamp: new Date().toISOString(),
+                message: "Workflow cancelled",
+            });
             commands.setCancelled(sessionId, true);
+            commands.setRunPhase(sessionId, "hydrated");
             return;
         }
+        commands.addEvent(sessionId, {
+            type: "WORKFLOW_FAILED",
+            workflow_id: currentTaskId,
+            stream_id: `terminal-sync:failed:${currentTaskId}`,
+            timestamp: new Date().toISOString(),
+            message: task.error_message || "Task failed",
+        });
         commands.setStatus(sessionId, "failed");
+        commands.setRunPhase(sessionId, "error");
     }, [actor, commands, currentTaskId, sessionId]);
 
     const refreshControlState = useCallback(async () => {

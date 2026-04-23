@@ -283,15 +283,6 @@ export function createStreamActorMachine(deps: StreamActorDeps) {
                                 const at = deps.nowIso();
                                 const nextLastEventId = candidateId ? String(candidateId) : context.lastEventId;
 
-                                if (finalType === "done" || finalType === "STREAM_END") {
-                                    deps.onConnectionState("idle");
-                                    context.source?.close();
-                                    return {
-                                        source: null,
-                                        lastEventId: nextLastEventId,
-                                    };
-                                }
-
                                 if (finalType === "CARD_UPDATED") {
                                     const cardId = typeof data.card_id === "string" ? data.card_id : typeof data.id === "string" ? data.id : "";
                                     if (!cardId) {
@@ -339,6 +330,14 @@ export function createStreamActorMachine(deps: StreamActorDeps) {
                                 }
 
                                 deps.onDomainEvent(mapped.event);
+                                if (finalType === "done" || finalType === "STREAM_END") {
+                                    deps.onConnectionState("idle");
+                                    context.source?.close();
+                                    return {
+                                        source: null,
+                                        lastEventId: nextLastEventId,
+                                    };
+                                }
                                 return { lastEventId: nextLastEventId };
                             } catch {
                                 return {};
