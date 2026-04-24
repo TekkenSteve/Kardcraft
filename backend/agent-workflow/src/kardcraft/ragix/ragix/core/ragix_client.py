@@ -12,6 +12,10 @@ from ..implementations.pipelines import QueryPipeline, QueryPipelineConfig
 from kardcraft.utils.logger import logger
 
 
+class TrackCancelledError(RuntimeError):
+    """Raised when LightRAG reports a cancelled track."""
+
+
 def _normalize_filename(name: str) -> str:
     raw = str(name or "").strip()
     if not raw:
@@ -549,7 +553,8 @@ class RagixClient:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout_seconds
         terminal_ok = {"completed", "done", "success", "processed", "finished"}
-        terminal_fail = {"failed", "error", "cancelled"}
+        terminal_fail = {"failed", "error"}
+        terminal_cancelled = {"cancelled", "canceled"}
 
         while loop.time() < deadline:
             try:
@@ -560,6 +565,10 @@ class RagixClient:
             status_text = str(status.get("status", "")).strip().lower()
             if status_text in terminal_ok:
                 break
+            if status_text in terminal_cancelled:
+                raise TrackCancelledError(
+                    f"LightRAG track cancelled: {track_id}, status={status_text}"
+                )
             if status_text in terminal_fail:
                 raise RuntimeError(f"LightRAG track failed: {track_id}, status={status_text}")
 

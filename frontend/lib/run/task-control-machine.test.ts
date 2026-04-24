@@ -17,7 +17,21 @@ describe("task control machine", () => {
         actor.stop();
     });
 
-    it("blocks current task after terminal status detection", () => {
+    it("keeps control enabled when task is paused", () => {
+        const actor = createActor(taskControlMachine);
+        actor.start();
+        actor.send({
+            type: "SYNC_INPUT",
+            currentTaskId: "t-1",
+            runStatus: "paused",
+            isCancelling: false,
+        });
+
+        expect(actor.getSnapshot().context.canControlTask).toBe(true);
+        actor.stop();
+    });
+
+    it("blocks current task after cancellation is confirmed", () => {
         const actor = createActor(taskControlMachine);
         actor.start();
         actor.send({
@@ -27,8 +41,8 @@ describe("task control machine", () => {
             isCancelling: false,
         });
         actor.send({
-            type: "TERMINAL_STATUS_DETECTED",
-            status: "completed",
+            type: "CONTROL_STATE_UPDATED",
+            cancelled: true,
         });
 
         const { blockedTaskId, canControlTask } = actor.getSnapshot().context;
@@ -73,17 +87,14 @@ describe("task control machine", () => {
             isCancelling: false,
         });
         actor.send({ type: "PAUSE_REQUESTED" });
-        actor.send({ type: "CONTROL_SYNC_STARTED" });
         actor.send({
             type: "CONTROL_STATE_UPDATED",
-            paused: true,
             cancelled: false,
         });
 
         const state = actor.getSnapshot().context;
         expect(state.isPauseLoading).toBe(false);
         expect(state.isResumeLoading).toBe(false);
-        expect(state.isPauseSyncing).toBe(false);
         actor.stop();
     });
 });

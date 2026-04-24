@@ -882,7 +882,7 @@ export function ChatInput({
                                 size="icon"
                                 variant="outline"
                                 onClick={onResume}
-                                disabled={isResumeLoading}
+                                disabled={isResumeLoading || isCancelling}
                                 title={t("chat.resumeWorkflow")}
                                 aria-label={t("chat.resumeWorkflow")}
                             >
@@ -898,7 +898,7 @@ export function ChatInput({
                                 size="icon"
                                 variant="outline"
                                 onClick={onPause}
-                                disabled={isPauseLoading}
+                                disabled={isPauseLoading || isCancelling}
                                 title={t("chat.pauseAtCheckpoint")}
                                 aria-label={t("chat.pauseAtCheckpoint")}
                             >

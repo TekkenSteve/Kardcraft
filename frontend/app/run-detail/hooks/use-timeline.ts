@@ -7,7 +7,7 @@ import { RunEvent } from "@/lib/kardcraft/types";
 export interface TimelineDisplayEvent {
     id: string;
     type: "agent" | "llm" | "tool" | "system";
-    status: "completed" | "running" | "failed" | "pending";
+    status: "completed" | "running" | "failed" | "cancelled" | "paused" | "pending";
     title: string;
     timestamp: string;
     details?: string;
@@ -60,6 +60,10 @@ const RUNNING_EVENT_TYPES = new Set<string>([
     "WAITING",
     "APPROVAL_REQUESTED",
     "WORKFLOW_PROGRESS",
+]);
+
+const PAUSED_EVENT_TYPES = new Set<string>([
+    "workflow.paused",
 ]);
 
 const COMPLETED_EVENT_TYPES = new Set<string>([
@@ -139,8 +143,10 @@ export function useTimeline({
         return "system";
     }, []);
 
-    const getEventStatus = useCallback((eventType: string): "completed" | "running" | "failed" | "pending" => {
+    const getEventStatus = useCallback((eventType: string): "completed" | "running" | "failed" | "cancelled" | "paused" | "pending" => {
         if (FAILED_EVENT_TYPES.has(eventType)) return "failed";
+        if (eventType === "workflow.cancelled") return "cancelled";
+        if (PAUSED_EVENT_TYPES.has(eventType)) return "paused";
         if (RUNNING_EVENT_TYPES.has(eventType)) return "running";
         if (COMPLETED_EVENT_TYPES.has(eventType)) return "completed";
         return "completed";
@@ -214,6 +220,10 @@ export function useTimeline({
             "MESSAGE_RECEIVED": t("runDetail.timelineEvents.messageReceived"),
             "WORKSPACE_UPDATED": t("runDetail.timelineEvents.workspaceUpdated"),
             "STATUS_UPDATE": t("runDetail.timelineEvents.statusUpdate"),
+            "workflow.paused": t("runDetail.timelineEvents.workflowPaused"),
+            "workflow.resuming": t("runDetail.timelineEvents.workflowResuming"),
+            "workflow.resumed": t("runDetail.timelineEvents.workflowResumed"),
+            "workflow.cancelled": t("runDetail.timelineEvents.workflowCancelled"),
             "WORKFLOW_PROGRESS": t("runDetail.timelineEvents.workflowProgress"),
             "NODE_STARTED": "Node started",
             "NODE_COMPLETED": "Node completed",
@@ -241,13 +251,15 @@ export function useTimeline({
 
         const deduplicatedEvents = filteredRunEvents;
 
-        const terminalWorkflows = new Map<string, "completed" | "failed">();
+        const terminalWorkflows = new Map<string, "completed" | "failed" | "cancelled">();
         runEvents.forEach((event) => {
             if (!TERMINAL_EVENT_TYPES.has(event.type)) return;
-            const nextStatus: "completed" | "failed" =
-                event.type === "WORKFLOW_FAILED" || event.type === "workflow.cancelled"
-                    ? "failed"
-                    : "completed";
+            const nextStatus: "completed" | "failed" | "cancelled" =
+                event.type === "workflow.cancelled"
+                    ? "cancelled"
+                    : event.type === "WORKFLOW_FAILED"
+                        ? "failed"
+                        : "completed";
             terminalWorkflows.set(event.workflow_id, nextStatus);
         });
 

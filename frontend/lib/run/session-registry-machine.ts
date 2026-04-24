@@ -208,7 +208,20 @@ export function createSessionRegistryMachine() {
                     SET_CANCELLING: {
                 actions: assign(({ context, event }) => {
                     const [key, session] = ensureSession(context.sessions, event.sessionId);
-                    return { sessions: { ...context.sessions, [key]: { ...session, isCancelling: event.value } } };
+                    return {
+                        sessions: {
+                            ...context.sessions,
+                            [key]: {
+                                ...session,
+                                isCancelling: event.value,
+                                status: event.value
+                                    ? "cancelling"
+                                    : session.status === "cancelling"
+                                        ? (session.isPaused ? "paused" : "running")
+                                        : session.status,
+                            },
+                        },
+                    };
                 }),
                     },
                     SET_CANCELLED: {
@@ -221,7 +234,11 @@ export function createSessionRegistryMachine() {
                                 ...session,
                                 isCancelled: event.value,
                                 isCancelling: false,
-                                status: event.value ? "failed" : session.status,
+                                isPaused: event.value ? false : session.isPaused,
+                                pauseCheckpoint: event.value ? null : session.pauseCheckpoint,
+                                pauseReason: event.value ? null : session.pauseReason,
+                                status: event.value ? "cancelled" : session.status,
+                                runPhase: event.value ? "hydrated" : session.runPhase,
                             },
                         },
                     };

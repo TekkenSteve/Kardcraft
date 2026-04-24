@@ -67,7 +67,7 @@ export type TemplatePreflightState = {
     message: string | null;
 };
 
-export type RunStatus = "idle" | "running" | "completed" | "failed";
+export type RunStatus = "idle" | "running" | "pausing" | "paused" | "cancelling" | "cancelled" | "completed" | "failed";
 export type RunPhase = "idle" | "clearing" | "loading" | "hydrated" | "streaming" | "error";
 export type ConnectionState = "idle" | "connecting" | "connected" | "reconnecting" | "error";
 export type AgentType = "normal" | "card_template";

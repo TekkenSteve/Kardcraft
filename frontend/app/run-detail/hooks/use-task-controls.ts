@@ -1,22 +1,16 @@
 "use client";
 
-import { useCallback, useEffect } from "react";
+import { useEffect } from "react";
 import { useActorRef, useSelector } from "@xstate/react";
 import { useTranslation } from "react-i18next";
 import {
     ApiError,
     cancelTask,
-    getTask,
-    getTaskControlState,
     pauseTask,
     resumeTask,
 } from "@/lib/kardcraft/api";
 import { taskControlMachine } from "@/lib/run/task-control-machine";
 import { useRunCommands } from "@/lib/run/system";
-import { extractResultContent } from "../run-detail-utils";
-
-const TERMINAL_POLL_INTERVAL_MS = 2500;
-const CONTROL_POLL_INTERVAL_MS = 1500;
 
 const isControlTransitionError = (err: unknown): boolean => {
     if (!(err instanceof ApiError)) return false;
@@ -32,14 +26,18 @@ export function useTaskControls({
     sessionId,
     currentTaskId,
     runStatus,
-    isPaused,
     isCancelling,
+    onPauseConfirmed,
+    onResumeConfirmed,
+    onCancelConfirmed,
 }: {
     sessionId: string | null;
     currentTaskId: string | null;
-    runStatus: "idle" | "running" | "completed" | "failed";
-    isPaused: boolean;
+    runStatus: "idle" | "running" | "pausing" | "paused" | "cancelling" | "cancelled" | "completed" | "failed";
     isCancelling: boolean;
+    onPauseConfirmed?: (taskId: string) => void;
+    onResumeConfirmed?: (taskId: string) => void;
+    onCancelConfirmed?: (taskId: string) => void;
 }) {
     const commands = useRunCommands();
     const { t } = useTranslation();
@@ -57,121 +55,33 @@ export function useTaskControls({
 
     const isPauseLoading = useSelector(actor, (snapshot) => snapshot.context.isPauseLoading);
     const isResumeLoading = useSelector(actor, (snapshot) => snapshot.context.isResumeLoading);
-    const isPauseSyncing = useSelector(actor, (snapshot) => snapshot.context.isPauseSyncing);
     const canControlTask = useSelector(actor, (snapshot) => snapshot.context.canControlTask);
-
-    const syncTaskTerminalStatus = useCallback(async () => {
-        if (!currentTaskId) return;
-        const task = await getTask(currentTaskId);
-        if (task.status === "running" || task.status === "queued") return;
-
-        actor.send({
-            type: "TERMINAL_STATUS_DETECTED",
-            status: task.status,
-        });
-
-        commands.clearGeneratingMessages(sessionId, currentTaskId);
-        commands.clearStatusMessages(sessionId, currentTaskId);
-        commands.clearGeneratingMessages(sessionId);
-
-        if (task.status === "completed") {
-            const finalRawOutput = task.final_output ?? task.result;
-            const finalContent = extractResultContent(finalRawOutput);
-            if (finalContent.trim()) {
-                commands.upsertMessage(sessionId, {
-                    id: `assistant-final-${currentTaskId}`,
-                    role: "assistant",
-                    content: finalContent,
-                    timestamp: new Date().toLocaleTimeString(),
-                    taskId: currentTaskId,
-                    metadata: task.metadata,
-                });
-            }
-            commands.addEvent(sessionId, {
-                type: "WORKFLOW_COMPLETED",
-                workflow_id: currentTaskId,
-                stream_id: `terminal-sync:completed:${currentTaskId}`,
-                timestamp: new Date().toISOString(),
-                message: "Workflow completed",
-            });
-            commands.setStatus(sessionId, "completed");
-            commands.setRunPhase(sessionId, "hydrated");
-            commands.setStreamError(sessionId, null);
-            return;
-        }
-        if (task.status === "cancelled") {
-            commands.addEvent(sessionId, {
-                type: "workflow.cancelled",
-                workflow_id: currentTaskId,
-                stream_id: `terminal-sync:cancelled:${currentTaskId}`,
-                timestamp: new Date().toISOString(),
-                message: "Workflow cancelled",
-            });
-            commands.setCancelled(sessionId, true);
-            commands.setRunPhase(sessionId, "hydrated");
-            return;
-        }
-        commands.addEvent(sessionId, {
-            type: "WORKFLOW_FAILED",
-            workflow_id: currentTaskId,
-            stream_id: `terminal-sync:failed:${currentTaskId}`,
-            timestamp: new Date().toISOString(),
-            message: task.error_message || "Task failed",
-        });
-        commands.setStatus(sessionId, "failed");
-        commands.setRunPhase(sessionId, "error");
-    }, [actor, commands, currentTaskId, sessionId]);
-
-    const refreshControlState = useCallback(async () => {
-        if (!currentTaskId) return;
-        const state = await getTaskControlState(currentTaskId);
-        actor.send({
-            type: "CONTROL_STATE_UPDATED",
-            paused: state.is_paused,
-            cancelled: state.is_cancelled,
-        });
-        commands.setPaused(sessionId, state.is_paused, null, undefined);
-        if (state.is_cancelled) {
-            commands.setCancelled(sessionId, true);
-        }
-    }, [actor, commands, currentTaskId, sessionId]);
-
-    useEffect(() => {
-        if (!currentTaskId || runStatus !== "running") return;
-        const run = () => {
-            syncTaskTerminalStatus().catch((err) => {
-                console.warn("[RunDetail] Failed to poll task terminal status:", err);
-            });
-        };
-        run();
-        const timer = setInterval(run, TERMINAL_POLL_INTERVAL_MS);
-        return () => clearInterval(timer);
-    }, [currentTaskId, runStatus, syncTaskTerminalStatus]);
-
-    useEffect(() => {
-        if (!currentTaskId || runStatus !== "running") return;
-        if (!isPaused && !isPauseSyncing && !isCancelling) return;
-
-        const run = () => {
-            refreshControlState().catch((err) => {
-                console.warn("[RunDetail] Failed to refresh task control-state:", err);
-            });
-        };
-        run();
-        const timer = setInterval(run, CONTROL_POLL_INTERVAL_MS);
-        return () => clearInterval(timer);
-    }, [currentTaskId, isCancelling, isPauseSyncing, isPaused, refreshControlState, runStatus]);
 
     const handlePause = async () => {
         if (!currentTaskId || !canControlTask) {
             commands.setStreamError(sessionId, t("runDetail.pauseFailed"));
             return;
         }
+        commands.upsertMessage(sessionId, {
+            id: `status-control-pausing-${currentTaskId}`,
+            role: "status",
+            content: t("runDetail.pausingStatus"),
+            timestamp: new Date().toLocaleTimeString(),
+            taskId: currentTaskId,
+            eventType: "workflow.pausing",
+        });
+        commands.setStatus(sessionId, "pausing");
         actor.send({ type: "PAUSE_REQUESTED" });
         try {
             await pauseTask(currentTaskId);
-            actor.send({ type: "CONTROL_SYNC_STARTED" });
+            actor.send({
+                type: "CONTROL_STATE_UPDATED",
+                cancelled: false,
+            });
+            onPauseConfirmed?.(currentTaskId);
         } catch (err) {
+            commands.setStatus(sessionId, "running");
+            commands.clearStatusMessages(sessionId, currentTaskId);
             actor.send({
                 type: "CONTROL_REQUEST_FAILED",
                 blockCurrentTask: isControlTransitionError(err),
@@ -185,11 +95,24 @@ export function useTaskControls({
             commands.setStreamError(sessionId, t("runDetail.resumeFailed"));
             return;
         }
+        commands.upsertMessage(sessionId, {
+            id: `status-control-resuming-${currentTaskId}`,
+            role: "status",
+            content: t("runDetail.resumingStatus"),
+            timestamp: new Date().toLocaleTimeString(),
+            taskId: currentTaskId,
+            eventType: "workflow.resuming",
+        });
         actor.send({ type: "RESUME_REQUESTED" });
         try {
             await resumeTask(currentTaskId);
-            actor.send({ type: "CONTROL_SYNC_STARTED" });
+            actor.send({
+                type: "CONTROL_STATE_UPDATED",
+                cancelled: false,
+            });
+            onResumeConfirmed?.(currentTaskId);
         } catch (err) {
+            commands.clearStatusMessages(sessionId, currentTaskId);
             actor.send({
                 type: "CONTROL_REQUEST_FAILED",
                 blockCurrentTask: isControlTransitionError(err),
@@ -203,12 +126,25 @@ export function useTaskControls({
             commands.setStreamError(sessionId, t("runDetail.cancelFailed"));
             return;
         }
+        commands.upsertMessage(sessionId, {
+            id: `status-control-cancelling-${currentTaskId}`,
+            role: "status",
+            content: t("runDetail.cancellingStatus"),
+            timestamp: new Date().toLocaleTimeString(),
+            taskId: currentTaskId,
+            eventType: "workflow.cancelling",
+        });
         commands.setCancelling(sessionId, true);
         try {
             await cancelTask(currentTaskId);
-            actor.send({ type: "CONTROL_SYNC_STARTED" });
+            actor.send({
+                type: "CONTROL_STATE_UPDATED",
+                cancelled: true,
+            });
+            onCancelConfirmed?.(currentTaskId);
         } catch (err) {
             commands.setCancelling(sessionId, false);
+            commands.clearStatusMessages(sessionId, currentTaskId);
             actor.send({
                 type: "CONTROL_REQUEST_FAILED",
                 blockCurrentTask: isControlTransitionError(err) || isControlTaskMissingError(err),

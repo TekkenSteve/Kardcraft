@@ -58,7 +58,7 @@ rustup target list --installed
 
 ### `runStatus` 类型报错
 
-合法值只有：`"idle" | "running" | "completed" | "failed"`，不要判断 `"error"`。
+合法值：`"idle" | "running" | "pausing" | "paused" | "cancelling" | "cancelled" | "completed" | "failed"`，不要判断 `"error"`。
 
 ## 技术栈
 

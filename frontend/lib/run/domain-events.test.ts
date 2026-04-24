@@ -63,6 +63,78 @@ describe("run domain event mapper", () => {
         expect(mapped.event.taskId).toBe("wf-3");
     });
 
+    it("maps workflow.pausing/workflow.cancelling to control requested events", () => {
+        const pausingMapped = mapWireEventToDomainEvent({
+            eventType: "workflow.pausing",
+            payload: {
+                workflow_id: "wf-request-1",
+            },
+            fallbackWorkflowId: "wf-request-1",
+            at: "2026-04-21T00:00:00.000Z",
+            eventId: "evt-request-1",
+        });
+        expect(pausingMapped.ok).toBe(true);
+        if (!pausingMapped.ok) return;
+        expect(pausingMapped.event.kind).toBe("control.pause.requested");
+
+        const pausingProjected = projectDomainEventToRunEvent(pausingMapped.event);
+        expect(pausingProjected?.type).toBe("workflow.pausing");
+
+        const cancellingMapped = mapWireEventToDomainEvent({
+            eventType: "workflow.cancelling",
+            payload: {
+                workflow_id: "wf-request-2",
+            },
+            fallbackWorkflowId: "wf-request-2",
+            at: "2026-04-21T00:00:00.000Z",
+            eventId: "evt-request-2",
+        });
+        expect(cancellingMapped.ok).toBe(true);
+        if (!cancellingMapped.ok) return;
+        expect(cancellingMapped.event.kind).toBe("control.cancel.requested");
+
+        const cancellingProjected = projectDomainEventToRunEvent(cancellingMapped.event);
+        expect(cancellingProjected?.type).toBe("workflow.cancelling");
+    });
+
+    it("maps workflow.cancelled to control.cancel.confirmed and projects back", () => {
+        const mapped = mapWireEventToDomainEvent({
+            eventType: "workflow.cancelled",
+            payload: {
+                workflow_id: "wf-5",
+            },
+            fallbackWorkflowId: "wf-5",
+            at: "2026-04-21T00:00:00.000Z",
+            eventId: "evt-5",
+        });
+
+        expect(mapped.ok).toBe(true);
+        if (!mapped.ok) return;
+        expect(mapped.event.kind).toBe("control.cancel.confirmed");
+        expect(mapped.event.taskId).toBe("wf-5");
+
+        const projected = projectDomainEventToRunEvent(mapped.event);
+        expect(projected?.type).toBe("workflow.cancelled");
+        expect(projected?.workflow_id).toBe("wf-5");
+    });
+
+    it("maps WORKFLOW_CANCELLED alias to control.cancel.confirmed", () => {
+        const mapped = mapWireEventToDomainEvent({
+            eventType: "WORKFLOW_CANCELLED",
+            payload: {
+                workflow_id: "wf-6",
+            },
+            fallbackWorkflowId: "wf-6",
+            at: "2026-04-21T00:00:00.000Z",
+            eventId: "evt-6",
+        });
+
+        expect(mapped.ok).toBe(true);
+        if (!mapped.ok) return;
+        expect(mapped.event.kind).toBe("control.cancel.confirmed");
+        expect(mapped.event.taskId).toBe("wf-6");
+    });
+
     it("rejects unknown wire event types", () => {
         const mapped = mapWireEventToDomainEvent({
             eventType: "SOME_UNKNOWN_EVENT",

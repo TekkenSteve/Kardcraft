@@ -1,11 +1,12 @@
 import { assign, createMachine } from "xstate";
-import { RunDomainEvent } from "./domain-events";
+import { ControlErrorCode, RunDomainEvent } from "./domain-events";
 
 export type SessionLifecycleState =
     | "idle"
     | "hydrating"
     | "ready"
     | "running"
+    | "pausing"
     | "paused"
     | "terminal.completed"
     | "terminal.failed"
@@ -41,26 +42,7 @@ type SessionMachineEvent =
 const isControlRejected = (event: RunDomainEvent): event is Extract<RunDomainEvent, { kind: "control.rejected" }> =>
     event.kind === "control.rejected";
 
-const controlCodeToSessionErrorCode = (code: string): SessionErrorCode => {
-    switch (code) {
-        case "invalid-transition":
-            return "INVALID_TRANSITION";
-        case "task-not-found":
-            return "TASK_NOT_FOUND";
-        case "session-mismatch":
-            return "SESSION_MISMATCH";
-        case "authz-denied":
-            return "AUTHZ_DENIED";
-        case "conflict":
-            return "CONFLICT";
-        case "timeout":
-            return "TIMEOUT";
-        case "transport-unavailable":
-            return "TRANSPORT_UNAVAILABLE";
-        default:
-            return "INTERNAL";
-    }
-};
+const controlCodeToSessionErrorCode = (code: ControlErrorCode): SessionErrorCode => code;
 
 export function createSessionMachine() {
     return createMachine({
@@ -174,6 +156,10 @@ export function createSessionMachine() {
                             target: "terminal.failed",
                         },
                         {
+                            guard: ({ event }) => event.event.kind === "control.pause.requested",
+                            target: "pausing",
+                        },
+                        {
                             guard: ({ event }) => event.event.kind === "control.pause.confirmed",
                             target: "paused",
                         },
@@ -183,6 +169,38 @@ export function createSessionMachine() {
                         },
                         {
                             guard: ({ event }) => isControlRejected(event.event),
+                            actions: assign(({ event }) => ({
+                                lastError: {
+                                    code: controlCodeToSessionErrorCode(event.event.code),
+                                    message: event.event.message,
+                                },
+                            })),
+                        },
+                    ],
+                    RESET: {
+                        target: "idle",
+                        actions: assign({
+                            workflowId: null,
+                            taskId: null,
+                            lastError: null,
+                        }),
+                    },
+                },
+            },
+            pausing: {
+                on: {
+                    DOMAIN_EVENT: [
+                        {
+                            guard: ({ event }) => event.event.kind === "control.pause.confirmed",
+                            target: "paused",
+                        },
+                        {
+                            guard: ({ event }) => event.event.kind === "control.cancel.confirmed",
+                            target: "terminal.cancelled",
+                        },
+                        {
+                            guard: ({ event }) => isControlRejected(event.event),
+                            target: "running",
                             actions: assign(({ event }) => ({
                                 lastError: {
                                     code: controlCodeToSessionErrorCode(event.event.code),

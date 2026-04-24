@@ -75,6 +75,24 @@ export type RunDomainEvent =
           at: string;
       }
     | {
+          kind: "control.pause.requested";
+          taskId: string;
+          sessionId: string | null;
+          at: string;
+      }
+    | {
+          kind: "control.resume.requested";
+          taskId: string;
+          sessionId: string | null;
+          at: string;
+      }
+    | {
+          kind: "control.cancel.requested";
+          taskId: string;
+          sessionId: string | null;
+          at: string;
+      }
+    | {
           kind: "control.pause.confirmed";
           taskId: string;
           sessionId: string | null;
@@ -154,6 +172,7 @@ const TIMELINE_EVENT_TYPES = new Set<string>([
     "WORKSPACE_UPDATED",
     "STATUS_UPDATE",
     "workflow.pausing",
+    "workflow.resuming",
     "workflow.cancelling",
 ]);
 
@@ -163,7 +182,12 @@ const KNOWN_EVENT_TYPES = new Set<string>([
     "WORKFLOW_STARTED",
     "WORKFLOW_COMPLETED",
     "WORKFLOW_FAILED",
+    "WORKFLOW_CANCELLED",
+    "workflow.started",
+    "workflow.completed",
+    "workflow.failed",
     "workflow.paused",
+    "workflow.resuming",
     "workflow.resumed",
     "workflow.cancelled",
     "error",
@@ -255,10 +279,10 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
         return { ok: false, reason: "missing_workflow_id", details: eventType };
     }
 
-    if (eventType === "WORKFLOW_STARTED") {
+    if (eventType === "WORKFLOW_STARTED" || eventType === "workflow.started") {
         return { ok: true, event: { kind: "workflow.started", workflowId, sessionId, at } };
     }
-    if (eventType === "WORKFLOW_COMPLETED" || eventType === "done" || eventType === "STREAM_END") {
+    if (eventType === "WORKFLOW_COMPLETED" || eventType === "workflow.completed" || eventType === "done" || eventType === "STREAM_END") {
         return {
             ok: true,
             event: {
@@ -270,7 +294,7 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
             },
         };
     }
-    if (eventType === "WORKFLOW_FAILED" || eventType === "error") {
+    if (eventType === "WORKFLOW_FAILED" || eventType === "workflow.failed" || eventType === "error") {
         const message = asString(payload.message) || "workflow failed";
         const reasonCode = asString(payload.code) || asString(payload.error_code) || "INTERNAL";
         return {
@@ -322,13 +346,22 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
             },
         };
     }
+    if (eventType === "workflow.pausing") {
+        return { ok: true, event: { kind: "control.pause.requested", taskId: workflowId, sessionId, at } };
+    }
+    if (eventType === "workflow.resuming") {
+        return { ok: true, event: { kind: "control.resume.requested", taskId: workflowId, sessionId, at } };
+    }
+    if (eventType === "workflow.cancelling") {
+        return { ok: true, event: { kind: "control.cancel.requested", taskId: workflowId, sessionId, at } };
+    }
     if (eventType === "workflow.paused") {
         return { ok: true, event: { kind: "control.pause.confirmed", taskId: workflowId, sessionId, at } };
     }
     if (eventType === "workflow.resumed") {
         return { ok: true, event: { kind: "control.resume.confirmed", taskId: workflowId, sessionId, at } };
     }
-    if (eventType === "workflow.cancelled") {
+    if (eventType === "workflow.cancelled" || eventType === "WORKFLOW_CANCELLED") {
         return { ok: true, event: { kind: "control.cancel.confirmed", taskId: workflowId, sessionId, at } };
     }
 
@@ -356,6 +389,7 @@ const EVENT_TYPES: EventType[] = [
     "STREAM_END",
     "WORKFLOW_FAILED",
     "workflow.pausing",
+    "workflow.resuming",
     "workflow.paused",
     "workflow.resumed",
     "workflow.cancelling",
@@ -448,6 +482,15 @@ export function projectDomainEventToRunEvent(event: RunDomainEvent): RunEvent | 
             agent_id: event.agentId,
             seq: event.seq,
         } as RunEvent;
+    }
+    if (event.kind === "control.pause.requested") {
+        return { type: "workflow.pausing", workflow_id: event.taskId, timestamp: event.at };
+    }
+    if (event.kind === "control.resume.requested") {
+        return { type: "workflow.resuming", workflow_id: event.taskId, timestamp: event.at };
+    }
+    if (event.kind === "control.cancel.requested") {
+        return { type: "workflow.cancelling", workflow_id: event.taskId, timestamp: event.at };
     }
     if (event.kind === "control.pause.confirmed") {
         return { type: "workflow.paused", workflow_id: event.taskId, timestamp: event.at };

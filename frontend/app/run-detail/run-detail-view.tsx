@@ -1,19 +1,19 @@
 "use client";
 
-import React from "react";
+import { ErrorBoundary } from "@/components/error-boundary";
+import { Button } from "@/components/ui/button";
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { cn } from "@/lib/utils";
+import { Eye, Loader2, PanelRight, PanelRightClose } from "lucide-react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Eye, PanelRight, PanelRightClose, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { ErrorBoundary } from "@/components/error-boundary";
-import { ConversationPanel } from "./conversation-panel";
-import { SummaryPanel } from "./summary-panel";
-import { useRunDetailData, useRunDetailUi, useRunDetailActions } from "./run-detail-hooks";
+import React from "react";
 import { useTranslation } from "react-i18next";
+import { ConversationPanel } from "./conversation-panel";
+import { useRunDetailActions, useRunDetailData, useRunDetailUi } from "./run-detail-hooks";
+import { SummaryPanel } from "./summary-panel";
 
 export function RunDetailView() {
     const { t, i18n } = useTranslation();
@@ -148,7 +148,7 @@ export function RunDetailView() {
                                 </TabsTrigger>
                             </TabsList>
                             <div className="flex items-center gap-2">
-                                {(timelineEvents.length > 0 || runStatus === "running") && (
+                                {(timelineEvents.length > 0 || runStatus === "running" || runStatus === "pausing" || runStatus === "paused" || runStatus === "cancelling") && (
                                 <Button
                                     variant="outline"
                                     size="sm"

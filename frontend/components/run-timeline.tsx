@@ -19,7 +19,7 @@ import { useTranslation } from "react-i18next";
 export interface TimelineEvent {
     id: string;
     type: "agent" | "llm" | "tool" | "system";
-    status: "completed" | "running" | "failed" | "pending" | "paused";
+    status: "completed" | "running" | "failed" | "cancelled" | "pending" | "paused";
     title: string;
     timestamp: string;
     details?: string;
@@ -72,10 +72,14 @@ const TimelineItem = ({
 }) => {
     const isRunning = event.status === "running";
     const isCompleted = event.status === "completed";
+    const isPaused = event.status === "paused";
+    const isCancelled = event.status === "cancelled";
 
     const getIcon = () => {
         if (isCompleted) return <CheckCircle2 className="h-3 w-3" />;
         if (event.status === "failed") return <AlertCircle className="h-3 w-3" />;
+        if (event.status === "cancelled") return <Clock className="h-3 w-3" />;
+        if (event.status === "paused") return <Activity className="h-3 w-3" />;
 
         switch (event.type) {
             case "agent": return <BrainCircuit className="h-3 w-3" />;
@@ -90,7 +94,7 @@ const TimelineItem = ({
             className={cn(
                 "relative pl-12 pr-8 py-3 rounded-xl transition-all min-w-0 flex flex-col group",
                 isRunning ? "bg-primary/[0.03] ring-1 ring-primary/10" : "hover:bg-muted/30",
-                !isRunning && !isCompleted && "opacity-40"
+                !isRunning && !isCompleted && !isPaused && !isCancelled && "opacity-40"
             )}
         >
             {/* Minimalist Status Node */}
@@ -98,6 +102,8 @@ const TimelineItem = ({
                 "absolute left-[13px] top-[18px] flex h-3.5 w-3.5 items-center justify-center rounded-full z-10 bg-background border transition-all duration-300",
                 isRunning ? "border-primary ring-2 ring-primary/5 shadow-sm shadow-primary/10" :
                     isCompleted ? "border-emerald-500/40 text-emerald-500/70" :
+                        isCancelled ? "border-yellow-600/40 text-yellow-700/80" :
+                            isPaused ? "border-amber-600/40 text-amber-700/80" :
                         "border-muted/50"
             )}>
                 {isRunning ? (

@@ -188,6 +188,8 @@ function StatusIcon({ eventType }: { eventType?: string }) {
             return <Pause className="h-3.5 w-3.5 text-amber-500 animate-pulse" />;
         case "workflow.paused":
             return <Pause className="h-3.5 w-3.5 text-amber-500" />;
+        case "workflow.resuming":
+            return <Play className="h-3.5 w-3.5 text-green-500 animate-pulse" />;
         case "workflow.resumed":
             return <Play className="h-3.5 w-3.5 text-green-500" />;
         case "workflow.cancelling":

@@ -16,7 +16,7 @@ export function useScrollSync({
     timelineScrollRef: React.RefObject<HTMLDivElement>;
     conversationScrollRef: React.RefObject<HTMLDivElement>;
     timelineEvents: TimelineDisplayEvent[];
-    runStatus: "idle" | "running" | "completed" | "failed";
+    runStatus: "idle" | "running" | "pausing" | "paused" | "cancelling" | "cancelled" | "completed" | "failed";
     messages: RunMessage[];
     activeTab: string;
     userHasScrolledRef: React.MutableRefObject<boolean>;
@@ -40,7 +40,7 @@ export function useScrollSync({
 
         const handleScroll = () => {
             const isNearBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 100;
-            if (!isNearBottom && runStatus === "running") {
+            if (!isNearBottom && (runStatus === "running" || runStatus === "pausing")) {
                 userHasScrolledRef.current = true;
             }
             if (isNearBottom) {
@@ -53,7 +53,7 @@ export function useScrollSync({
     }, [runStatus, conversationScrollRef, userHasScrolledRef]);
 
     useEffect(() => {
-        if (runStatus === "running") {
+        if (runStatus === "running" || runStatus === "pausing") {
             const hasOnlyUserMessage = messages.length === 1 && messages[0]?.role === "user";
             if (hasOnlyUserMessage) {
                 userHasScrolledRef.current = false;
@@ -62,7 +62,7 @@ export function useScrollSync({
     }, [runStatus, messages.length, userHasScrolledRef]);
 
     useEffect(() => {
-        if (runStatus !== "running" && runStatus !== "idle") return;
+        if (runStatus !== "running" && runStatus !== "pausing" && runStatus !== "cancelling" && runStatus !== "idle") return;
         if (userHasScrolledRef.current) return;
 
         if (conversationScrollRef.current && activeTab === "conversation") {

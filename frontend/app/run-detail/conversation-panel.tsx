@@ -14,7 +14,6 @@ export function ConversationPanel() {
         isPaused,
         isPauseLoading,
         isResumeLoading,
-        canControlTask,
         isCancelling,
         isNewSession,
         resolvedSessionId,
@@ -28,6 +27,9 @@ export function ConversationPanel() {
         handleCancel,
         setSelectedAgentValue,
     } = useRunDetailActions();
+    const isControlSessionActive = runStatus === "running" || runStatus === "pausing" || runStatus === "paused" || runStatus === "cancelling";
+    const showTaskControls = isControlSessionActive && !!currentTaskId;
+    const inputDisabled = showTaskControls;
 
     if (messages.length > 0) {
         return (
@@ -40,14 +42,14 @@ export function ConversationPanel() {
                 <div className="border-t bg-background p-4 shrink-0">
                     <ChatInput
                         sessionId={isNewSession ? undefined : resolvedSessionId ?? undefined}
-                        disabled={runStatus === "running" && canControlTask}
-                        isTaskComplete={runStatus !== "running" || !canControlTask}
+                        disabled={inputDisabled}
+                        isTaskComplete={!showTaskControls}
                         selectedAgent={selectedAgent}
                         onSelectedAgentChange={(agent) => setSelectedAgentValue(agent)}
                         initialResearchStrategy={researchStrategy}
                         onTaskCreated={handleTaskCreated}
                         currentTaskId={currentTaskId}
-                        isTaskRunning={runStatus === "running" && canControlTask}
+                        isTaskRunning={showTaskControls}
                         isPaused={isPaused}
                         isPauseLoading={isPauseLoading}
                         isResumeLoading={isResumeLoading}
@@ -64,15 +66,15 @@ export function ConversationPanel() {
     return (
         <ChatInput
             sessionId={isNewSession ? undefined : resolvedSessionId ?? undefined}
-            disabled={runStatus === "running" && canControlTask}
-            isTaskComplete={runStatus !== "running" || !canControlTask}
+            disabled={inputDisabled}
+            isTaskComplete={!showTaskControls}
             selectedAgent={selectedAgent}
             onSelectedAgentChange={(agent) => setSelectedAgentValue(agent)}
             initialResearchStrategy={researchStrategy}
             onTaskCreated={handleTaskCreated}
             currentTaskId={currentTaskId}
             variant="centered"
-            isTaskRunning={runStatus === "running" && canControlTask}
+            isTaskRunning={showTaskControls}
             isPaused={isPaused}
             isPauseLoading={isPauseLoading}
             isResumeLoading={isResumeLoading}

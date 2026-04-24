@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { radarStore } from "@/lib/radar/store";
 import { useActiveRunSession } from "@/lib/run/system";
+import { applyWorkflowPausedTransition, applyWorkflowTerminalTransition } from "./radar-workflow-transitions";
 
 // Longer estimate = slower flight to center (more time to see the animation)
 const DEFAULT_ESTIMATE_MS = 45000; // ~45s to center (matches original dashboard)
@@ -46,10 +47,11 @@ export function RadarBridge() {
 
   // Track previous status for detecting completion
   const prevStatusRef = useRef<string>(status);
+  const isLiveStatus = status === "running" || status === "paused" || status === "cancelling";
 
-  // Initialize/reset store when status changes to idle or running
+  // Initialize/reset store when status changes to idle or starts a fresh live run.
   useEffect(() => {
-    if (status === "idle" || (status === "running" && !initializedRef.current)) {
+    if (status === "idle" || (isLiveStatus && !initializedRef.current)) {
       // Clear pending timers
       for (const t of timeoutRefs.current.values()) window.clearTimeout(t);
       timeoutRefs.current.clear();
@@ -59,17 +61,17 @@ export function RadarBridge() {
       // Reset store
       radarStore.getState().reset();
       tickRef.current = 0;
-      initializedRef.current = status === "running";
+      initializedRef.current = isLiveStatus;
     }
     prevStatusRef.current = status;
-  }, [status]);
+  }, [isLiveStatus, status]);
 
-  // When task completes, accelerate all flights to center
+  // When task reaches terminal state, accelerate all flights to center.
   useEffect(() => {
-    const wasRunning = prevStatusRef.current === "running";
-    const isNowComplete = status === "completed" || status === "idle";
+    const wasLive = prevStatusRef.current === "running" || prevStatusRef.current === "paused" || prevStatusRef.current === "cancelling";
+    const isNowComplete = status === "completed" || status === "cancelled" || status === "failed" || status === "idle";
     
-    if (wasRunning && isNowComplete) {
+    if (wasLive && isNowComplete) {
       // Accelerate all in-progress flights to center
       const state = radarStore.getState();
       for (const [itemId, item] of Object.entries(state.items)) {
@@ -101,9 +103,7 @@ export function RadarBridge() {
 
   // Process events
   useEffect(() => {
-    // Only process events for live/running tasks - skip historical sessions
-    // This prevents stuck flights at the radar edge for completed sessions
-    if (status !== "running") return;
+    if (!isLiveStatus) return;
 
     // Events that spawn or keep a flight active (agent is working)
     const activeLike = new Set([
@@ -220,31 +220,24 @@ export function RadarBridge() {
         continue;
       }
 
-      // WORKFLOW_COMPLETED: complete all remaining flights for this workflow
-      if (ev.type === "WORKFLOW_COMPLETED") {
-        const state = radarStore.getState();
-        for (const [itemId, item] of Object.entries(state.items)) {
-          const itemWorkflowId = itemId.split("::")[0] || "";
-          if (itemWorkflowId === workflowId && item.status === "in_progress") {
-            const tick = ++tickRef.current;
-            radarStore.getState().applyTick({
-              tick_id: tick,
-              items: [{ id: itemId, eta_ms: 300, estimate_ms: 300 }],
-            });
-            
-            // Remove after animation
-            const handle = window.setTimeout(() => {
-              const tick2 = ++tickRef.current;
-              radarStore.getState().applyTick({
-                tick_id: tick2,
-                items: [{ id: itemId, status: "done" }],
-                agents_remove: [itemId],
-              });
-              flightStartTimes.current.delete(itemId);
-            }, 500);
-            timeoutRefs.current.set(itemId, handle);
-          }
-        }
+      // Terminal events: complete all remaining flights for this workflow
+      if (ev.type === "WORKFLOW_COMPLETED" || ev.type === "workflow.cancelled" || ev.type === "WORKFLOW_FAILED") {
+        const result = applyWorkflowTerminalTransition(radarStore, workflowId, tickRef.current, {
+          schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+          clear: (handle) => window.clearTimeout(handle),
+          timeoutRefs: timeoutRefs.current,
+          onRemoved: (itemId) => {
+            flightStartTimes.current.delete(itemId);
+          },
+        });
+        tickRef.current = result.nextTick;
+        continue;
+      }
+
+      // Pause event: stop all in-progress flights for that workflow.
+      if (ev.type === "workflow.paused") {
+        const result = applyWorkflowPausedTransition(radarStore, workflowId, tickRef.current);
+        tickRef.current = result.nextTick;
         continue;
       }
 
@@ -289,7 +282,7 @@ export function RadarBridge() {
         });
       }
     }
-  }, [events, status]);
+  }, [events, isLiveStatus, status]);
 
   // Cleanup on unmount
   useEffect(() => {

@@ -72,6 +72,17 @@ describe("session machine transitions", () => {
         actor.send({
             type: "DOMAIN_EVENT",
             event: {
+                kind: "control.pause.requested",
+                sessionId: "s1",
+                taskId: "wf-1",
+                at: "2026-01-01T00:00:00Z",
+            },
+        });
+        expect(actor.getSnapshot().value).toBe("pausing");
+
+        actor.send({
+            type: "DOMAIN_EVENT",
+            event: {
                 kind: "control.pause.confirmed",
                 sessionId: "s1",
                 taskId: "wf-1",
@@ -116,7 +127,7 @@ describe("session machine transitions", () => {
                 kind: "control.rejected",
                 sessionId: "s1",
                 taskId: "wf-1",
-                code: "invalid-transition",
+                code: "INVALID_TRANSITION",
                 message: "invalid transition",
                 at: "2026-01-01T00:00:02Z",
             },

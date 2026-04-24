@@ -1,7 +1,6 @@
-import { TaskStatus } from "@/lib/kardcraft/api";
 import { assign, createMachine } from "xstate";
 
-type RunStatus = "idle" | "running" | "completed" | "failed";
+type RunStatus = "idle" | "running" | "pausing" | "paused" | "cancelling" | "cancelled" | "completed" | "failed";
 
 export type TaskControlContext = {
     currentTaskId: string | null;
@@ -10,7 +9,6 @@ export type TaskControlContext = {
     blockedTaskId: string | null;
     isPauseLoading: boolean;
     isResumeLoading: boolean;
-    isPauseSyncing: boolean;
     canControlTask: boolean;
 };
 
@@ -25,14 +23,8 @@ type TaskControlEvent =
     | SyncInputEvent
     | { type: "PAUSE_REQUESTED" }
     | { type: "RESUME_REQUESTED" }
-    | { type: "CONTROL_SYNC_STARTED" }
-    | { type: "CONTROL_STATE_UPDATED"; paused: boolean; cancelled: boolean }
-    | { type: "CONTROL_REQUEST_FAILED"; blockCurrentTask?: boolean }
-    | { type: "TERMINAL_STATUS_DETECTED"; status: TaskStatus };
-
-const isTerminalStatus = (status: TaskStatus): boolean => {
-    return status === "completed" || status === "failed" || status === "cancelled";
-};
+    | { type: "CONTROL_STATE_UPDATED"; cancelled: boolean }
+    | { type: "CONTROL_REQUEST_FAILED"; blockCurrentTask?: boolean };
 
 const computeCanControlTask = (
     currentTaskId: string | null,
@@ -41,7 +33,7 @@ const computeCanControlTask = (
     blockedTaskId: string | null,
 ): boolean => {
     if (!currentTaskId) return false;
-    if (runStatus !== "running") return false;
+    if (runStatus !== "running" && runStatus !== "paused") return false;
     if (isCancelling) return false;
     return blockedTaskId !== currentTaskId;
 };
@@ -58,7 +50,6 @@ export const taskControlMachine = createMachine({
         blockedTaskId: null,
         isPauseLoading: false,
         isResumeLoading: false,
-        isPauseSyncing: false,
         canControlTask: false,
     },
     on: {
@@ -95,11 +86,6 @@ export const taskControlMachine = createMachine({
                 isPauseLoading: false,
             })),
         },
-        CONTROL_SYNC_STARTED: {
-            actions: assign(() => ({
-                isPauseSyncing: true,
-            })),
-        },
         CONTROL_STATE_UPDATED: {
             actions: assign(({ context, event }) => {
                 const blockedTaskId = event.cancelled ? context.currentTaskId : context.blockedTaskId;
@@ -107,7 +93,6 @@ export const taskControlMachine = createMachine({
                     blockedTaskId,
                     isPauseLoading: false,
                     isResumeLoading: false,
-                    isPauseSyncing: false,
                     canControlTask: computeCanControlTask(
                         context.currentTaskId,
                         context.runStatus,
@@ -124,24 +109,6 @@ export const taskControlMachine = createMachine({
                     blockedTaskId,
                     isPauseLoading: false,
                     isResumeLoading: false,
-                    isPauseSyncing: false,
-                    canControlTask: computeCanControlTask(
-                        context.currentTaskId,
-                        context.runStatus,
-                        context.isCancelling,
-                        blockedTaskId,
-                    ),
-                };
-            }),
-        },
-        TERMINAL_STATUS_DETECTED: {
-            actions: assign(({ context, event }) => {
-                const blockedTaskId = isTerminalStatus(event.status) ? context.currentTaskId : context.blockedTaskId;
-                return {
-                    blockedTaskId,
-                    isPauseLoading: false,
-                    isResumeLoading: false,
-                    isPauseSyncing: false,
                     canControlTask: computeCanControlTask(
                         context.currentTaskId,
                         context.runStatus,

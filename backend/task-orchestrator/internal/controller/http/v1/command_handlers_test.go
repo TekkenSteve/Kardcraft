@@ -455,6 +455,47 @@ func TestHandleTaskControlRequiresIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestHandleTaskControlTimelineIsIdempotentByStreamID(t *testing.T) {
+	store := newFakeCommandStore()
+	readStore := &fakeReadModelStore{ready: true}
+	s := newCommandTestServerWithReadStore(store, &fakeCommandRuntime{}, true, readStore)
+
+	makePauseRequest := func() *httptest.ResponseRecorder {
+		req := newJSONRequest(http.MethodPost, "/api/v1/tasks/task-1/pause", `{"reason":"manual"}`)
+		req.Header.Set("Idempotency-Key", "same-key")
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+		s.Handler().ServeHTTP(rr, req)
+		return rr
+	}
+
+	first := makePauseRequest()
+	if first.Code != http.StatusOK {
+		t.Fatalf("expected first request 200, got %d body=%s", first.Code, first.Body.String())
+	}
+	second := makePauseRequest()
+	if second.Code != http.StatusOK {
+		t.Fatalf("expected second request 200, got %d body=%s", second.Code, second.Body.String())
+	}
+
+	pausedEvents := 0
+	streamIDs := map[string]struct{}{}
+	for _, ev := range readStore.insertedEvents {
+		if ev.eventType != "workflow.paused" {
+			continue
+		}
+		pausedEvents++
+		streamIDs[ev.streamID] = struct{}{}
+	}
+
+	if pausedEvents != 1 {
+		t.Fatalf("expected exactly 1 persisted workflow.paused event, got %d", pausedEvents)
+	}
+	if len(streamIDs) != 1 {
+		t.Fatalf("expected stable deterministic stream_id, got %d unique IDs", len(streamIDs))
+	}
+}
+
 func TestHandleTaskPlannerTrace(t *testing.T) {
 	taskID := "task-trace-1"
 	streamID := "planner_trace:task-trace-1:001"

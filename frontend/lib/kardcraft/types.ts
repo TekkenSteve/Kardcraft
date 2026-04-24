@@ -8,6 +8,7 @@ export type EventType =
     | "STREAM_END"
     | "WORKFLOW_FAILED"
     | "workflow.pausing"
+    | "workflow.resuming"
     | "workflow.paused"
     | "workflow.resumed"
     | "workflow.cancelling"
@@ -264,6 +265,11 @@ export interface WorkflowPausingEvent extends BaseEvent {
     message?: string;
 }
 
+export interface WorkflowResumingEvent extends BaseEvent {
+    type: "workflow.resuming";
+    message?: string;
+}
+
 export interface WorkflowPausedEvent extends BaseEvent {
     type: "workflow.paused";
     checkpoint?: string;
@@ -290,6 +296,7 @@ export type RunEvent =
     | WorkflowCompletedEvent
     | WorkflowFailedEvent
     | WorkflowPausingEvent
+    | WorkflowResumingEvent
     | WorkflowPausedEvent
     | WorkflowResumedEvent
     | WorkflowCancellingEvent

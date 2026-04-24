@@ -16,7 +16,7 @@ export interface RunDetailDataContextValue {
     error: string | null;
     messages: RunMessage[];
     runEvents: RunEvent[];
-    runStatus: "idle" | "running" | "completed" | "failed";
+    runStatus: "idle" | "running" | "pausing" | "paused" | "cancelling" | "cancelled" | "completed" | "failed";
     runPhase: "idle" | "clearing" | "loading" | "hydrated" | "streaming" | "error";
     connectionState: "idle" | "connecting" | "connected" | "reconnecting" | "error";
     streamError: string | null;
