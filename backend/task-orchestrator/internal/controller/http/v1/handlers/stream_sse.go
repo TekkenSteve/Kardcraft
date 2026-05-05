@@ -1,10 +1,14 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	v1stream "task-orchestrator/internal/controller/http/v1/stream"
@@ -19,7 +23,7 @@ type SSEDeps struct {
 	Subscribe                  func(workflowID string) (int, chan v1stream.OutboundEvent)
 	Unsubscribe                func(workflowID string, subscriberID int)
 	EnsureWorkflowStreamReader func(workflowID string)
-	Backlog                    func(workflowID string) []map[string]any
+	Backlog                    func(workflowID string, afterEventID int64) []map[string]any
 
 	AuthzDeniedCode string
 }
@@ -30,17 +34,20 @@ func NewSSEHandler(deps SSEDeps) http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		workflowID := strings.TrimSpace(r.URL.Query().Get("workflow_id"))
-		if workflowID == "" {
+		workflowIDs := resolveWorkflowIDs(r)
+		if len(workflowIDs) == 0 {
 			http.Error(w, "workflow_id required", http.StatusBadRequest)
 			return
 		}
+		afterEventID, hasCursor := resolveLastEventID(r)
 		userID := deps.UserID(r)
-		if !deps.Authorize(r, userID, workflowID) {
-			deps.WriteAPIError(w, http.StatusForbidden, deps.AuthzDeniedCode, "access denied for workflow stream", map[string]any{
-				"workflow_id": workflowID,
-			})
-			return
+		for _, workflowID := range workflowIDs {
+			if !deps.Authorize(r, userID, workflowID) {
+				deps.WriteAPIError(w, http.StatusForbidden, deps.AuthzDeniedCode, "access denied for workflow stream", map[string]any{
+					"workflow_id": workflowID,
+				})
+				return
+			}
 		}
 
 		w.Header().Set("Content-Type", "text/event-stream")
@@ -55,32 +62,101 @@ func NewSSEHandler(deps SSEDeps) http.HandlerFunc {
 			return
 		}
 
-		subscriberID, events := deps.Subscribe(workflowID)
-		defer deps.Unsubscribe(workflowID, subscriberID)
-		deps.EnsureWorkflowStreamReader(workflowID)
+		type subscription struct {
+			workflowID string
+			id         int
+			events     chan v1stream.OutboundEvent
+		}
+		subscriptions := make([]subscription, 0, len(workflowIDs))
+		for _, workflowID := range workflowIDs {
+			subscriberID, events := deps.Subscribe(workflowID)
+			subscriptions = append(subscriptions, subscription{
+				workflowID: workflowID,
+				id:         subscriberID,
+				events:     events,
+			})
+			deps.EnsureWorkflowStreamReader(workflowID)
+		}
+		defer func() {
+			for _, sub := range subscriptions {
+				deps.Unsubscribe(sub.workflowID, sub.id)
+			}
+		}()
 
 		fmt.Fprintf(w, ": %s\n\n", strings.Repeat(" ", 1024))
-		initEvent := map[string]any{
-			"type":        "STATUS_UPDATE",
-			"workflow_id": workflowID,
-			"message":     "Stream connected",
-			"timestamp":   deps.NowRFC3339(),
-		}
-		buf, _ := json.Marshal(initEvent)
-		fmt.Fprintf(w, "event: STATUS_UPDATE\ndata: %s\n\n", string(buf))
 		flusher.Flush()
 
-		for _, payload := range deps.Backlog(workflowID) {
-			eventType, _ := payload["type"].(string)
-			if strings.TrimSpace(eventType) == "" {
-				eventType = "STATUS_UPDATE"
+		if hasCursor {
+			type backlogEvent struct {
+				id      int64
+				event   string
+				payload map[string]any
 			}
-			b, _ := json.Marshal(payload)
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", eventType, string(b))
+			events := make([]backlogEvent, 0, 128)
+			for _, workflowID := range workflowIDs {
+				for _, payload := range deps.Backlog(workflowID, afterEventID) {
+					eventType, _ := payload["event_type"].(string)
+					if strings.TrimSpace(eventType) == "" {
+						eventType = "STATUS_UPDATE"
+					}
+					eventID := resolveBacklogEventID(payload)
+					events = append(events, backlogEvent{
+						id:      eventID,
+						event:   eventType,
+						payload: payload,
+					})
+				}
+			}
+			slices.SortFunc(events, func(a, b backlogEvent) int {
+				if a.id < b.id {
+					return -1
+				}
+				if a.id > b.id {
+					return 1
+				}
+				return 0
+			})
+			for _, event := range events {
+				if event.id > 0 {
+					fmt.Fprintf(w, "id: %d\n", event.id)
+				}
+				b, _ := json.Marshal(event.payload)
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.event, string(b))
+			}
 		}
 		flusher.Flush()
 
 		ctx := r.Context()
+		merged := make(chan v1stream.OutboundEvent, 256)
+		mergeCtx, mergeCancel := context.WithCancel(ctx)
+		var wg sync.WaitGroup
+		for _, sub := range subscriptions {
+			wg.Add(1)
+			go func(ch chan v1stream.OutboundEvent) {
+				defer wg.Done()
+				for {
+					select {
+					case <-mergeCtx.Done():
+						return
+					case ev, ok := <-ch:
+						if !ok {
+							return
+						}
+						select {
+						case merged <- ev:
+						case <-mergeCtx.Done():
+							return
+						}
+					}
+				}
+			}(sub.events)
+		}
+		go func() {
+			wg.Wait()
+			close(merged)
+		}()
+		defer mergeCancel()
+
 		heartbeat := time.NewTicker(10 * time.Second)
 		defer heartbeat.Stop()
 		for {
@@ -90,7 +166,7 @@ func NewSSEHandler(deps SSEDeps) http.HandlerFunc {
 			case <-heartbeat.C:
 				fmt.Fprintf(w, ": ping %d\n\n", time.Now().UTC().Unix())
 				flusher.Flush()
-			case ev, ok := <-events:
+			case ev, ok := <-merged:
 				if !ok {
 					return
 				}
@@ -101,4 +177,73 @@ func NewSSEHandler(deps SSEDeps) http.HandlerFunc {
 			}
 		}
 	}
+}
+
+func resolveWorkflowIDs(r *http.Request) []string {
+	values := r.URL.Query()["workflow_id"]
+	if len(values) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, raw := range values {
+		for _, token := range strings.Split(raw, ",") {
+			workflowID := strings.TrimSpace(token)
+			if workflowID == "" {
+				continue
+			}
+			if _, ok := seen[workflowID]; ok {
+				continue
+			}
+			seen[workflowID] = struct{}{}
+			out = append(out, workflowID)
+		}
+	}
+	return out
+}
+
+func resolveBacklogEventID(payload map[string]any) int64 {
+	if payload == nil {
+		return 0
+	}
+	switch typed := payload["event_id"].(type) {
+	case int64:
+		if typed > 0 {
+			return typed
+		}
+	case int:
+		if typed > 0 {
+			return int64(typed)
+		}
+	case float64:
+		if typed > 0 {
+			return int64(typed)
+		}
+	case string:
+		return parseLastEventID(strings.TrimSpace(typed))
+	}
+	return 0
+}
+
+func resolveLastEventID(r *http.Request) (int64, bool) {
+	queryValue := strings.TrimSpace(r.URL.Query().Get("last_event_id"))
+	if queryValue != "" {
+		return parseLastEventID(queryValue), true
+	}
+	headerValue := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	if headerValue != "" {
+		return parseLastEventID(headerValue), true
+	}
+	return 0, false
+}
+
+func parseLastEventID(value string) int64 {
+	if value == "" {
+		return 0
+	}
+	parsed, err := strconv.ParseInt(value, 10, 64)
+	if err != nil || parsed < 0 {
+		return 0
+	}
+	return parsed
 }

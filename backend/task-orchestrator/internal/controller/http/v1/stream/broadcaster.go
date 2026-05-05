@@ -8,17 +8,29 @@ func NewBroadcaster() *Broadcaster {
 	return &Broadcaster{}
 }
 
-func (b *Broadcaster) BuildEventPayload(evType, workflowID, taskID, message, timestamp, streamID string, payload map[string]any) ([]byte, error) {
+func (b *Broadcaster) BuildEventPayload(
+	schemaVersion int,
+	correlationID string,
+	eventID string,
+	workflowID string,
+	runID string,
+	sessionID string,
+	occurredAt string,
+	eventType string,
+	streamID string,
+	payload map[string]any,
+) ([]byte, error) {
 	body := map[string]any{
-		"type":        evType,
+		"schema_version": schemaVersion,
+		"correlation_id": correlationID,
+		"event_id":       eventID,
+		"event_type":  eventType,
 		"workflow_id": workflowID,
-		"task_id":     taskID,
-		"message":     message,
-		"timestamp":   timestamp,
+		"run_id":      runID,
+		"session_id":  sessionID,
+		"occurred_at": occurredAt,
 		"stream_id":   streamID,
 	}
-	if payload != nil {
-		body["payload"] = payload
-	}
+	body["payload"] = payload
 	return json.Marshal(body)
 }

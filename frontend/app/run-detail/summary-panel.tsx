@@ -13,7 +13,7 @@ export function SummaryPanel() {
     const {
         sessionHistory,
         sessionId,
-        currentTaskId,
+        currentWorkflowId,
         runStatus,
     } = useRunDetailData();
 
@@ -207,8 +207,11 @@ export function SummaryPanel() {
             {sessionHistory?.tasks && sessionHistory.tasks.length > 0 && (() => {
                 const allAgents = new Set<string>();
                 sessionHistory.tasks.forEach((task) => {
-                    const agents = task.metadata?.agents_involved || [];
-                    agents.forEach((agent: string) => allAgents.add(agent));
+                    const agents = task.metadata?.agents_involved;
+                    if (!Array.isArray(agents)) return;
+                    agents
+                        .filter((agent): agent is string => typeof agent === "string" && agent.trim().length > 0)
+                        .forEach((agent) => allAgents.add(agent));
                 });
                 return allAgents.size > 0 ? (
                     <Card className="p-3 sm:p-4">
@@ -256,10 +259,10 @@ export function SummaryPanel() {
                         <span className="text-muted-foreground shrink-0">{t("runDetail.sessionId")}</span>
                         <span className="font-mono text-xs truncate min-w-0">{sessionId}</span>
                     </div>
-                    {currentTaskId && (
+                    {currentWorkflowId && (
                         <div className="flex justify-between items-center gap-2">
                             <span className="text-muted-foreground shrink-0">{t("runDetail.currentTaskId")}</span>
-                            <span className="font-mono text-xs truncate min-w-0">{currentTaskId}</span>
+                            <span className="font-mono text-xs truncate min-w-0">{currentWorkflowId}</span>
                         </div>
                     )}
                     <div className="flex justify-between items-center">
@@ -271,6 +274,8 @@ export function SummaryPanel() {
                                 : runStatus === "running"
                                     ? "bg-blue-50 text-blue-700 border-blue-200"
                                     : runStatus === "pausing"
+                                    ? "bg-blue-50 text-blue-700 border-blue-200"
+                                    : runStatus === "resuming"
                                     ? "bg-blue-50 text-blue-700 border-blue-200"
                                     : runStatus === "paused"
                                         ? "bg-amber-50 text-amber-700 border-amber-200"

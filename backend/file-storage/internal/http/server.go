@@ -1,11 +1,17 @@
 package http
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"strconv"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -14,6 +20,7 @@ import (
 	"file-storage/internal/middleware"
 	"file-storage/internal/policy"
 	"file-storage/internal/storage"
+	"file-storage/internal/types"
 )
 
 // Server represents the HTTP server for file-storage
@@ -24,6 +31,18 @@ type Server struct {
 	policyEngine *policy.PolicyEngine
 	logger       *logrus.Logger
 	mux          *http.ServeMux
+	uploadsMu    sync.Mutex
+	uploads      map[string]*uploadSession
+}
+
+type uploadSession struct {
+	UploadID   string
+	FileID     string
+	Key        string
+	Filename   string
+	ChunkCount int
+	Chunks     map[int][]byte
+	CreatedAt  time.Time
 }
 
 // NewServer creates a new HTTP server
@@ -41,6 +60,7 @@ func NewServer(
 		policyEngine: policyEngine,
 		logger:       logger,
 		mux:          http.NewServeMux(),
+		uploads:      make(map[string]*uploadSession),
 	}
 	s.registerRoutes()
 	return s
@@ -65,8 +85,198 @@ func (s *Server) registerRoutes() {
 
 	s.mux.HandleFunc("/v1/files/presigned-url", corsHandler(s.handlePresignedURL))
 	s.mux.HandleFunc("/v1/files/confirm-upload", corsHandler(s.handleConfirmUpload))
+	s.mux.HandleFunc("/v1/files/upload/init", corsHandler(s.handleInitUpload))
+	s.mux.HandleFunc("/v1/files/upload/chunk/", corsHandler(s.handleUploadChunk))
+	s.mux.HandleFunc("/v1/files/upload/complete/", corsHandler(s.handleCompleteUpload))
+	s.mux.HandleFunc("/v1/files/upload/status/", corsHandler(s.handleUploadStatus))
 	s.mux.HandleFunc("/v1/files/health", corsHandler(s.handleHealth))
 	s.mux.HandleFunc("/health", corsHandler(s.handleHealth))
+}
+
+type initUploadRequest struct {
+	Filename   string `json:"filename"`
+	ChunkCount int    `json:"chunk_count"`
+	SessionID  string `json:"session_id"`
+}
+
+func (s *Server) handleInitUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req initUploadRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+	filename := strings.TrimSpace(req.Filename)
+	if filename == "" {
+		http.Error(w, "filename is required", http.StatusBadRequest)
+		return
+	}
+	chunkCount := req.ChunkCount
+	if chunkCount <= 0 {
+		chunkCount = 1
+	}
+
+	userID := strings.TrimSpace(r.Header.Get("X-User-Id"))
+	fileID := generateFileID()
+	key := buildStorageKey(userID, strings.TrimSpace(req.SessionID), fileID, filename)
+	uploadID := fmt.Sprintf("upload_%s", generateFileID())
+
+	s.uploadsMu.Lock()
+	s.uploads[uploadID] = &uploadSession{
+		UploadID:   uploadID,
+		FileID:     fileID,
+		Key:        key,
+		Filename:   filename,
+		ChunkCount: chunkCount,
+		Chunks:     make(map[int][]byte, chunkCount),
+		CreatedAt:  time.Now(),
+	}
+	s.uploadsMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"upload_id": uploadID,
+		"status":    "initialized",
+	})
+}
+
+func (s *Server) handleUploadChunk(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	trimmed := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/files/upload/chunk/"), "/")
+	parts := strings.Split(trimmed, "/")
+	if len(parts) < 2 {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+	uploadID := strings.TrimSpace(parts[0])
+	chunkIndex, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || chunkIndex < 0 {
+		http.Error(w, "invalid chunk index", http.StatusBadRequest)
+		return
+	}
+
+	chunk, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "failed to read chunk", http.StatusBadRequest)
+		return
+	}
+
+	s.uploadsMu.Lock()
+	session, ok := s.uploads[uploadID]
+	if !ok {
+		s.uploadsMu.Unlock()
+		http.Error(w, "upload not found", http.StatusNotFound)
+		return
+	}
+	if chunkIndex >= session.ChunkCount {
+		s.uploadsMu.Unlock()
+		http.Error(w, "chunk index out of range", http.StatusBadRequest)
+		return
+	}
+	session.Chunks[chunkIndex] = append([]byte(nil), chunk...)
+	received := len(session.Chunks)
+	s.uploadsMu.Unlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":       true,
+		"upload_id": uploadID,
+		"received": received,
+	})
+}
+
+func (s *Server) handleCompleteUpload(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	uploadID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/files/upload/complete/"), "/")
+	s.uploadsMu.Lock()
+	session, ok := s.uploads[uploadID]
+	if !ok {
+		s.uploadsMu.Unlock()
+		http.Error(w, "upload not found", http.StatusNotFound)
+		return
+	}
+	if len(session.Chunks) != session.ChunkCount {
+		s.uploadsMu.Unlock()
+		http.Error(w, "upload incomplete", http.StatusBadRequest)
+		return
+	}
+	delete(s.uploads, uploadID)
+	s.uploadsMu.Unlock()
+
+	var buffer bytes.Buffer
+	for index := 0; index < session.ChunkCount; index++ {
+		chunk, exists := session.Chunks[index]
+		if !exists {
+			http.Error(w, "missing chunk", http.StatusBadRequest)
+			return
+		}
+		if _, err := buffer.Write(chunk); err != nil {
+			http.Error(w, "failed to assemble upload", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	stor, err := s.factory.Get(s.cfg.Storage.DefaultProvider)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get storage provider")
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+	metadata := &types.FileMetadata{
+		ContentType:   "application/octet-stream",
+		ContentLength: int64(buffer.Len()),
+		CustomMeta:    map[string]string{"filename": session.Filename},
+	}
+	if err := stor.Upload(context.Background(), session.Key, bytes.NewReader(buffer.Bytes()), metadata); err != nil {
+		s.logger.WithError(err).Error("Failed to store uploaded file")
+		http.Error(w, "Failed to store uploaded file", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"ok":        true,
+		"upload_id": uploadID,
+		"file_id":   session.FileID,
+	})
+}
+
+func (s *Server) handleUploadStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	uploadID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/files/upload/status/"), "/")
+	s.uploadsMu.Lock()
+	session, ok := s.uploads[uploadID]
+	s.uploadsMu.Unlock()
+	if !ok {
+		http.Error(w, "upload not found", http.StatusNotFound)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"upload_id":   session.UploadID,
+		"status":      "initialized",
+		"file_name":   session.Filename,
+		"chunk_count": session.ChunkCount,
+		"received":    len(session.Chunks),
+		"created_at":  session.CreatedAt.UTC().Format(time.RFC3339),
+	})
 }
 
 // Handler returns the HTTP handler

@@ -80,6 +80,7 @@ export interface TaskWithFilesRequest {
     mime_type: string;
   }>;
   context?: Record<string, unknown>;
+  template_id?: string;
   research_strategy?: 'quick' | 'standard' | 'deep' | 'academic';
 }
 

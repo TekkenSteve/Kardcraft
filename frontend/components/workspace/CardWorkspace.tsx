@@ -2,7 +2,6 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
-import useSWRInfinite from "swr/infinite";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -44,6 +43,7 @@ export function CardWorkspace({
     const [exportTask, setExportTask] = useState<ApkgExportRecord | null>(null);
     const [exporting, setExporting] = useState(false);
     const [exportError, setExportError] = useState("");
+    const [pageCount, setPageCount] = useState(1);
     const exportNotFoundRetriesRef = useRef(0);
     const syncedQuestionTypeCardIdRef = useRef<string | null>(null);
     const [resolvedTemplateProfiles, setResolvedTemplateProfiles] = useState<string[]>([]);
@@ -103,35 +103,9 @@ export function CardWorkspace({
         });
     }, [activeTab, cards, searchTerm]);
 
-    const cardsSignature = useMemo(() => {
-        return `${cardsVersion}:${cards.length}`;
-    }, [cardsVersion, cards.length]);
-
-    const getKey = useCallback((pageIndex: number, previousPageData: typeof filteredCards | null) => {
-        if (!sessionId) return null;
-        if (previousPageData && previousPageData.length < PAGE_SIZE) return null;
-        return ["workspace-cards", sessionId, activeTab, searchTerm, cardsSignature, pageIndex];
-    }, [sessionId, activeTab, searchTerm, cardsSignature]);
-
-    const fetcher = useCallback(async (key: readonly [string, string, string, string, string, number]) => {
-        const pageIndex = key[5];
-        const start = pageIndex * PAGE_SIZE;
-        return filteredCards.slice(start, start + PAGE_SIZE);
-    }, [filteredCards]);
-
-    const { data: pagedCards, size, setSize, isValidating } = useSWRInfinite(
-        getKey,
-        fetcher,
-        {
-            keepPreviousData: true,
-            revalidateOnFocus: false,
-        }
-    );
-
     const visibleCards = useMemo(() => {
-        if (!pagedCards) return filteredCards.slice(0, PAGE_SIZE);
-        return pagedCards.flat();
-    }, [pagedCards, filteredCards]);
+        return filteredCards.slice(0, pageCount * PAGE_SIZE);
+    }, [PAGE_SIZE, filteredCards, pageCount]);
 
     const virtualEnabled = visibleCards.length > VIRTUAL_THRESHOLD;
     const totalHeight = virtualEnabled ? visibleCards.length * ESTIMATED_ROW_HEIGHT : 0;
@@ -336,8 +310,8 @@ export function CardWorkspace({
     }, [exportTask?.export_id, exportTask?.session_id, exportTask?.status, sessionId]);
 
     useEffect(() => {
-        setSize(1);
-    }, [activeTab, searchTerm, cardsSignature, setSize]);
+        setPageCount(1);
+    }, [activeTab, searchTerm, cardsVersion]);
 
     useEffect(() => {
         if (!selectedQuestionType) return;
@@ -729,7 +703,7 @@ export function CardWorkspace({
                         )}
                     >
                         <div ref={containerRef} className="h-full overflow-y-auto custom-scrollbar pr-1">
-                            {filteredCards.length === 0 && workspacePhase !== "loading" && (
+                            {filteredCards.length === 0 && !isWorkspaceLoading && (
                                 <div className="flex flex-col items-center justify-center h-[260px] text-center text-muted-foreground bg-[var(--app-surface-2)]/60 border border-[var(--app-border-subtle)] rounded-lg">
                                     <div className="text-sm font-medium text-foreground/80">{t("workspace.filterEmptyTitle")}</div>
                                     <div className="text-xs mt-1 max-w-[320px]">{t("workspace.filterEmptyDesc")}</div>
@@ -764,12 +738,9 @@ export function CardWorkspace({
                                         focusRing
                                     )}
                                     type="button"
-                                    onClick={() => setSize(size + 1)}
-                                    disabled={isValidating}
+                                    onClick={() => setPageCount((value) => value + 1)}
                                 >
-                                    {isValidating
-                                        ? t("workspace.loading")
-                                        : t("workspace.loadMore", { count: filteredCards.length - visibleCards.length })}
+                                    {t("workspace.loadMore", { count: filteredCards.length - visibleCards.length })}
                                 </button>
                             )}
                         </div>
@@ -997,7 +968,7 @@ export function CardWorkspace({
             ) : (
                 <>
                     <div ref={containerRef} className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-                        {filteredCards.length === 0 && workspacePhase !== "loading" && (
+                        {filteredCards.length === 0 && !isWorkspaceLoading && (
                             <div className="flex flex-col items-center justify-center h-[200px] text-center text-muted-foreground bg-[var(--app-surface-2)]/60 border border-[var(--app-border-subtle)] rounded-lg w-full">
                                 <div className="text-sm font-medium text-foreground/80">{t("workspace.filterEmptyTitle")}</div>
                                 <div className="text-xs mt-1 max-w-[320px]">{t("workspace.filterEmptyDesc")}</div>
@@ -1032,12 +1003,9 @@ export function CardWorkspace({
                                     focusRing
                                 )}
                                 type="button"
-                                onClick={() => setSize(size + 1)}
-                                disabled={isValidating}
+                                onClick={() => setPageCount((value) => value + 1)}
                             >
-                                {isValidating
-                                    ? t("workspace.loading")
-                                    : t("workspace.loadMore", { count: filteredCards.length - visibleCards.length })}
+                                {t("workspace.loadMore", { count: filteredCards.length - visibleCards.length })}
                             </button>
                         )}
                     </div>

@@ -1,7 +1,6 @@
 import React, { useMemo } from "react";
 import {
     CheckCircle2,
-    Circle,
     AlertCircle,
     BrainCircuit,
     Terminal,
@@ -42,11 +41,10 @@ export function RunTimeline({ events, onNavigateToMessage }: RunTimelineProps) {
                 <div className="absolute left-[19px] top-2 bottom-2 w-px bg-muted/30" />
 
                 <div className="space-y-1 min-w-0 w-full">
-                    {visibleEvents.map((event, index) => (
+                    {visibleEvents.map((event) => (
                         <TimelineItem
-                            key={`${event.id}-${index}`}
+                            key={event.id}
                             event={event}
-                            index={index}
                             onNavigate={onNavigateToMessage}
                             goToChatLabel={t("runDetail.goToChat")}
                         />
@@ -61,12 +59,10 @@ export function RunTimeline({ events, onNavigateToMessage }: RunTimelineProps) {
 
 const TimelineItem = ({
     event,
-    index,
     onNavigate,
     goToChatLabel,
 }: {
     event: TimelineEvent,
-    index: number,
     onNavigate?: (id: string) => void,
     goToChatLabel: string,
 }) => {

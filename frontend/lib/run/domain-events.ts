@@ -1,133 +1,6 @@
 import { EventType, RunEvent } from "@/lib/kardcraft/types";
-import { CardData } from "./types";
-
-export type ControlErrorCode =
-    | "INVALID_TRANSITION"
-    | "TASK_NOT_FOUND"
-    | "SESSION_MISMATCH"
-    | "AUTHZ_DENIED"
-    | "CONFLICT"
-    | "TIMEOUT"
-    | "TRANSPORT_UNAVAILABLE"
-    | "INTERNAL";
-
-export type RunDomainEvent =
-    | {
-          kind: "task.created";
-          taskId: string;
-          sessionId: string;
-          query: string;
-          createdAt: string;
-      }
-    | {
-          kind: "workflow.started";
-          workflowId: string;
-          sessionId: string | null;
-          at: string;
-      }
-    | {
-          kind: "workflow.completed";
-          workflowId: string;
-          sessionId: string | null;
-          at: string;
-          result?: unknown;
-      }
-    | {
-          kind: "workflow.failed";
-          workflowId: string;
-          sessionId: string | null;
-          at: string;
-          reasonCode: string;
-          message: string;
-      }
-    | {
-          kind: "message.delta";
-          workflowId: string;
-          messageId: string;
-          delta: string;
-          seq?: number;
-          at: string;
-      }
-    | {
-          kind: "message.completed";
-          workflowId: string;
-          messageId: string;
-          content: string;
-          metadata?: Record<string, unknown>;
-          at: string;
-      }
-    | {
-          kind: "timeline.event";
-          workflowId: string;
-          eventId: string;
-          eventKind: string;
-          payload?: unknown;
-          at: string;
-          message?: string;
-          agentId?: string;
-          seq?: number;
-      }
-    | {
-          kind: "workspace.updated";
-          sessionId: string;
-          version: number;
-          cards: CardData[];
-          at: string;
-      }
-    | {
-          kind: "control.pause.requested";
-          taskId: string;
-          sessionId: string | null;
-          at: string;
-      }
-    | {
-          kind: "control.resume.requested";
-          taskId: string;
-          sessionId: string | null;
-          at: string;
-      }
-    | {
-          kind: "control.cancel.requested";
-          taskId: string;
-          sessionId: string | null;
-          at: string;
-      }
-    | {
-          kind: "control.pause.confirmed";
-          taskId: string;
-          sessionId: string | null;
-          at: string;
-      }
-    | {
-          kind: "control.resume.confirmed";
-          taskId: string;
-          sessionId: string | null;
-          at: string;
-      }
-    | {
-          kind: "control.cancel.confirmed";
-          taskId: string;
-          sessionId: string | null;
-          at: string;
-      }
-    | {
-          kind: "control.rejected";
-          taskId: string;
-          sessionId: string | null;
-          code: ControlErrorCode;
-          message: string;
-          at: string;
-      };
-
-export type DomainEventRejectReason =
-    | "invalid_payload"
-    | "unknown_type"
-    | "missing_workflow_id"
-    | "unsupported_empty_message";
-
-export type DomainEventMapResult =
-    | { ok: true; event: RunDomainEvent }
-    | { ok: false; reason: DomainEventRejectReason; details?: string };
+import type { ControlErrorCode, DomainEventMapResult, RunDomainEvent } from "./domain-event-types";
+export type { ControlErrorCode, DomainEventMapResult, DomainEventRejectReason, RunDomainEvent } from "./domain-event-types";
 
 type WireEventInput = {
     eventType: string;
@@ -137,64 +10,6 @@ type WireEventInput = {
     at: string;
     eventId: string;
 };
-
-const TIMELINE_EVENT_TYPES = new Set<string>([
-    "WORKFLOW_PROGRESS",
-    "NODE_STARTED",
-    "NODE_COMPLETED",
-    "NODE_FAILED",
-    "LANGGRAPH_PROGRESS",
-    "AGENT_THINKING",
-    "AGENT_STARTED",
-    "AGENT_COMPLETED",
-    "LLM_PROMPT",
-    "LLM_OUTPUT",
-    "PROGRESS",
-    "DELEGATION",
-    "DATA_PROCESSING",
-    "TOOL_INVOKED",
-    "TOOL_OBSERVATION",
-    "SYNTHESIS",
-    "REFLECTION",
-    "ROLE_ASSIGNED",
-    "TEAM_RECRUITED",
-    "TEAM_RETIRED",
-    "TEAM_STATUS",
-    "WAITING",
-    "ERROR_RECOVERY",
-    "ERROR_OCCURRED",
-    "BUDGET_THRESHOLD",
-    "DEPENDENCY_SATISFIED",
-    "APPROVAL_REQUESTED",
-    "APPROVAL_DECISION",
-    "MESSAGE_SENT",
-    "MESSAGE_RECEIVED",
-    "WORKSPACE_UPDATED",
-    "STATUS_UPDATE",
-    "workflow.pausing",
-    "workflow.resuming",
-    "workflow.cancelling",
-]);
-
-const KNOWN_EVENT_TYPES = new Set<string>([
-    "thread.message.delta",
-    "thread.message.completed",
-    "WORKFLOW_STARTED",
-    "WORKFLOW_COMPLETED",
-    "WORKFLOW_FAILED",
-    "WORKFLOW_CANCELLED",
-    "workflow.started",
-    "workflow.completed",
-    "workflow.failed",
-    "workflow.paused",
-    "workflow.resuming",
-    "workflow.resumed",
-    "workflow.cancelled",
-    "error",
-    "done",
-    "STREAM_END",
-    ...TIMELINE_EVENT_TYPES,
-]);
 
 function asString(value: unknown): string | null {
     if (typeof value !== "string") return null;
@@ -246,6 +61,17 @@ function resolveSessionId(payload: Record<string, unknown>, fallbackSessionId?: 
     return fallbackSessionId || null;
 }
 
+function resolveRunId(payload: Record<string, unknown>): string | null {
+    const fromTopLevel = asString(payload.run_id);
+    if (fromTopLevel) return fromTopLevel;
+    const nestedPayload = payload.payload;
+    if (nestedPayload && typeof nestedPayload === "object") {
+        const nestedRunId = asString((nestedPayload as Record<string, unknown>).run_id);
+        if (nestedRunId) return nestedRunId;
+    }
+    return null;
+}
+
 function normalizeCompletedContent(payload: Record<string, unknown>): string {
     const response = asString(payload.response);
     if (response) return response;
@@ -264,25 +90,52 @@ function normalizeCompletedContent(payload: Record<string, unknown>): string {
             return "";
         }
     }
+    const nestedPayload = payload.payload;
+    if (nestedPayload && typeof nestedPayload === "object") {
+        const nested = nestedPayload as Record<string, unknown>;
+        const nestedResponse = asString(nested.response);
+        if (nestedResponse) return nestedResponse;
+        const nestedMessage = asString(nested.message);
+        if (nestedMessage) return nestedMessage;
+        const nestedText = asString(nested.text);
+        if (nestedText) return nestedText;
+        const nestedContent = nested.content;
+        if (typeof nestedContent === "string" && nestedContent.trim().length > 0) return nestedContent;
+    }
     return "";
+}
+
+function terminalResultPayload(payload: Record<string, unknown>): unknown {
+    if (payload.result !== undefined) return payload.result;
+    if (payload.final_output !== undefined) return payload.final_output;
+    if (
+        payload.message !== undefined ||
+        payload.response !== undefined ||
+        payload.content !== undefined ||
+        payload.final_cards !== undefined ||
+        payload.metadata !== undefined
+    ) {
+        return payload;
+    }
+    return undefined;
 }
 
 export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMapResult {
     const { eventType, payload, fallbackWorkflowId, fallbackSessionId, at, eventId } = input;
-    if (!KNOWN_EVENT_TYPES.has(eventType)) {
-        return { ok: false, reason: "unknown_type", details: eventType };
-    }
-
     const workflowId = resolveWorkflowId(payload, fallbackWorkflowId);
     const sessionId = resolveSessionId(payload, fallbackSessionId);
+    const runId = resolveRunId(payload);
     if (!workflowId) {
         return { ok: false, reason: "missing_workflow_id", details: eventType };
     }
+    if (!runId) {
+        return { ok: false, reason: "invalid_payload", details: "missing run_id" };
+    }
 
     if (eventType === "WORKFLOW_STARTED" || eventType === "workflow.started") {
-        return { ok: true, event: { kind: "workflow.started", workflowId, sessionId, at } };
+        return { ok: true, event: { kind: "workflow.started", workflowId, sessionId, at, runId } };
     }
-    if (eventType === "WORKFLOW_COMPLETED" || eventType === "workflow.completed" || eventType === "done" || eventType === "STREAM_END") {
+    if (eventType === "WORKFLOW_COMPLETED" || eventType === "workflow.completed") {
         return {
             ok: true,
             event: {
@@ -290,7 +143,26 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
                 workflowId,
                 sessionId,
                 at,
-                result: payload.result ?? payload.final_output,
+                runId,
+                result: terminalResultPayload(payload),
+            },
+        };
+    }
+    if (eventType === "done" || eventType === "STREAM_END") {
+        return {
+            ok: true,
+            event: {
+                kind: "timeline.event",
+                workflowId,
+                eventId,
+                eventKind: eventType,
+                streamId: asString(payload.stream_id) || undefined,
+                payload,
+                at,
+                message: asString(payload.message) || undefined,
+                agentId: asString(payload.agent_id) || undefined,
+                seq: asNumber(payload.seq),
+                runId,
             },
         };
     }
@@ -304,13 +176,16 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
                 workflowId,
                 sessionId,
                 at,
+                runId,
                 reasonCode,
                 message,
             },
         };
     }
     if (eventType === "thread.message.delta") {
-        const delta = asString(payload.delta);
+        const delta = typeof payload.delta === "string" && payload.delta.length > 0
+            ? payload.delta
+            : null;
         if (!delta) {
             return { ok: false, reason: "invalid_payload", details: "missing delta" };
         }
@@ -323,6 +198,7 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
                 delta,
                 seq: asNumber(payload.seq),
                 at,
+                runId,
             },
         };
     }
@@ -343,26 +219,62 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
                 content,
                 metadata,
                 at,
+                runId,
             },
         };
     }
-    if (eventType === "workflow.pausing") {
-        return { ok: true, event: { kind: "control.pause.requested", taskId: workflowId, sessionId, at } };
-    }
-    if (eventType === "workflow.resuming") {
-        return { ok: true, event: { kind: "control.resume.requested", taskId: workflowId, sessionId, at } };
-    }
-    if (eventType === "workflow.cancelling") {
-        return { ok: true, event: { kind: "control.cancel.requested", taskId: workflowId, sessionId, at } };
-    }
-    if (eventType === "workflow.paused") {
-        return { ok: true, event: { kind: "control.pause.confirmed", taskId: workflowId, sessionId, at } };
-    }
-    if (eventType === "workflow.resumed") {
-        return { ok: true, event: { kind: "control.resume.confirmed", taskId: workflowId, sessionId, at } };
+    if (eventType === "LLM_OUTPUT") {
+        const content = normalizeCompletedContent(payload);
+        if (!content.trim()) {
+            return {
+                ok: true,
+                event: {
+                    kind: "timeline.event",
+                    workflowId,
+                    eventId,
+                    eventKind: eventType,
+                    streamId: asString(payload.stream_id) || undefined,
+                    payload: payload.payload,
+                    at,
+                    message: asString(payload.message) || undefined,
+                    agentId: asString(payload.agent_id) || undefined,
+                    seq: asNumber(payload.seq),
+                    runId,
+                },
+            };
+        }
+        return {
+            ok: true,
+            event: {
+                kind: "message.completed",
+                workflowId,
+                messageId: asString(payload.stream_id) || eventId,
+                content,
+                metadata: payload.metadata && typeof payload.metadata === "object"
+                    ? (payload.metadata as Record<string, unknown>)
+                    : undefined,
+                at,
+                runId,
+            },
+        };
     }
     if (eventType === "workflow.cancelled" || eventType === "WORKFLOW_CANCELLED") {
-        return { ok: true, event: { kind: "control.cancel.confirmed", taskId: workflowId, sessionId, at } };
+        return { ok: true, event: { kind: "control.cancel.confirmed", taskId: workflowId, sessionId, at, runId } };
+    }
+
+    if (eventType === "WORKSPACE_UPDATED") {
+        const version = typeof payload.version === "number" ? payload.version : 1;
+        const cards = Array.isArray(payload.cards) ? payload.cards : [];
+        return {
+            ok: true,
+            event: {
+                kind: "workspace.updated",
+                sessionId: sessionId || "unknown",
+                version,
+                cards,
+                at,
+            } as RunDomainEvent,
+        };
     }
 
     return {
@@ -372,11 +284,13 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
             workflowId,
             eventId,
             eventKind: eventType,
-            payload: payload.payload,
+            streamId: asString(payload.stream_id) || undefined,
+            payload,
             at,
             message: asString(payload.message) || undefined,
             agentId: asString(payload.agent_id) || undefined,
             seq: asNumber(payload.seq),
+            runId,
         },
     };
 }
@@ -409,8 +323,13 @@ const EVENT_TYPES: EventType[] = [
     "AGENT_THINKING",
     "LLM_PROMPT",
     "LLM_OUTPUT",
+    "LLM_PARTIAL",
+    "LLM_USAGE_RECORDED",
     "DATA_PROCESSING",
     "PROGRESS",
+    "LANGGRAPH_PROGRESS",
+    "SYNTHESIS",
+    "REFLECTION",
     "WAITING",
     "APPROVAL_REQUESTED",
     "APPROVAL_DECISION",
@@ -435,15 +354,16 @@ function asEventType(value: string): EventType | null {
 
 export function projectDomainEventToRunEvent(event: RunDomainEvent): RunEvent | null {
     if (event.kind === "workflow.started") {
-        return { type: "WORKFLOW_STARTED", workflow_id: event.workflowId, timestamp: event.at };
+        return { type: "WORKFLOW_STARTED", workflow_id: event.workflowId, run_id: event.runId || undefined, timestamp: event.at };
     }
     if (event.kind === "workflow.completed") {
-        return { type: "WORKFLOW_COMPLETED", workflow_id: event.workflowId, timestamp: event.at };
+        return { type: "WORKFLOW_COMPLETED", workflow_id: event.workflowId, run_id: event.runId || undefined, timestamp: event.at };
     }
     if (event.kind === "workflow.failed") {
         return {
             type: "WORKFLOW_FAILED",
             workflow_id: event.workflowId,
+            run_id: event.runId || undefined,
             timestamp: event.at,
             message: event.message,
             error_code: event.reasonCode,
@@ -453,6 +373,7 @@ export function projectDomainEventToRunEvent(event: RunDomainEvent): RunEvent | 
         return {
             type: "thread.message.delta",
             workflow_id: event.workflowId,
+            run_id: event.runId || undefined,
             stream_id: event.messageId,
             timestamp: event.at,
             delta: event.delta,
@@ -463,6 +384,7 @@ export function projectDomainEventToRunEvent(event: RunDomainEvent): RunEvent | 
         return {
             type: "thread.message.completed",
             workflow_id: event.workflowId,
+            run_id: event.runId || undefined,
             stream_id: event.messageId,
             timestamp: event.at,
             content: event.content,
@@ -474,8 +396,10 @@ export function projectDomainEventToRunEvent(event: RunDomainEvent): RunEvent | 
         if (!type) return null;
         return {
             type,
+            id: asNumber(event.eventId),
             workflow_id: event.workflowId,
-            stream_id: event.eventId,
+            run_id: event.runId || undefined,
+            stream_id: event.streamId || event.eventId,
             timestamp: event.at,
             payload: event.payload,
             message: event.message,
@@ -483,28 +407,14 @@ export function projectDomainEventToRunEvent(event: RunDomainEvent): RunEvent | 
             seq: event.seq,
         } as RunEvent;
     }
-    if (event.kind === "control.pause.requested") {
-        return { type: "workflow.pausing", workflow_id: event.taskId, timestamp: event.at };
-    }
-    if (event.kind === "control.resume.requested") {
-        return { type: "workflow.resuming", workflow_id: event.taskId, timestamp: event.at };
-    }
-    if (event.kind === "control.cancel.requested") {
-        return { type: "workflow.cancelling", workflow_id: event.taskId, timestamp: event.at };
-    }
-    if (event.kind === "control.pause.confirmed") {
-        return { type: "workflow.paused", workflow_id: event.taskId, timestamp: event.at };
-    }
-    if (event.kind === "control.resume.confirmed") {
-        return { type: "workflow.resumed", workflow_id: event.taskId, timestamp: event.at };
-    }
     if (event.kind === "control.cancel.confirmed") {
-        return { type: "workflow.cancelled", workflow_id: event.taskId, timestamp: event.at };
+        return { type: "workflow.cancelled", workflow_id: event.taskId, run_id: event.runId || undefined, timestamp: event.at };
     }
     if (event.kind === "control.rejected") {
         return {
             type: "error",
             workflow_id: event.taskId,
+            run_id: event.runId || undefined,
             timestamp: event.at,
             message: event.message,
             code: event.code,
@@ -530,12 +440,14 @@ export function mapControlErrorToDomainEvent(input: {
     sessionId: string | null;
     message: string;
     code?: string | null;
+    runId?: string | null;
     at?: string;
 }): RunDomainEvent {
     return {
         kind: "control.rejected",
         taskId: input.taskId,
         sessionId: input.sessionId,
+        runId: input.runId || null,
         code: normalizeControlErrorCode(input.code || null),
         message: input.message,
         at: input.at || new Date().toISOString(),

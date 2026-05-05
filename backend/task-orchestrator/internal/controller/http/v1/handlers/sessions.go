@@ -392,6 +392,8 @@ func handleSessionTimeline(w http.ResponseWriter, r *http.Request, sessionID str
 	}
 	selected := make([]map[string]any, 0, len(events))
 	for _, ev := range events {
+		payload := parsePayloadText(ev.Payload)
+		eventPayload, runID := timelineEventPayload(payload)
 		item := map[string]any{
 			"id":        ev.ID,
 			"type":      ev.Type,
@@ -403,6 +405,9 @@ func handleSessionTimeline(w http.ResponseWriter, r *http.Request, sessionID str
 		if ev.Workflow != nil {
 			item["workflow_id"] = *ev.Workflow
 		}
+		if runID != "" {
+			item["run_id"] = runID
+		}
 		if ev.TaskID != nil {
 			item["task_id"] = *ev.TaskID
 		}
@@ -410,7 +415,7 @@ func handleSessionTimeline(w http.ResponseWriter, r *http.Request, sessionID str
 			item["stream_id"] = *ev.StreamID
 		}
 		if includePayload {
-			item["payload"] = parsePayloadText(ev.Payload)
+			item["payload"] = eventPayload
 		}
 		selected = append(selected, item)
 	}
@@ -419,6 +424,29 @@ func handleSessionTimeline(w http.ResponseWriter, r *http.Request, sessionID str
 		status = "hydrated"
 	}
 	deps.WriteJSON(w, http.StatusOK, map[string]any{"session_id": sessionID, "events": selected, "projection_status": status})
+}
+
+func timelineEventPayload(payload any) (any, string) {
+	record, ok := payload.(map[string]any)
+	if !ok {
+		return payload, ""
+	}
+	runID := strings.TrimSpace(stringField(record, "run_id"))
+	if nested, ok := record["payload"].(map[string]any); ok {
+		if runID == "" {
+			runID = strings.TrimSpace(stringField(nested, "run_id"))
+		}
+		return nested, runID
+	}
+	return record, runID
+}
+
+func stringField(record map[string]any, key string) string {
+	value, ok := record[key].(string)
+	if !ok {
+		return ""
+	}
+	return value
 }
 
 func handleSessionHistory(w http.ResponseWriter, r *http.Request, sessionID string, deps SessionsDeps) {

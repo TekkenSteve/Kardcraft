@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { cancelTask, pauseTask, resumeTask } from "./api";
+import { cancelTask, getStreamUrlForWorkflows, pauseTask, resumeTask } from "./api";
 
 describe("task control api contract", () => {
     const fetchMock = vi.fn();
@@ -56,5 +56,12 @@ describe("task control api contract", () => {
         );
 
         await expect(cancelTask("t1")).rejects.toThrow("authz-denied");
+    });
+
+    it("keeps an explicit zero SSE cursor when replay is requested", () => {
+        expect(getStreamUrlForWorkflows(["wf-1"], { lastEventID: 0 })).toBe("/api/v1/stream/sse?workflow_id=wf-1");
+        expect(getStreamUrlForWorkflows(["wf-1"], { lastEventID: 0, includeLastEventID: true })).toBe(
+            "/api/v1/stream/sse?workflow_id=wf-1&last_event_id=0",
+        );
     });
 });

@@ -1,11 +1,6 @@
-import { UploadResponse, TaskWithFilesRequest, PresignedUrlResponse, ConfirmUploadResponse } from './types';
+import { UploadResponse, TaskWithFilesRequest } from './types';
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_PATH || '').replace(/\/$/, '');
-const FILE_STORAGE_URL = (
-  process.env.NEXT_PUBLIC_FILE_STORAGE_URL ||
-  `${API_BASE_URL}/api/v1/files` ||
-  '/api/v1/files'
-).replace(/\/$/, '');
 
 function getAuthHeaders(): Record<string, string> {
   return {};
@@ -36,47 +31,47 @@ async function withRetry<T>(
 
 export class FileUploadAPI {
   private baseUrl: string;
-  private fileStorageUrl: string;
 
-  constructor(baseUrl: string = API_BASE_URL, fileStorageUrl: string = FILE_STORAGE_URL) {
+  constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
-    this.fileStorageUrl = fileStorageUrl;
   }
 
   /**
-   * Upload file using presigned URL flow:
-   * 1. Get presigned URL from file-storage
-   * 2. PUT file directly to MinIO
-   * 3. Confirm upload with file-storage
+   * Upload file through same-origin backend endpoints.
+   * 1. init upload session
+   * 2. upload chunks
+   * 3. complete upload and get file_id
    */
   async uploadFile(
     file: File,
     sessionId?: string,
     onProgress?: (progress: number) => void,
   ): Promise<UploadResponse> {
-    await this.healthCheck();
+    const chunkSize = 5 * 1024 * 1024;
+    const chunkCount = Math.max(1, Math.ceil(file.size / chunkSize));
+    const initResponse = await withRetry(() => this.initUpload(file.name, chunkCount, sessionId));
+    const uploadId = initResponse.upload_id;
 
-    // Step 1: Get presigned URL
-    const presignedData = await withRetry(() =>
-      this.getPresignedUrl(file.name, file.type, sessionId)
-    );
+    let uploadedBytes = 0;
+    for (let index = 0; index < chunkCount; index += 1) {
+      const start = index * chunkSize;
+      const end = Math.min(file.size, start + chunkSize);
+      const chunk = file.slice(start, end);
+      await withRetry(() => this.uploadChunk(uploadId, index, chunk));
+      uploadedBytes += chunk.size;
+      if (onProgress) {
+        onProgress((uploadedBytes / file.size) * 100);
+      }
+    }
 
-    // Step 2: Upload directly to MinIO using presigned URL
-    await withRetry(() =>
-      this.uploadToPresignedUrl(presignedData.url, file, onProgress)
-    );
-
-    // Step 3: Confirm upload
-    const confirmation = await withRetry(() =>
-      this.confirmUpload(presignedData.file_id, presignedData.key, file.type)
-    );
-
-    if (!confirmation.success) {
-      throw new Error(confirmation.message || 'Upload confirmation failed');
+    const completion = await withRetry(() => this.completeUpload(uploadId));
+    const fileId = String(completion.file_id || "").trim();
+    if (!fileId) {
+      throw new Error("Upload completed but file_id is missing");
     }
 
     return {
-      file_id: presignedData.file_id,
+      file_id: fileId,
       filename: file.name,
       size: file.size,
       mime_type: file.type,
@@ -84,125 +79,72 @@ export class FileUploadAPI {
     };
   }
 
-  /**
-   * Get presigned URL from file-storage service.
-   */
-  private async getPresignedUrl(
-    filename: string,
-    contentType: string,
-    sessionId?: string
-  ): Promise<PresignedUrlResponse> {
-    const params = new URLSearchParams({
-      filename,
-      content_type: contentType,
-    });
-    if (sessionId) {
-      params.append('session_id', sessionId);
-    }
-
-    const response = await fetch(`${this.fileStorageUrl}/presigned-url?${params}`, {
-      method: 'GET',
-      headers: getAuthHeaders(),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to get presigned URL: ${response.statusText} - ${errorText}`);
-    }
-
-    return response.json();
-  }
-
-  /**
-   * Upload file directly to MinIO using presigned URL.
-   */
-  private async uploadToPresignedUrl(
-    url: string,
-    file: File,
-    onProgress?: (progress: number) => void
-  ): Promise<void> {
-    return new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest();
-
-      xhr.upload.addEventListener('progress', (event) => {
-        if (event.lengthComputable && onProgress) {
-          const progress = (event.loaded / event.total) * 100;
-          onProgress(progress);
-        }
-      });
-
-      xhr.addEventListener('load', () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve();
-        } else {
-          reject(new Error(`Upload failed: ${xhr.statusText}`));
-        }
-      });
-
-      xhr.addEventListener('error', () => {
-        reject(new Error('Network error during upload'));
-      });
-
-      xhr.addEventListener('abort', () => {
-        reject(new Error('Upload cancelled'));
-      });
-
-      xhr.open('PUT', url);
-      xhr.setRequestHeader('Content-Type', file.type);
-      xhr.send(file);
-    });
-  }
-
-  /**
-   * Confirm upload completion with file-storage.
-   */
-  private async confirmUpload(
-    fileId: string,
-    key: string,
-    contentType: string
-  ): Promise<ConfirmUploadResponse> {
-    const response = await fetch(`${this.fileStorageUrl}/confirm-upload`, {
+  private async initUpload(filename: string, chunkCount: number, sessionId?: string): Promise<{ upload_id: string }> {
+    const response = await fetch(`${this.baseUrl}/api/v1/files/upload/init`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         ...getAuthHeaders(),
       },
+      credentials: 'include',
       body: JSON.stringify({
-        file_id: fileId,
-        key: key,
-        content_type: contentType,
+        filename,
+        chunk_count: chunkCount,
+        session_id: sessionId,
       }),
     });
-
     if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Upload confirmation failed: ${response.statusText} - ${errorText}`);
+      throw new Error(`Failed to initialize upload: ${response.status} ${response.statusText}`);
     }
-
     return response.json();
   }
 
-  async healthCheck(): Promise<void> {
-    const response = await fetch(`${this.fileStorageUrl}/health`, {
-      method: 'GET',
+  private async uploadChunk(uploadId: string, chunkIndex: number, chunk: Blob): Promise<void> {
+    const response = await fetch(`${this.baseUrl}/api/v1/files/upload/chunk/${encodeURIComponent(uploadId)}/${chunkIndex}`, {
+      method: 'POST',
       headers: getAuthHeaders(),
+      credentials: 'include',
+      body: chunk,
     });
     if (!response.ok) {
-      throw new Error(`文件服务不可用: ${response.status} ${response.statusText}`);
+      const errorText = await response.text();
+      throw new Error(`Failed to upload chunk ${chunkIndex}: ${response.status} ${response.statusText} - ${errorText}`);
     }
   }
 
+  private async completeUpload(uploadId: string): Promise<{ file_id: string }> {
+    const response = await fetch(`${this.baseUrl}/api/v1/files/upload/complete/${encodeURIComponent(uploadId)}`, {
+      method: 'POST',
+      headers: getAuthHeaders(),
+      credentials: 'include',
+    });
+    if (!response.ok) {
+      const errorText = await response.text();
+      throw new Error(`Failed to complete upload: ${response.status} ${response.statusText} - ${errorText}`);
+    }
+    return response.json();
+  }
+
   async submitTaskWithFiles(request: TaskWithFilesRequest) {
+    const taskType = request.task_type || "main";
+    const input: Record<string, unknown> = {
+      session_id: request.session_id,
+      file_ids: request.file_ids,
+      attachments: request.attachments,
+      research_strategy: request.research_strategy,
+    };
+    if (taskType === "card_template") {
+      const templateId = request.template_id || (typeof request.context?.template_id === "string" ? request.context.template_id : "");
+      input.template_id = templateId;
+      input.variables = request.context;
+    } else {
+      input.context = request.context;
+    }
+
     const payload = {
-      task_type: request.task_type || "main",
+      task_type: taskType,
       query: request.query,
-      input: {
-        session_id: request.session_id,
-        file_ids: request.file_ids,
-        attachments: request.attachments,
-        context: request.context,
-        research_strategy: request.research_strategy,
-      },
+      input,
     };
 
     const response = await fetch(`${this.baseUrl}/api/v1/tasks`, {
@@ -224,25 +166,15 @@ export class FileUploadAPI {
   }
 
   async deleteFile(fileId: string): Promise<void> {
-    const response = await fetch(`${this.fileStorageUrl}/${fileId}`, {
-      method: 'DELETE',
-      headers: getAuthHeaders(),
-    });
-
-    if (response.status === 404) {
-      // Treat already-deleted/non-existent files as a successful cleanup.
-      return;
-    }
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      throw new Error(`Failed to delete file: ${response.status} ${response.statusText} - ${errorText}`);
-    }
+    // Same-origin upload flow currently has no delete endpoint.
+    // Keep this method idempotent so callers can perform cleanup safely.
+    void fileId;
   }
 
   async getFilePreview(fileId: string): Promise<string> {
     const response = await fetch(`${this.baseUrl}/api/v1/files/${fileId}/preview`, {
       headers: getAuthHeaders(),
+      credentials: 'include',
     });
 
     if (!response.ok) {

@@ -1,249 +1,282 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { Button } from "@/components/ui/button";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogHeader,
+    DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, AlertCircle } from "lucide-react";
 import {
-  ory,
-  type LoginFlow,
-  type UpdateLoginFlowBody,
+    ory,
+    type LoginFlow,
+    type UpdateLoginFlowBody,
 } from "@/lib/kratos/client";
 import { isUiNodeInputAttributes } from "@ory/integrations/ui";
+import { useSessionCommands, useSessionSelector } from "@/lib/session/system";
 
 interface LoginDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  onSuccess: () => void;
-  onSwitchToRegister: () => void;
+    open: boolean;
+    onOpenChange: (open: boolean) => void;
+    onSuccess: () => void;
+    onSwitchToRegister: () => void;
 }
 
-export function LoginDialog({
-  open,
-  onOpenChange,
-  onSuccess,
-  onSwitchToRegister,
-}: LoginDialogProps) {
-  const [flow, setFlow] = useState<LoginFlow | null>(null);
-  const [formData, setFormData] = useState<Record<string, any>>({});
-  const [loading, setLoading] = useState(false);
-  const [errors, setErrors] = useState<string[]>([]);
+type HttpError = {
+    message?: string;
+    response?: {
+        status?: number;
+        data?: unknown;
+    };
+};
 
-  useEffect(() => {
-    if (open && !flow) {
-      initFlow();
-    }
-  }, [open]);
+const extractHttpError = (value: unknown): HttpError | null => {
+    if (!value || typeof value !== "object") return null;
+    return value as HttpError;
+};
 
-  const initFlow = async () => {
-    try {
-      const { data } = await ory.createBrowserLoginFlow();
-      setFlow(data);
-      setErrors([]);
+const collectFlowErrors = (flowData: unknown): string[] => {
+    if (!flowData || typeof flowData !== "object") return [];
+    const record = flowData as { ui?: { messages?: Array<{ type?: string; text?: string }>; nodes?: Array<{ messages?: Array<{ type?: string; text?: string }> }> } };
 
-      // Initialize form data with default values from the flow
-      const initialData: Record<string, any> = {};
-      data.ui.nodes.forEach((node) => {
-        if (isUiNodeInputAttributes(node.attributes)) {
-          if (node.attributes.type !== "button" && node.attributes.type !== "submit") {
-            initialData[node.attributes.name] = node.attributes.value || "";
-          }
+    const errors: string[] = [];
+    const formMessages = record.ui?.messages ?? [];
+    formMessages.forEach((message) => {
+        if (message.type === "error" && typeof message.text === "string") {
+            errors.push(message.text);
         }
-      });
-      setFormData(initialData);
-    } catch (error) {
-      console.error("Failed to create login flow:", error);
-      const errorMessage = error instanceof Error ? error.message : "Unknown error";
-      setErrors([`Failed to initialize login: ${errorMessage}`]);
-    }
-  };
+    });
 
-  const handleInputChange = (name: string, value: string) => {
-    setFormData(prev => ({
-      ...prev,
-      [name]: value
-    }));
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!flow) return;
-
-    setLoading(true);
-    setErrors([]);
-
-    try {
-      // Get the method value from the submit button
-      const submitButton = getSubmitButton();
-      const method = (submitButton?.attributes as any)?.value || "password";
-
-      // Add method field to form data
-      const submitData = {
-        ...formData,
-        method: method
-      };
-
-      console.log("Submitting login data:", submitData);
-
-      const { data } = await ory.updateLoginFlow({
-        flow: flow.id,
-        updateLoginFlowBody: submitData as UpdateLoginFlowBody,
-      });
-
-      console.log("Login successful:", data);
-      
-      // Debug: Check if cookies were set
-      setTimeout(() => {
-        console.log("Cookies after login:", document.cookie);
-        const kratosSession = document.cookie.split(';').find(c => c.trim().startsWith('ory_kratos_session='));
-        console.log("Kratos session cookie:", kratosSession);
-      }, 100);
-      
-      onSuccess();
-      onOpenChange(false);
-      setFormData({});
-      setFlow(null);
-      
-      // Trigger a custom event to notify other components
-      window.dispatchEvent(new CustomEvent('auth-state-changed'));
-    } catch (error: any) {
-      console.error("Login error:", error);
-
-      if (error.response?.status === 400) {
-        // Form validation error - update flow with new data
-        setFlow(error.response.data);
-        const flowErrors: string[] = [];
-
-        if (error.response.data.ui?.messages) {
-          flowErrors.push(...error.response.data.ui.messages.filter((m: any) => m.type === "error").map((m: any) => m.text));
-        }
-
-        error.response.data.ui?.nodes?.forEach((node: any) => {
-          if (node.messages) {
-            flowErrors.push(...node.messages.filter((m: any) => m.type === "error").map((m: any) => m.text));
-          }
+    const nodes = record.ui?.nodes ?? [];
+    nodes.forEach((node) => {
+        (node.messages ?? []).forEach((message) => {
+            if (message.type === "error" && typeof message.text === "string") {
+                errors.push(message.text);
+            }
         });
+    });
 
-        setErrors(flowErrors);
-      } else {
-        setErrors([error.message || "Login failed. Please try again."]);
-      }
-    } finally {
-      setLoading(false);
-    }
-  };
+    return errors;
+};
 
-  const handleClose = () => {
-    onOpenChange(false);
-    setFormData({});
-    setErrors([]);
-    setFlow(null);
-  };
+export function LoginDialog({
+    open,
+    onOpenChange,
+    onSuccess,
+    onSwitchToRegister,
+}: LoginDialogProps) {
+    const [flow, setFlow] = useState<LoginFlow | null>(null);
+    const [formData, setFormData] = useState<Record<string, string>>({});
+    const [errors, setErrors] = useState<string[]>([]);
+    const [submitAttempted, setSubmitAttempted] = useState(false);
 
-  // Helper function to get input nodes
-  const getInputNodes = () => {
-    if (!flow) return [];
-    return flow.ui.nodes.filter(node =>
-      isUiNodeInputAttributes(node.attributes) &&
-      node.attributes.type !== "hidden" &&
-      node.attributes.type !== "submit" &&
-      node.attributes.type !== "button"
+    const isAuthenticating = useSessionSelector((snapshot) => snapshot.matches("authenticating"));
+    const isAuthenticated = useSessionSelector((snapshot) => snapshot.matches("authenticated"));
+    const lastError = useSessionSelector((snapshot) => snapshot.context.lastError);
+    const lastOperation = useSessionSelector((snapshot) => snapshot.context.lastOperation);
+    const { login, clearError } = useSessionCommands();
+
+    const initFlow = useCallback(async () => {
+        try {
+            const { data } = await ory.createBrowserLoginFlow();
+            setFlow(data);
+            setErrors([]);
+
+            const initialData: Record<string, string> = {};
+            data.ui.nodes.forEach((node) => {
+                if (!isUiNodeInputAttributes(node.attributes)) return;
+                if (node.attributes.type === "button" || node.attributes.type === "submit") return;
+                initialData[node.attributes.name] = typeof node.attributes.value === "string"
+                    ? node.attributes.value
+                    : "";
+            });
+            setFormData(initialData);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : "Unknown error";
+            setErrors([`Failed to initialize login: ${message}`]);
+        }
+    }, []);
+
+    const handleClose = useCallback(() => {
+        onOpenChange(false);
+        clearError();
+        setSubmitAttempted(false);
+        setFormData({});
+        setErrors([]);
+        setFlow(null);
+    }, [clearError, onOpenChange]);
+
+    useEffect(() => {
+        if (open && !flow) {
+            const timer = window.setTimeout(() => {
+                void initFlow();
+            }, 0);
+            return () => window.clearTimeout(timer);
+        }
+    }, [flow, initFlow, open]);
+
+    useEffect(() => {
+        if (!submitAttempted) return;
+        if (!isAuthenticated) return;
+
+        const timer = window.setTimeout(() => {
+            onSuccess();
+            handleClose();
+        }, 0);
+        return () => window.clearTimeout(timer);
+    }, [submitAttempted, isAuthenticated, onSuccess, handleClose]);
+
+    useEffect(() => {
+        if (!submitAttempted) return;
+        if (lastOperation !== "login") return;
+        if (!lastError) return;
+
+        const httpError = extractHttpError(lastError);
+        if (httpError?.response?.status === 400) {
+            const flowData = httpError.response.data;
+            if (flowData && typeof flowData === "object") {
+                const timer = window.setTimeout(() => {
+                    setFlow(flowData as LoginFlow);
+                    setErrors(collectFlowErrors(flowData));
+                }, 0);
+                return () => window.clearTimeout(timer);
+            }
+        }
+
+        const timer = window.setTimeout(() => {
+            setErrors([httpError?.message || "Login failed. Please try again."]);
+        }, 0);
+        return () => window.clearTimeout(timer);
+    }, [submitAttempted, lastOperation, lastError]);
+
+    const handleInputChange = (name: string, value: string) => {
+        setFormData((prev) => ({
+            ...prev,
+            [name]: value,
+        }));
+    };
+
+    const handleSubmit = (e: FormEvent) => {
+        e.preventDefault();
+        if (!flow) return;
+
+        const submitButton = getSubmitButton();
+        const submitValue = submitButton?.attributes;
+        const method = submitValue && isUiNodeInputAttributes(submitValue) && typeof submitValue.value === "string"
+            ? submitValue.value
+            : "password";
+
+        setSubmitAttempted(true);
+        setErrors([]);
+        clearError();
+
+        login({
+            flowId: flow.id,
+            body: {
+                ...formData,
+                method,
+            } as UpdateLoginFlowBody,
+        });
+    };
+
+    const getInputNodes = () => {
+        if (!flow) return [];
+        return flow.ui.nodes.filter((node) =>
+            isUiNodeInputAttributes(node.attributes) &&
+            node.attributes.type !== "hidden" &&
+            node.attributes.type !== "submit" &&
+            node.attributes.type !== "button",
+        );
+    };
+
+    const getSubmitButton = () => {
+        if (!flow) return null;
+        return flow.ui.nodes.find((node) =>
+            isUiNodeInputAttributes(node.attributes) &&
+            node.attributes.type === "submit",
+        ) ?? null;
+    };
+
+    return (
+        <Dialog open={open} onOpenChange={handleClose}>
+            <DialogContent className="sm:max-w-[425px]">
+                <DialogHeader>
+                    <DialogTitle>Sign In</DialogTitle>
+                    <DialogDescription>
+                        Enter your credentials to access your account
+                    </DialogDescription>
+                </DialogHeader>
+
+                <form onSubmit={handleSubmit} className="space-y-4">
+                    {errors.length > 0 && (
+                        <Alert variant="destructive">
+                            <AlertCircle className="h-4 w-4" />
+                            <AlertDescription>
+                                {errors.map((error, index) => (
+                                    <div key={`${error}-${index}`}>{error}</div>
+                                ))}
+                            </AlertDescription>
+                        </Alert>
+                    )}
+
+                    {getInputNodes().map((node) => {
+                        if (!isUiNodeInputAttributes(node.attributes)) return null;
+
+                        const { name, type, required, disabled } = node.attributes;
+                        const value = formData[name] || "";
+                        const hasError = node.messages.some((message) => message.type === "error");
+                        const label = node.meta.label?.text || name;
+
+                        return (
+                            <div key={name} className="space-y-2">
+                                <Label htmlFor={name}>
+                                    {label}
+                                    {required && <span className="text-red-500 ml-1">*</span>}
+                                </Label>
+                                <Input
+                                    id={name}
+                                    name={name}
+                                    type={type}
+                                    value={value}
+                                    onChange={(event) => handleInputChange(name, event.target.value)}
+                                    placeholder={(node.attributes as { placeholder?: string }).placeholder || ""}
+                                    required={required}
+                                    disabled={disabled || isAuthenticating}
+                                    className={hasError ? "border-red-500" : ""}
+                                />
+                                {node.messages.map((message, index) => (
+                                    <p key={`${name}-msg-${index}`} className={`text-sm ${message.type === "error" ? "text-red-500" : "text-gray-600"}`}>
+                                        {message.text}
+                                    </p>
+                                ))}
+                            </div>
+                        );
+                    })}
+
+                    <div className="flex flex-col gap-2">
+                        <Button type="submit" disabled={isAuthenticating || !flow} className="w-full">
+                            {isAuthenticating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            {getSubmitButton()?.meta.label?.text || "Sign In"}
+                        </Button>
+
+                        <Button
+                            type="button"
+                            variant="ghost"
+                            onClick={onSwitchToRegister}
+                            disabled={isAuthenticating}
+                            className="w-full"
+                        >
+                            Don&apos;t have an account? Sign up
+                        </Button>
+                    </div>
+                </form>
+            </DialogContent>
+        </Dialog>
     );
-  };
-
-  // Helper function to get submit button
-  const getSubmitButton = () => {
-    if (!flow) return null;
-    return flow.ui.nodes.find(node =>
-      isUiNodeInputAttributes(node.attributes) &&
-      node.attributes.type === "submit"
-    );
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={handleClose}>
-      <DialogContent className="sm:max-w-[425px]">
-        <DialogHeader>
-          <DialogTitle>Sign In</DialogTitle>
-          <DialogDescription>
-            Enter your credentials to access your account
-          </DialogDescription>
-        </DialogHeader>
-
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {errors.length > 0 && (
-            <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
-              <AlertDescription>
-                {errors.map((error, i) => (
-                  <div key={i}>{error}</div>
-                ))}
-              </AlertDescription>
-            </Alert>
-          )}
-
-          {/* Render input fields dynamically based on flow */}
-          {getInputNodes().map((node) => {
-            if (!isUiNodeInputAttributes(node.attributes)) return null;
-
-            const { name, type, required, disabled } = node.attributes;
-            const value = formData[name] || "";
-            const hasError = node.messages.some(m => m.type === "error");
-            const label = node.meta.label?.text || name;
-
-            return (
-              <div key={name} className="space-y-2">
-                <Label htmlFor={name}>
-                  {label}
-                  {required && <span className="text-red-500 ml-1">*</span>}
-                </Label>
-                <Input
-                  id={name}
-                  name={name}
-                  type={type}
-                  value={value}
-                  onChange={(e) => handleInputChange(name, e.target.value)}
-                  placeholder={(node.attributes as any).placeholder || ""}
-                  required={required}
-                  disabled={disabled || loading}
-                  className={hasError ? "border-red-500" : ""}
-                />
-                {node.messages.map((message, i) => (
-                  <p key={i} className={`text-sm ${message.type === "error" ? "text-red-500" : "text-gray-600"}`}>
-                    {message.text}
-                  </p>
-                ))}
-              </div>
-            );
-          })}
-
-          <div className="flex flex-col gap-2">
-            <Button type="submit" disabled={loading || !flow} className="w-full">
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {getSubmitButton()?.meta.label?.text || "Sign In"}
-            </Button>
-
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={onSwitchToRegister}
-              disabled={loading}
-              className="w-full"
-            >
-              Don&apos;t have an account? Sign up
-            </Button>
-          </div>
-        </form>
-      </DialogContent>
-    </Dialog>
-  );
 }

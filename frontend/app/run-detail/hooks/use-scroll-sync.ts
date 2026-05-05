@@ -13,10 +13,10 @@ export function useScrollSync({
     activeTab,
     userHasScrolledRef,
 }: {
-    timelineScrollRef: React.RefObject<HTMLDivElement>;
-    conversationScrollRef: React.RefObject<HTMLDivElement>;
+    timelineScrollRef: React.RefObject<HTMLDivElement | null>;
+    conversationScrollRef: React.RefObject<HTMLDivElement | null>;
     timelineEvents: TimelineDisplayEvent[];
-    runStatus: "idle" | "running" | "pausing" | "paused" | "cancelling" | "cancelled" | "completed" | "failed";
+    runStatus: "idle" | "running" | "pausing" | "paused" | "resuming" | "cancelling" | "cancelled" | "completed" | "failed";
     messages: RunMessage[];
     activeTab: string;
     userHasScrolledRef: React.MutableRefObject<boolean>;
@@ -40,7 +40,7 @@ export function useScrollSync({
 
         const handleScroll = () => {
             const isNearBottom = scrollContainer.scrollHeight - scrollContainer.scrollTop - scrollContainer.clientHeight < 100;
-            if (!isNearBottom && (runStatus === "running" || runStatus === "pausing")) {
+            if (!isNearBottom && (runStatus === "running" || runStatus === "pausing" || runStatus === "resuming")) {
                 userHasScrolledRef.current = true;
             }
             if (isNearBottom) {
@@ -53,16 +53,16 @@ export function useScrollSync({
     }, [runStatus, conversationScrollRef, userHasScrolledRef]);
 
     useEffect(() => {
-        if (runStatus === "running" || runStatus === "pausing") {
+        if (runStatus === "running" || runStatus === "pausing" || runStatus === "resuming") {
             const hasOnlyUserMessage = messages.length === 1 && messages[0]?.role === "user";
             if (hasOnlyUserMessage) {
                 userHasScrolledRef.current = false;
             }
         }
-    }, [runStatus, messages.length, userHasScrolledRef]);
+    }, [runStatus, messages, userHasScrolledRef]);
 
     useEffect(() => {
-        if (runStatus !== "running" && runStatus !== "pausing" && runStatus !== "cancelling" && runStatus !== "idle") return;
+        if (runStatus !== "running" && runStatus !== "pausing" && runStatus !== "resuming" && runStatus !== "cancelling" && runStatus !== "idle") return;
         if (userHasScrolledRef.current) return;
 
         if (conversationScrollRef.current && activeTab === "conversation") {

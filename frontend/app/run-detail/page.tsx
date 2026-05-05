@@ -1,42 +1,47 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useSessionCommands, useSessionSelector } from "@/lib/session/system";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo } from "react";
 import { RunDetailProvider } from "./run-detail-provider";
 import { RunDetailView } from "./run-detail-view";
-import { ory } from "@/lib/kratos/client";
 
 export default function RunDetailPage() {
     const router = useRouter();
     const searchParams = useSearchParams();
-    const [sessionReady, setSessionReady] = useState(false);
+    const { check } = useSessionCommands();
+    const isAuthenticated = useSessionSelector((snapshot) => snapshot.matches("authenticated"));
+    const isIdle = useSessionSelector((snapshot) => snapshot.matches("idle"));
+    const isBusy = useSessionSelector(
+        (snapshot) =>
+            snapshot.matches("checking") ||
+            snapshot.matches("authenticating") ||
+            snapshot.matches("refreshing"),
+    );
+    const hasKnownSession = useSessionSelector(
+        (snapshot) => snapshot.context.session !== null,
+    );
 
     const returnTo = useMemo(() => {
-        const query = searchParams.toString();
+        const query = searchParams?.toString() ?? "";
         return query ? `/run-detail?${query}` : "/run-detail";
     }, [searchParams]);
+    useEffect(() => {
+        check();
+    }, [check]);
 
     useEffect(() => {
-        let cancelled = false;
+        if (!isIdle || hasKnownSession) return;
+        router.replace(`/runs?auth_required=1&next=${encodeURIComponent(returnTo)}`);
+    }, [hasKnownSession, isIdle, returnTo, router]);
 
-        const verifySession = async () => {
-            try {
-                await ory.toSession();
-                if (cancelled) return;
-                setSessionReady(true);
-            } catch {
-                if (cancelled) return;
-                router.replace(`/runs?auth_required=1&next=${encodeURIComponent(returnTo)}`);
-            }
-        };
+    // Keep page mounted during transient auth checks (e.g. file picker focus/visibility changes),
+    // otherwise upload UI state is destroyed on each CHECK cycle.
+    if (!isAuthenticated && isBusy && !hasKnownSession) {
+        return null;
+    }
 
-        void verifySession();
-        return () => {
-            cancelled = true;
-        };
-    }, [returnTo, router]);
-
-    if (!sessionReady) {
+    if (!isAuthenticated && isIdle && !hasKnownSession) {
         return null;
     }
 

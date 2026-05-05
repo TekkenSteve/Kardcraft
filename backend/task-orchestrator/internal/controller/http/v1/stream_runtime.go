@@ -41,21 +41,78 @@ func (s *Server) appendTimelineWithStreamID(workflowID, sessionID, eventType, me
 	}
 	s.mu.Unlock()
 
+	runID := s.resolveRunID(context.Background(), workflowID, payload)
+	if runID == "" {
+		atomic.AddInt64(&s.invalidRuntimeEvents, 1)
+		return
+	}
+	if sessionID == "" && s.readModel != nil {
+		if resolvedSessionID, err := s.readModel.GetTaskSession(context.Background(), workflowID); err == nil {
+			sessionID = strings.TrimSpace(resolvedSessionID)
+		}
+	}
+	occurredAt := nowRFC3339()
+	seq := s.nextRunSeq(runID)
+	eventID := s.nextEventID()
+	payloadMap := map[string]any{}
+	if typed, ok := payload.(map[string]any); ok && typed != nil {
+		for key, value := range typed {
+			payloadMap[key] = value
+		}
+	}
+	if message != "" {
+		payloadMap["message"] = message
+	}
+	if _, ok := payloadMap["event_type"]; !ok {
+		payloadMap["event_type"] = eventType
+	}
+	if _, ok := payloadMap["workflow_id"]; !ok {
+		payloadMap["workflow_id"] = workflowID
+	}
+	if _, ok := payloadMap["run_id"]; !ok {
+		payloadMap["run_id"] = runID
+	}
+	if sessionID != "" {
+		payloadMap["session_id"] = sessionID
+	}
+	correlationID := correlationIDFromPayload(payloadMap, workflowID, runID)
+	if correlationID == "" {
+		atomic.AddInt64(&s.invalidRuntimeEvents, 1)
+		return
+	}
+	payloadMap["correlation_id"] = correlationID
+	payloadMap["event_id"] = fmt.Sprintf("%d", eventID)
+	payloadMap["schema_version"] = 1
+
 	ev := TimelineEvent{
-		ID:         s.nextEventID(),
+		ID:         eventID,
 		Type:       eventType,
 		Message:    message,
-		Timestamp:  nowRFC3339(),
+		Timestamp:  occurredAt,
 		WorkflowID: workflowID,
+		RunID:      runID,
+		SessionID:  sessionID,
+		Seq:        seq,
 		TaskID:     workflowID,
 		StreamID:   streamID,
-		Payload:    payload,
+		Payload:    payloadMap,
+	}
+	envelope := map[string]any{
+		"schema_version": 1,
+		"correlation_id": correlationID,
+		"event_id":       fmt.Sprintf("%d", eventID),
+		"run_id":      runID,
+		"workflow_id": workflowID,
+		"session_id":  sessionID,
+		"seq":         seq,
+		"occurred_at": occurredAt,
+		"event_type":  eventType,
+		"stream_id":   streamID,
+		"payload":     payloadMap,
 	}
 	payloadText := ""
-	if payload != nil {
-		if b, err := json.Marshal(payload); err == nil {
-			payloadText = string(b)
-		}
+	if b, err := json.Marshal(envelope); err == nil {
+		payloadText = string(b)
 	}
 	if s.readModel != nil && sessionID != "" {
 		_ = s.readModel.InsertEvent(
@@ -84,19 +141,121 @@ func (s *Server) appendTimelineWithStreamID(workflowID, sessionID, eventType, me
 	}
 	s.mu.Unlock()
 
-	var typedPayload map[string]any
-	if payload != nil {
-		if m, ok := payload.(map[string]any); ok {
-			typedPayload = m
-		}
-	}
-	buf, _ := timelineBroadcaster.BuildEventPayload(eventType, workflowID, workflowID, message, ev.Timestamp, ev.StreamID, typedPayload)
+	buf, _ := timelineBroadcaster.BuildEventPayload(
+		1,
+		correlationID,
+		fmt.Sprintf("%d", eventID),
+		workflowID,
+		runID,
+		sessionID,
+		occurredAt,
+		eventType,
+		ev.StreamID,
+		payloadMap,
+	)
 	for _, ch := range subs {
 		select {
 		case ch <- v1stream.OutboundEvent{ID: ev.ID, Event: eventType, Payload: buf}:
 		default:
 		}
 	}
+}
+
+func correlationIDFromPayload(payload map[string]any, workflowID string, runID string) string {
+	_ = workflowID
+	_ = runID
+	if payload != nil {
+		if value, ok := payload["correlation_id"].(string); ok {
+			trimmed := strings.TrimSpace(value)
+			if trimmed != "" {
+				return trimmed
+			}
+		}
+		if nested, ok := payload["payload"].(map[string]any); ok && nested != nil {
+			if value, ok := nested["correlation_id"].(string); ok {
+				trimmed := strings.TrimSpace(value)
+				if trimmed != "" {
+					return trimmed
+				}
+			}
+		}
+	}
+	return ""
+}
+
+func (s *Server) nextRunSeq(runID string) int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.runSeqByRunID == nil {
+		s.runSeqByRunID = make(map[string]int64)
+	}
+	next := s.runSeqByRunID[runID] + 1
+	s.runSeqByRunID[runID] = next
+	return next
+}
+
+func (s *Server) workflowRunID(workflowID string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return strings.TrimSpace(s.workflowRunByWorkflowID[workflowID])
+}
+
+func (s *Server) resolveRunID(ctx context.Context, workflowID string, payload any) string {
+	runID := runIDFromPayload(payload)
+	if runID != "" {
+		s.bindWorkflowRunID(workflowID, runID)
+		return runID
+	}
+	runID = s.workflowRunID(workflowID)
+	if runID != "" {
+		return runID
+	}
+	if s.workflowSvc == nil || !s.workflowSvc.Enabled() {
+		return ""
+	}
+	desc, err := s.workflowSvc.DescribeWorkflow(ctx, workflowID, "")
+	if err != nil || desc == nil {
+		return ""
+	}
+	runID = strings.TrimSpace(desc.RunID)
+	if runID != "" {
+		s.bindWorkflowRunID(workflowID, runID)
+	}
+	return runID
+}
+
+func (s *Server) bindWorkflowRunID(workflowID, runID string) {
+	if workflowID == "" || runID == "" {
+		return
+	}
+	s.mu.Lock()
+	if s.workflowRunByWorkflowID == nil {
+		s.workflowRunByWorkflowID = make(map[string]string)
+	}
+	s.workflowRunByWorkflowID[workflowID] = runID
+	s.mu.Unlock()
+}
+
+func runIDFromPayload(payload any) string {
+	obj, ok := payload.(map[string]any)
+	if !ok || obj == nil {
+		return ""
+	}
+	if runID, ok := obj["run_id"].(string); ok {
+		runID = strings.TrimSpace(runID)
+		if runID != "" {
+			return runID
+		}
+	}
+	if nested, ok := obj["payload"].(map[string]any); ok && nested != nil {
+		if runID, ok := nested["run_id"].(string); ok {
+			runID = strings.TrimSpace(runID)
+			if runID != "" {
+				return runID
+			}
+		}
+	}
+	return ""
 }
 
 func (s *Server) subscribe(workflowID string) (int, chan v1stream.OutboundEvent) {
@@ -204,6 +363,9 @@ func (s *Server) subscribeRedisStream(ctx context.Context, workflowID string) {
 		lastID = nextID
 		for _, msg := range entries {
 			normalized := normalizer.Normalize(ctx, workflowID, msg)
+			if runID := runIDFromPayload(normalized.Payload); runID != "" {
+				s.bindWorkflowRunID(normalized.WorkflowID, runID)
+			}
 			usageProjector.Project(ctx, normalized)
 			s.appendTimelineWithStreamID(
 				normalized.WorkflowID,

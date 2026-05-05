@@ -47,7 +47,7 @@ export function RadarBridge() {
 
   // Track previous status for detecting completion
   const prevStatusRef = useRef<string>(status);
-  const isLiveStatus = status === "running" || status === "paused" || status === "cancelling";
+  const isLiveStatus = status === "running" || status === "paused" || status === "resuming" || status === "cancelling";
 
   // Initialize/reset store when status changes to idle or starts a fresh live run.
   useEffect(() => {
@@ -286,9 +286,10 @@ export function RadarBridge() {
 
   // Cleanup on unmount
   useEffect(() => {
+    const timeoutMap = timeoutRefs.current;
     return () => {
-      for (const t of timeoutRefs.current.values()) window.clearTimeout(t);
-      timeoutRefs.current.clear();
+      for (const t of timeoutMap.values()) window.clearTimeout(t);
+      timeoutMap.clear();
     };
   }, []);
 

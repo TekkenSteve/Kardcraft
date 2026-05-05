@@ -552,17 +552,19 @@ func newCommandTestServerWithReadStore(store *fakeCommandStore, runtime *fakeCom
 	enabled := &fakeWorkflowRuntime{enabled: temporalEnabled}
 	readModel := usecase.NewReadModelService(readStore)
 	s := &Server{
-		mux:                http.NewServeMux(),
-		taskService:        taskService,
-		commandService:     commandService,
-		readModel:          readModel,
-		workflowSvc:        usecase.NewWorkflowService(enabled, &fakeReadModelStore{ready: true}),
-		redisSvc:           &fakeRedisStreamClient{enabled: false},
-		timelineByWorkflow: make(map[string][]TimelineEvent),
-		uploads:            make(map[string]*uploadState),
-		subscribers:        make(map[string]map[int]chan v1stream.OutboundEvent),
-		streamReaders:      make(map[string]context.CancelFunc),
-		seenStreamIDs:      make(map[string]map[string]struct{}),
+		mux:                     http.NewServeMux(),
+		taskService:             taskService,
+		commandService:          commandService,
+		readModel:               readModel,
+		workflowSvc:             usecase.NewWorkflowService(enabled, &fakeReadModelStore{ready: true}),
+		redisSvc:                &fakeRedisStreamClient{enabled: false},
+		timelineByWorkflow:      make(map[string][]TimelineEvent),
+		uploads:                 make(map[string]*uploadState),
+		subscribers:             make(map[string]map[int]chan v1stream.OutboundEvent),
+		streamReaders:           make(map[string]context.CancelFunc),
+		seenStreamIDs:           make(map[string]map[string]struct{}),
+		runSeqByRunID:           make(map[string]int64),
+		workflowRunByWorkflowID: make(map[string]string),
 	}
 	s.registerRoutes()
 	return s
@@ -633,7 +635,17 @@ type fakeWorkflowRuntime struct {
 
 func (f *fakeWorkflowRuntime) Enabled() bool { return f.enabled }
 func (f *fakeWorkflowRuntime) DescribeWorkflow(ctx context.Context, workflowID, runID string) (*ucdto.WorkflowDescription, error) {
-	return nil, errors.New("not implemented")
+	resolvedRunID := strings.TrimSpace(runID)
+	if resolvedRunID == "" {
+		resolvedRunID = "run-test"
+	}
+	now := time.Now().UTC()
+	return &ucdto.WorkflowDescription{
+		WorkflowID: workflowID,
+		RunID:      resolvedRunID,
+		Status:     "TASK_STATUS_RUNNING",
+		StartTime:  now,
+	}, nil
 }
 func (f *fakeWorkflowRuntime) GetWorkflowResult(ctx context.Context, workflowID, runID string) (any, error) {
 	return nil, errors.New("not implemented")

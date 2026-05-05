@@ -16,7 +16,7 @@ import { useRunDetailActions, useRunDetailData, useRunDetailUi } from "./run-det
 import { SummaryPanel } from "./summary-panel";
 
 export function RunDetailView() {
-    const { t, i18n } = useTranslation();
+    const { t } = useTranslation();
     const RunTimeline = React.useMemo(
         () =>
             dynamic(() => import("@/components/run-timeline").then(m => m.RunTimeline), {
@@ -26,7 +26,7 @@ export function RunDetailView() {
                     </div>
                 ),
             }),
-        [i18n.language, t]
+        [t]
     );
     const CardWorkspace = React.useMemo(
         () =>
@@ -37,7 +37,7 @@ export function RunDetailView() {
                     </div>
                 ),
             }),
-        [i18n.language, t]
+        [t]
     );
     const {
         sessionId,
@@ -63,7 +63,6 @@ export function RunDetailView() {
     } = useRunDetailUi();
     const {
         handleRetryStream,
-        handleFetchFinalOutputClick,
         scrollToMessage,
     } = useRunDetailActions();
 
@@ -123,9 +122,6 @@ export function RunDetailView() {
                         <Button variant="outline" size="sm" onClick={() => window.location.reload()}>
                             {t("common.reload")}
                         </Button>
-                        <Button size="sm" onClick={handleFetchFinalOutputClick}>
-                            {t("runDetail.fetchFinalOutput")}
-                        </Button>
                     </div>
                 </div>
             )}
@@ -148,7 +144,7 @@ export function RunDetailView() {
                                 </TabsTrigger>
                             </TabsList>
                             <div className="flex items-center gap-2">
-                                {(timelineEvents.length > 0 || runStatus === "running" || runStatus === "pausing" || runStatus === "paused" || runStatus === "cancelling") && (
+                                {(timelineEvents.length > 0 || runStatus === "running" || runStatus === "pausing" || runStatus === "paused" || runStatus === "resuming" || runStatus === "cancelling") && (
                                 <Button
                                     variant="outline"
                                     size="sm"

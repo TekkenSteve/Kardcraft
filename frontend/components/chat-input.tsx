@@ -22,7 +22,6 @@ import {
 } from "@/lib/kardcraft/api";
 import { cn } from "@/lib/utils";
 import { ChevronDown, LayoutTemplate, Loader2, Paperclip, Pause, Play, Save, Send, Sparkles, Square } from "lucide-react";
-import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -36,8 +35,14 @@ interface ChatInputProps {
     selectedAgent?: AgentSelection;
     onSelectedAgentChange?: (agent: AgentSelection) => void;
     initialResearchStrategy?: ResearchStrategy;
-    onTaskCreated?: (taskId: string, query: string, workflowId?: string, sessionId?: string, attachments?: Array<{fileId: string; filename: string; size: number; mimeType: string}>) => void;
-    currentTaskId?: string | null;
+    onTaskCreated: (
+        workflowId: string,
+        query: string,
+        newSessionId?: string,
+        attachments?: Array<{fileId: string; filename: string; size: number; mimeType: string}>,
+        runId?: string,
+    ) => void;
+    currentWorkflowId?: string | null;
     /** Use centered textarea layout for empty sessions */
     variant?: "default" | "centered";
     /** Task control props */
@@ -45,6 +50,10 @@ interface ChatInputProps {
     isPaused?: boolean;
     isPauseLoading?: boolean;
     isResumeLoading?: boolean;
+    showPause?: boolean;
+    showResume?: boolean;
+    showCancel?: boolean;
+    canControlTask?: boolean;
     isCancelling?: boolean;
     onPause?: () => void;
     onResume?: () => void;
@@ -53,6 +62,8 @@ interface ChatInputProps {
     enableFileUpload?: boolean;
     maxFiles?: number;
     maxFileSize?: number;
+    uploadedFiles?: UploadedFile[];
+    onUploadedFilesChange?: (files: UploadedFile[]) => void;
 }
 
 export function ChatInput({
@@ -62,12 +73,16 @@ export function ChatInput({
     onSelectedAgentChange,
     initialResearchStrategy = "quick",
     onTaskCreated,
-    currentTaskId = null,
+    currentWorkflowId = null,
     variant = "default",
     isTaskRunning = false,
     isPaused = false,
     isPauseLoading = false,
     isResumeLoading = false,
+    showPause,
+    showResume,
+    showCancel,
+    canControlTask = true,
     isCancelling = false,
     onPause,
     onResume,
@@ -75,33 +90,40 @@ export function ChatInput({
     enableFileUpload = true,
     maxFiles = 5,
     maxFileSize = 50 * 1024 * 1024, // 50MB
+    uploadedFiles: uploadedFilesProp,
+    onUploadedFilesChange,
 }: ChatInputProps) {
     const { t } = useTranslation();
     const [query, setQuery] = useState("");
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [isFilePanelOpen, setIsFilePanelOpen] = useState(false);
-    const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
+    const [localUploadedFiles, setLocalUploadedFiles] = useState<UploadedFile[]>([]);
     const [templates, setTemplates] = useState<CardTemplate[]>([]);
     const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
     const [selectedTemplateVersion, setSelectedTemplateVersion] = useState<number | undefined>(undefined);
     const [isTemplatesLoading, setIsTemplatesLoading] = useState(true);
     const [isSavingTemplatePref, setIsSavingTemplatePref] = useState(false);
     const [isSavingFromTask, setIsSavingFromTask] = useState(false);
+    const [allowAutoFocus, setAllowAutoFocus] = useState(false);
     const fileUploadRef = useRef<FileUploadHandle>(null);
     const filePanelRef = useRef<HTMLDivElement>(null);
-    const router = useRouter();
+    const chatInputRootRef = useRef<HTMLDivElement>(null);
     const commands = useRunCommands();
     const uploadAPI = new FileUploadAPI();
-    const allowAutoFocus =
-        typeof window !== "undefined" &&
-        !window.matchMedia("(pointer: coarse)").matches;
+    const uploadedFiles = uploadedFilesProp ?? localUploadedFiles;
+    const setUploadedFiles = onUploadedFilesChange ?? setLocalUploadedFiles;
+    const shouldShowResume = showResume ?? isPaused;
+    const shouldShowPause = showPause ?? (isTaskRunning && !shouldShowResume);
+    const shouldShowCancel = showCancel ?? isTaskRunning;
+    useEffect(() => {
+        setAllowAutoFocus(!window.matchMedia("(pointer: coarse)").matches);
+    }, []);
     
     // Use ref for composition state to avoid race conditions with state updates
     // This is more reliable than state for IME handling
     const isComposingRef = useRef(false);
 
-    // Keep prop for backward compatibility with existing callsites.
     void initialResearchStrategy;
 
     useEffect(() => {
@@ -226,8 +248,8 @@ export function ChatInput({
         }
     };
 
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const handleSubmit = async (event?: { preventDefault?: () => void }) => {
+        event?.preventDefault?.();
 
         if (!query.trim()) {
             return;
@@ -301,6 +323,11 @@ export function ChatInput({
             }
 
             if (fileIdsToSubmit.length > 0) {
+                console.info("[DIAG-1] before submitTaskWithFiles", {
+                    currentWorkflowId,
+                    sessionId,
+                    query: query.trim(),
+                });
                 const attachments = uploadedFiles
                     .filter((file) => file.status === "uploaded" && !!file.serverFileId)
                     .map((file) => ({
@@ -317,54 +344,59 @@ export function ChatInput({
                     session_id: sessionId,
                     file_ids: fileIdsToSubmit,
                     attachments,
+                    template_id: selectedTemplateId || undefined,
                     context: Object.keys(context).length ? context : undefined,
                 });
 
                 console.log("[ChatInput] Task with files created, response:", response);
+                console.info("[DIAG-1] submitTaskWithFiles response", {
+                    workflowId: response.workflow_id,
+                    runId: response.run_id ?? null,
+                    sessionId: response.session_id ?? null,
+                });
 
                 setQuery("");
                 setUploadedFiles([]);
                 setIsFilePanelOpen(false);
                 fileUploadRef.current?.clearFiles();
 
-                if (onTaskCreated) {
-                    console.log("[ChatInput] Calling onTaskCreated with workflow_id:", response.workflow_id);
-                    onTaskCreated(
-                        response.workflow_id,
-                        query.trim(),
-                        response.workflow_id,
-                        response.session_id,
-                        attachments.map((item) => ({
-                            fileId: item.file_id,
-                            filename: item.filename,
-                            size: item.size,
-                            mimeType: item.mime_type,
-                        }))
-                    );
-                } else {
-                    // Fallback if no callback provided
-                    router.push(`/run-detail?workflow_id=${response.workflow_id}`);
-                }
+                onTaskCreated(
+                    response.workflow_id,
+                    query.trim(),
+                    response.session_id,
+                    attachments.map((item) => ({
+                        fileId: item.file_id,
+                        filename: item.filename,
+                        size: item.size,
+                        mimeType: item.mime_type,
+                    })),
+                    response.run_id,
+                );
             } else {
                 // Use the existing API for tasks without files
+                console.info("[DIAG-1] before submitTask", {
+                    currentWorkflowId,
+                    sessionId,
+                    query: query.trim(),
+                });
                 const response = await submitTask({
                     query: query.trim(),
                     task_type: taskType,
                     session_id: sessionId,
+                    template_id: selectedTemplateId || undefined,
                     context: Object.keys(context).length ? context : undefined,
                 });
 
                 console.log("[ChatInput] Task created, response:", response);
+                console.info("[DIAG-1] submitTask response", {
+                    workflowId: response.workflow_id,
+                    runId: response.run_id ?? null,
+                    sessionId: response.session_id ?? null,
+                });
 
                 setQuery("");
 
-                if (onTaskCreated) {
-                    console.log("[ChatInput] Calling onTaskCreated with workflow_id:", response.workflow_id);
-                    onTaskCreated(response.workflow_id, query.trim(), response.workflow_id, response.session_id);
-                } else {
-                    // Fallback if no callback provided
-                    router.push(`/run-detail?workflow_id=${response.workflow_id}`);
-                }
+                onTaskCreated(response.workflow_id, query.trim(), response.session_id, undefined, response.run_id);
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : t("chat.submitFailed"));
@@ -454,11 +486,11 @@ export function ChatInput({
     };
 
     const handleSaveCurrentTaskAsTemplate = async () => {
-        if (!currentTaskId) return;
+        if (!currentWorkflowId) return;
         setIsSavingFromTask(true);
         setError(null);
         try {
-            const task = await getTask(currentTaskId);
+            const task = await getTask(currentWorkflowId);
             const ankiPayload = findAnkiPayload(task);
             if (!ankiPayload) {
                 throw new Error("未找到可保存模板的输出，请先完成一次模板生成。");
@@ -482,7 +514,7 @@ export function ChatInput({
                     name: generatedName,
                     description: "Saved from card template agent",
                     metadata: {
-                        source_task_id: currentTaskId,
+                        source_task_id: currentWorkflowId,
                         source_template_id: sourceTemplateId,
                     },
                 },
@@ -637,7 +669,7 @@ export function ChatInput({
     // Centered variant for empty sessions - modern ChatGPT-style layout
     if (variant === "centered") {
         return (
-            <div className="flex flex-col items-center justify-center h-full p-8">
+            <div className="flex flex-col items-center justify-center h-full p-8" data-kc-chat-input-root="true" ref={chatInputRootRef}>
                 <div className="w-full max-w-2xl space-y-6">
                     <div className="text-center space-y-2">
                         <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 mb-4">
@@ -649,7 +681,13 @@ export function ChatInput({
                         </p>
                     </div>
 
-                    <form onSubmit={handleSubmit} className="space-y-4">
+                    <div
+                        className="space-y-4"
+                        onSubmitCapture={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                        }}
+                    >
 
                         <div className="relative">
                             <div className="absolute left-2 bottom-2 flex items-center gap-1 z-10">
@@ -705,7 +743,7 @@ export function ChatInput({
                                 )}
                                 {TemplatePopover()}
                                 {AgentPopover()}
-                                {selectedAgent === "card_template" && currentTaskId && (
+                                {selectedAgent === "card_template" && currentWorkflowId && (
                                     <Button
                                         type="button"
                                         variant="ghost"
@@ -734,25 +772,82 @@ export function ChatInput({
                                 name="chat-input"
                                 autoComplete="off"
                             />
-                    <Button
-                        type="submit"
-                        size="icon"
-                        disabled={!query.trim() || isInputDisabled || isSubmitting || (selectedAgent === "normal" && !selectedTemplateId)}
-                        className="absolute right-3 bottom-3"
-                        aria-label={t("common.confirm")}
-                    >
-                                {isSubmitting ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                ) : (
-                                    <Send className="h-4 w-4" />
-                                )}
-                            </Button>
+                            {isTaskRunning ? (
+                                <div className="absolute right-3 bottom-3 flex gap-1.5">
+                                    {shouldShowResume && (
+                                        <Button
+                                            type="button"
+                                            size="icon"
+                                            variant="outline"
+                                            onClick={onResume}
+                                            disabled={!canControlTask || isResumeLoading || isCancelling}
+                                            title={t("chat.resumeWorkflow")}
+                                            aria-label={t("chat.resumeWorkflow")}
+                                        >
+                                            {isResumeLoading ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                                <Play className="h-4 w-4" />
+                                            )}
+                                        </Button>
+                                    )}
+                                    {shouldShowPause && (
+                                        <Button
+                                            type="button"
+                                            size="icon"
+                                            variant="outline"
+                                            onClick={onPause}
+                                            disabled={!canControlTask || isPauseLoading || isCancelling}
+                                            title={t("chat.pauseAtCheckpoint")}
+                                            aria-label={t("chat.pauseAtCheckpoint")}
+                                        >
+                                            {isPauseLoading ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                                <Pause className="h-4 w-4" />
+                                            )}
+                                        </Button>
+                                    )}
+                                    {shouldShowCancel && (
+                                        <Button
+                                            type="button"
+                                            size="icon"
+                                            variant="destructive"
+                                            onClick={onCancel}
+                                            disabled={!canControlTask || isCancelling || isResumeLoading}
+                                            title={t("chat.stop")}
+                                            aria-label={t("chat.stop")}
+                                        >
+                                            {isCancelling ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                            ) : (
+                                                <Square className="h-4 w-4" />
+                                            )}
+                                        </Button>
+                                    )}
+                                </div>
+                            ) : (
+                                <Button
+                                    type="button"
+                                    size="icon"
+                                    disabled={!query.trim() || isInputDisabled || isSubmitting || (selectedAgent === "normal" && !selectedTemplateId)}
+                                    className="absolute right-3 bottom-3"
+                                    aria-label={t("common.confirm")}
+                                    onClick={() => { void handleSubmit(); }}
+                                >
+                                    {isSubmitting ? (
+                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                        <Send className="h-4 w-4" />
+                                    )}
+                                </Button>
+                            )}
                         </div>
 
                         {error && (
                             <p className="text-sm text-red-500 text-center">{error}</p>
                         )}
-                    </form>
+                    </div>
 
                     <div className="flex flex-wrap items-center justify-center gap-2 text-xs text-muted-foreground">
                         <span>{t("chat.tryLabel")}</span>
@@ -785,7 +880,15 @@ export function ChatInput({
 
     // Default compact variant for follow-up messages
     return (
-        <form onSubmit={handleSubmit} className="space-y-2">
+        <div
+            className="space-y-2"
+            data-kc-chat-input-root="true"
+            ref={chatInputRootRef}
+            onSubmitCapture={(event) => {
+                event.preventDefault();
+                event.stopPropagation();
+            }}
+        >
             <div className="flex gap-2 items-end">
                 <div className="relative flex-1">
                     <div className="absolute left-2 bottom-2 flex items-center gap-1 z-10">
@@ -842,7 +945,7 @@ export function ChatInput({
                         )}
                         {TemplatePopover()}
                         {AgentPopover()}
-                        {selectedAgent === "card_template" && currentTaskId && (
+                        {selectedAgent === "card_template" && currentWorkflowId && (
                             <Button
                                 type="button"
                                 variant="ghost"
@@ -875,14 +978,13 @@ export function ChatInput({
                 {/* Show Pause/Stop buttons when task is running, otherwise show Send button */}
                 {isTaskRunning ? (
                     <div className="flex gap-1.5">
-                        {/* Pause/Resume toggle */}
-                        {isPaused ? (
+                        {shouldShowResume && (
                             <Button
                                 type="button"
                                 size="icon"
                                 variant="outline"
                                 onClick={onResume}
-                                disabled={isResumeLoading || isCancelling}
+                                disabled={!canControlTask || isResumeLoading || isCancelling}
                                 title={t("chat.resumeWorkflow")}
                                 aria-label={t("chat.resumeWorkflow")}
                             >
@@ -892,13 +994,14 @@ export function ChatInput({
                                     <Play className="h-4 w-4" />
                                 )}
                             </Button>
-                        ) : (
+                        )}
+                        {shouldShowPause && (
                             <Button
                                 type="button"
                                 size="icon"
                                 variant="outline"
                                 onClick={onPause}
-                                disabled={isPauseLoading || isCancelling}
+                                disabled={!canControlTask || isPauseLoading || isCancelling}
                                 title={t("chat.pauseAtCheckpoint")}
                                 aria-label={t("chat.pauseAtCheckpoint")}
                             >
@@ -909,29 +1012,31 @@ export function ChatInput({
                                 )}
                             </Button>
                         )}
-                        {/* Stop button - always visible when running */}
-                        <Button
-                            type="button"
-                            size="icon"
-                            variant="destructive"
-                            onClick={onCancel}
-                            disabled={isCancelling || isPauseLoading || isResumeLoading}
-                            title={t("chat.stop")}
-                            aria-label={t("chat.stop")}
-                        >
-                            {isCancelling ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                                <Square className="h-4 w-4" />
-                            )}
-                        </Button>
+                        {shouldShowCancel && (
+                            <Button
+                                type="button"
+                                size="icon"
+                                variant="destructive"
+                                onClick={onCancel}
+                                disabled={!canControlTask || isCancelling || isResumeLoading}
+                                title={t("chat.stop")}
+                                aria-label={t("chat.stop")}
+                            >
+                                {isCancelling ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                ) : (
+                                    <Square className="h-4 w-4" />
+                                )}
+                            </Button>
+                        )}
                     </div>
                 ) : (
                     <Button
-                        type="submit"
+                        type="button"
                         size="icon"
                         disabled={!query.trim() || isInputDisabled || isSubmitting || (selectedAgent === "normal" && !selectedTemplateId)}
                         aria-label={t("common.confirm")}
+                        onClick={() => { void handleSubmit(); }}
                     >
                         {isSubmitting ? (
                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -944,6 +1049,6 @@ export function ChatInput({
             {error && (
                 <p className="text-xs text-red-500">{error}</p>
             )}
-        </form>
+        </div>
     );
 }

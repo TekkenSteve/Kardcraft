@@ -1,13 +1,13 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect, useImperativeHandle, forwardRef, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
-import { X, Upload, File, Image as ImageIcon, Loader2, AlertCircle, Check, Eye, Trash2 } from "lucide-react";
-import { cn } from "@/lib/utils";
-import { UploadedFile, DEFAULT_UPLOAD_CONFIG, FileUploadConfig } from "@/lib/file-upload/types";
-import { FileValidator } from "@/lib/file-upload/validation";
 import { FileUploadAPI } from "@/lib/file-upload/api";
+import { DEFAULT_UPLOAD_CONFIG, FileUploadConfig, UploadedFile } from "@/lib/file-upload/types";
+import { FileValidator } from "@/lib/file-upload/validation";
+import { cn } from "@/lib/utils";
+import { AlertCircle, Check, Eye, File, Image as ImageIcon, Loader2, Trash2, Upload, X } from "lucide-react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 
 interface FileUploadProps {
   sessionId?: string;
@@ -55,7 +55,8 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
     setError(null);
 
     const fileArray = Array.from(selectedFiles);
-    const validation = validator.validateFiles(fileArray, files);
+    const existingFiles = files.map((item) => item.file);
+    const validation = validator.validateFiles(fileArray, existingFiles);
 
     if (!validation.isValid) {
       setError(validation.errors.join("\n"));
@@ -272,7 +273,7 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
   const isUploading = uploadingCount > 0;
 
   return (
-    <div className={cn("space-y-4", className)}>
+    <div className={cn("space-y-4", className)} data-kc-file-upload-root="true">
       {/* Drop zone */}
       <div
         ref={dropZoneRef}
@@ -326,6 +327,7 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
             <p className="text-sm whitespace-pre-wrap">{error}</p>
           </div>
           <Button
+            type="button"
             variant="ghost"
             size="icon"
             className="h-6 w-6 shrink-0"

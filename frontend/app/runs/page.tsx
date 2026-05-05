@@ -10,7 +10,8 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { useTranslation } from "react-i18next";
 import { Session, updateSession, deleteSession, isUnauthenticatedApiError, toUiErrorMessage } from "@/lib/kardcraft/api";
 import { listSessions } from "@/lib/kardcraft/session-repository";
-import useSWRInfinite from "swr/infinite";
+import { dedupeSessionsById } from "@/lib/kardcraft/session-list";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import {
     DropdownMenu,
@@ -24,77 +25,56 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 export default function RunsPage() {
     const { t } = useTranslation();
     const searchParams = useSearchParams();
-    const currentSessionId = searchParams.get("session_id");
-    const authRequired = searchParams.get("auth_required") === "1";
-    const [sessions, setSessions] = useState<Session[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const [isLoadingMore, setIsLoadingMore] = useState(false);
-    const [error, setError] = useState<string | null>(null);
+    const currentSessionId = searchParams?.get("session_id") ?? null;
+    const authRequired = (searchParams?.get("auth_required") ?? "") === "1";
     const [searchQuery, setSearchQuery] = useState("");
-    const [totalCount, setTotalCount] = useState<number | null>(null);
     const [editingSession, setEditingSession] = useState<Session | null>(null);
     const [editingTitle, setEditingTitle] = useState("");
     const [selectedIds, setSelectedIds] = useState<string[]>([]);
+    const queryClient = useQueryClient();
 
     const PAGE_SIZE = 50;
-
-    const getKey = useCallback((pageIndex: number, previousPageData: { sessions: Session[] } | null) => {
-        if (previousPageData && previousPageData.sessions.length === 0) return null;
-        return ["sessions", PAGE_SIZE, pageIndex];
-    }, []);
-
-    const fetcher = useCallback(async (key: readonly [string, number, number]) => {
-        const [, limit, pageIndex] = key;
-        const offset = pageIndex * limit;
-        return listSessions(limit, offset);
-    }, []);
-
-    const { data, error: swrError, size, setSize, mutate, isValidating } = useSWRInfinite(
-        getKey,
-        fetcher,
-        {
-            dedupingInterval: 10_000,
-            revalidateOnFocus: true,
-            keepPreviousData: true,
-        }
-    );
+    const sessionsQuery = useInfiniteQuery({
+        queryKey: ["sessions", PAGE_SIZE],
+        queryFn: async ({ pageParam }) => listSessions(PAGE_SIZE, pageParam as number),
+        initialPageParam: 0,
+        getNextPageParam: (lastPage, allPages) => {
+            const loaded = allPages.reduce((sum, page) => sum + (page.sessions?.length || 0), 0);
+            return loaded < (lastPage.total_count || 0) ? loaded : undefined;
+        },
+    });
 
     const mergedSessions = useMemo(() => {
-        if (!data) return [];
-        const merged = data.flatMap(page => page.sessions || []);
-        const unique = new Map<string, Session>();
-        merged.forEach((session) => unique.set(session.session_id, session));
-        return Array.from(unique.values());
-    }, [data]);
+        if (!sessionsQuery.data) return [];
+        const merged = sessionsQuery.data.pages.flatMap(page => page.sessions || []);
+        return dedupeSessionsById(merged);
+    }, [sessionsQuery.data]);
 
-    useEffect(() => {
-        if (swrError && isUnauthenticatedApiError(swrError)) {
-            setSessions([]);
-            setTotalCount(0);
-            setIsLoading(false);
-            setIsLoadingMore(false);
-            setError(toUiErrorMessage(swrError, "Failed to load sessions"));
-            return;
+    const sessions = useMemo(() => {
+        if (sessionsQuery.error && isUnauthenticatedApiError(sessionsQuery.error)) {
+            return [];
         }
-        setSessions(mergedSessions);
-        const counts = data?.map(page => page.total_count || 0) || [];
-        const maxCount = counts.length > 0 ? Math.max(...counts) : null;
-        setTotalCount(maxCount);
-        setIsLoading(!data && !swrError);
-        setIsLoadingMore(isValidating && size > 1);
-        setError(swrError ? toUiErrorMessage(swrError, "Failed to load sessions") : null);
-    }, [mergedSessions, data, swrError, isValidating, size]);
+        return mergedSessions;
+    }, [mergedSessions, sessionsQuery.error]);
+    const totalCount = useMemo(() => {
+        if (!sessionsQuery.data) return null;
+        const counts = sessionsQuery.data.pages.map((page) => page.total_count || 0);
+        return counts.length > 0 ? Math.max(...counts) : null;
+    }, [sessionsQuery.data]);
+    const isLoading = sessionsQuery.isLoading;
+    const isLoadingMore = sessionsQuery.isFetchingNextPage;
+    const error = sessionsQuery.error ? toUiErrorMessage(sessionsQuery.error, "Failed to load sessions") : null;
 
     // Prefetch next page for faster perceived navigation
     useEffect(() => {
         if (!totalCount) return;
-        if (size > 1) return;
+        if (!sessionsQuery.hasNextPage) return;
         if (totalCount <= PAGE_SIZE) return;
         const timer = setTimeout(() => {
-            setSize(2);
+            void sessionsQuery.fetchNextPage();
         }, 600);
         return () => clearTimeout(timer);
-    }, [totalCount, size, setSize]);
+    }, [PAGE_SIZE, sessionsQuery, totalCount]);
 
     // Filter sessions based on search
     const filteredSessions = sessions.filter(session => {
@@ -132,54 +112,41 @@ export default function RunsPage() {
         if (!editingSession) return;
         const nextTitle = editingTitle.trim();
         await updateSession(editingSession.session_id, { title: nextTitle });
-        setSessions((prev) =>
-            prev.map((s) =>
-                s.session_id === editingSession.session_id ? { ...s, title: nextTitle } : s
-            )
-        );
-        mutate();
+        await queryClient.invalidateQueries({ queryKey: ["sessions"] });
         setEditingSession(null);
-    }, [editingSession, editingTitle, mutate]);
+    }, [editingSession, editingTitle, queryClient]);
 
     const handleTogglePin = useCallback(async (session: Session) => {
         const nextPinned = !session.pinned;
         await updateSession(session.session_id, { pinned: nextPinned });
-        setSessions((prev) =>
-            prev.map((s) =>
-                s.session_id === session.session_id ? { ...s, pinned: nextPinned } : s
-            )
-        );
-        mutate();
-    }, [mutate]);
+        await queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    }, [queryClient]);
 
     const handleDeleteSession = useCallback(async (session: Session) => {
         const confirmed = window.confirm(t("sidebar.deleteConfirm"));
         if (!confirmed) return;
         await deleteSession(session.session_id);
-        setSessions((prev) => prev.filter((s) => s.session_id !== session.session_id));
-        mutate();
-    }, [mutate, t]);
+        await queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    }, [queryClient, t]);
 
     const handleBulkPin = useCallback(async (pinned: boolean) => {
         if (selectedIds.length === 0) return;
         await Promise.all(selectedIds.map((id) => updateSession(id, { pinned })));
-        setSessions((prev) =>
-            prev.map((s) =>
-                selectedSet.has(s.session_id) ? { ...s, pinned } : s
-            )
-        );
-        mutate();
-    }, [selectedIds, mutate, selectedSet]);
+        await queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    }, [queryClient, selectedIds]);
 
     const handleBulkDelete = useCallback(async () => {
         if (selectedIds.length === 0) return;
         const confirmed = window.confirm(t("sidebar.deleteConfirm"));
         if (!confirmed) return;
         await Promise.all(selectedIds.map((id) => deleteSession(id)));
-        setSessions((prev) => prev.filter((s) => !selectedSet.has(s.session_id)));
         setSelectedIds([]);
-        mutate();
-    }, [selectedIds, mutate, selectedSet, t]);
+        await queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    }, [queryClient, selectedIds, t]);
+
+    const refreshSessions = useCallback(async () => {
+        await sessionsQuery.refetch();
+    }, [sessionsQuery]);
 
     return (
         <div className="h-full overflow-y-auto p-4 sm:p-8 space-y-6 sm:space-y-8">
@@ -195,8 +162,7 @@ export default function RunsPage() {
                         variant="outline"
                         size="sm"
                         onClick={() => {
-                            setIsLoading(true);
-                            mutate();
+                            void refreshSessions();
                         }}
                         disabled={isLoading || isLoadingMore}
                         aria-label={t("common.refresh")}
@@ -243,7 +209,7 @@ export default function RunsPage() {
                     title={t("runs.errorTitle")}
                     description={error}
                     actions={[
-                        { label: t("common.retry"), onClick: () => { setIsLoading(true); mutate(); }, variant: "outline" },
+                        { label: t("common.retry"), onClick: () => { void refreshSessions(); }, variant: "outline" },
                         { label: t("common.reload"), onClick: () => window.location.reload(), variant: "outline" },
                     ]}
                 />
@@ -442,7 +408,7 @@ export default function RunsPage() {
                                                         </TooltipTrigger>
                                                         <TooltipContent>
                                                             <div className="flex flex-col gap-1 text-xs">
-                                                                <span>{t("runs.tokens", { count: session.tokens_used.toLocaleString() })}</span>
+                                                                <span>{t("runs.tokens", { count: session.tokens_used })}</span>
                                                                 {session.average_cost_per_task !== undefined && session.average_cost_per_task > 0 && (
                                                                     <span>{t("runs.avgPerTask", { amount: session.average_cost_per_task.toFixed(3) })}</span>
                                                                 )}
@@ -510,7 +476,7 @@ export default function RunsPage() {
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => setSize(size + 1)}
+                                    onClick={() => void sessionsQuery.fetchNextPage()}
                                     disabled={isLoadingMore}
                                 >
                                     {isLoadingMore && (

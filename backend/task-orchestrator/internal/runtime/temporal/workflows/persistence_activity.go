@@ -12,13 +12,15 @@ import (
 )
 
 type PersistTaskOutcomeInput struct {
-	TaskID       string         `json:"task_id"`
-	Status       string         `json:"status"`
-	Result       map[string]any `json:"result,omitempty"`
-	Error        string         `json:"error,omitempty"`
-	CompletedAt  time.Time      `json:"completed_at"`
-	WorkflowID   string         `json:"workflow_id,omitempty"`
-	TerminalNote string         `json:"terminal_note,omitempty"`
+	TaskID        string         `json:"task_id"`
+	Status        string         `json:"status"`
+	Result        map[string]any `json:"result,omitempty"`
+	Error         string         `json:"error,omitempty"`
+	CompletedAt   time.Time      `json:"completed_at"`
+	WorkflowID    string         `json:"workflow_id,omitempty"`
+	RunID         string         `json:"run_id,omitempty"`
+	CorrelationID string         `json:"correlation_id,omitempty"`
+	TerminalNote  string         `json:"terminal_note,omitempty"`
 }
 
 type taskOutcomeStore interface {
@@ -27,6 +29,7 @@ type taskOutcomeStore interface {
 	InsertEvent(ctx context.Context, sessionID, taskID, workflowID, eventType, message, payload, streamID string, ts time.Time) error
 	LoadWorkspace(ctx context.Context, sessionID string) (map[string]any, error)
 	SaveWorkspace(ctx context.Context, sessionID string, workspace map[string]any) error
+	AppendWorkflowOutboxEvent(ctx context.Context, event persistence.WorkflowOutboxEvent) error
 }
 
 var persistenceStore taskOutcomeStore
@@ -92,6 +95,17 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 		return nil
 	}
 	workflowID := strings.TrimSpace(outcome.WorkflowID)
+	runID := strings.TrimSpace(in.RunID)
+	if runID == "" {
+		return fmt.Errorf("run_id is required")
+	}
+	correlationID := strings.TrimSpace(in.CorrelationID)
+	if correlationID == "" && outcome.Metadata != nil {
+		correlationID = strings.TrimSpace(asString(outcome.Metadata["request_id"]))
+	}
+	if correlationID == "" {
+		return fmt.Errorf("correlation_id is required")
+	}
 
 	eventType := "WORKFLOW_COMPLETED"
 	if outcome.Status == "failed" {
@@ -113,20 +127,6 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 			msg = "Workflow cancelled"
 		}
 	}
-	if err := persistenceStore.InsertEvent(
-		ctx,
-		sessionID,
-		taskID,
-		workflowID,
-		eventType,
-		msg,
-		"",
-		"terminal:"+taskID+":"+outcome.Status,
-		time.Now().UTC(),
-	); err != nil {
-		log.Printf("metric=projection_failure type=terminal_event task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
-	}
-
 	if outcome.Status == "completed" {
 		cards := buildWorkspaceCards(outcome.FinalCards, outcome.UserID)
 		if len(cards) > 0 {
@@ -162,14 +162,48 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 				}
 			}
 			if err := persistenceStore.SaveWorkspace(ctx, sessionID, workspace); err != nil {
-				log.Printf("metric=projection_failure type=workspace task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
+				log.Printf("metric=projection_critical_failure type=workspace task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
+				return err
 			} else {
 				workspacePayload, _ := json.Marshal(map[string]any{
-					"session_id": sessionID,
-					"version":    nextVersion,
-					"card_count": len(cards),
-					"status":     "active",
+					"session_id":     sessionID,
+					"workspace_id":   sessionID,
+					"workflow_id":    workflowID,
+					"task_id":        taskID,
+					"run_id":         runID,
+					"correlation_id": correlationID,
+					"version":        nextVersion,
+					"card_count":     len(cards),
+					"status":         "active",
+					"cards":          cards,
 				})
+				workspaceEventPayload := map[string]any{
+					"session_id":     sessionID,
+					"workspace_id":   sessionID,
+					"workflow_id":    workflowID,
+					"task_id":        taskID,
+					"run_id":         runID,
+					"correlation_id": correlationID,
+					"version":        nextVersion,
+					"card_count":     len(cards),
+					"status":         "active",
+					"cards":          cards,
+					"message":        "Workspace updated",
+				}
+				if err := persistenceStore.AppendWorkflowOutboxEvent(ctx, persistence.WorkflowOutboxEvent{
+					TaskID:     taskID,
+					SessionID:  sessionID,
+					UserID:     outcome.UserID,
+					WorkflowID: workflowID,
+					RunID:      runID,
+					EventType:  "WORKSPACE_UPDATED",
+					Channel:    "progress",
+					Payload:    workspaceEventPayload,
+					OccurredAt: now,
+				}); err != nil {
+					log.Printf("metric=projection_critical_failure type=workspace_outbox task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
+					return err
+				}
 				if err := persistenceStore.InsertEvent(
 					ctx,
 					sessionID,
@@ -185,6 +219,45 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 				}
 			}
 		}
+	}
+
+	terminalPayload := map[string]any{
+		"task_id":        taskID,
+		"workflow_id":    workflowID,
+		"run_id":         runID,
+		"session_id":     sessionID,
+		"workspace_id":   sessionID,
+		"correlation_id": correlationID,
+		"status":         outcome.Status,
+		"message":        msg,
+	}
+	if err := persistenceStore.AppendWorkflowOutboxEvent(ctx, persistence.WorkflowOutboxEvent{
+		TaskID:     taskID,
+		SessionID:  sessionID,
+		UserID:     outcome.UserID,
+		WorkflowID: workflowID,
+		RunID:      runID,
+		EventType:  eventType,
+		Channel:    "terminal",
+		Payload:    terminalPayload,
+		OccurredAt: time.Now().UTC(),
+	}); err != nil {
+		log.Printf("metric=projection_critical_failure type=terminal_outbox task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
+		return err
+	}
+
+	if err := persistenceStore.InsertEvent(
+		ctx,
+		sessionID,
+		taskID,
+		workflowID,
+		eventType,
+		msg,
+		"",
+		"terminal:"+taskID+":"+outcome.Status,
+		time.Now().UTC(),
+	); err != nil {
+		log.Printf("metric=projection_failure type=terminal_event task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
 	}
 
 	return nil
@@ -232,9 +305,9 @@ func buildWorkspaceCards(cards []TaskOutcomeCard, userID string) []map[string]an
 		tags := card.Tags
 
 		out = append(out, map[string]any{
-			"id":      cardID,
-			"user_id": userID,
-			"card_id": cardID,
+			"id":                      cardID,
+			"user_id":                 userID,
+			"card_id":                 cardID,
 			"suggested_question_type": suggestedQuestionType,
 			"content": map[string]any{
 				"version": 1,

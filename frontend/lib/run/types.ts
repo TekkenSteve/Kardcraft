@@ -1,4 +1,5 @@
 import { RunEvent } from "@/lib/kardcraft/types";
+import type { RunDomainEvent } from "./domain-event-types";
 
 export interface RunMessage {
     id: string;
@@ -67,30 +68,37 @@ export type TemplatePreflightState = {
     message: string | null;
 };
 
-export type RunStatus = "idle" | "running" | "pausing" | "paused" | "cancelling" | "cancelled" | "completed" | "failed";
+export type RunStatus = "idle" | "running" | "pausing" | "paused" | "resuming" | "cancelling" | "cancelled" | "completed" | "failed";
 export type RunPhase = "idle" | "clearing" | "loading" | "hydrated" | "streaming" | "error";
 export type ConnectionState = "idle" | "connecting" | "connected" | "reconnecting" | "error";
 export type AgentType = "normal" | "card_template";
 export type ResearchStrategy = "quick" | "standard" | "deep" | "academic";
 
-export type RunSessionState = {
-    sessionKey: string;
-    sessionId: string | null;
+export type RunInstanceState = {
+    runId: string;
+    workflowId: string | null;
     events: RunEvent[];
     messages: RunMessage[];
-    cards: CardData[];
-    cardsVersion: number;
+    deferredEvents: RunDomainEvent[];
+    lastEventID: number;
     runPhase: RunPhase;
     status: RunStatus;
     connectionState: ConnectionState;
     streamError: string | null;
-    sessionTitle: string | null;
-    mainWorkflowId: string | null;
-    isPaused: boolean;
-    pauseCheckpoint: string | null;
+    pauseCheckpoint: { lastEventID: number; timestamp: string } | null;
     pauseReason: string | null;
-    isCancelling: boolean;
-    isCancelled: boolean;
+};
+
+export type RunSessionState = {
+    sessionKey: string;
+    sessionId: string | null;
+    lifecycle: "active" | "suspended" | "resuming";
+    cards: CardData[];
+    cardsVersion: number;
+    sessionTitle: string | null;
+    activeRunId: string | null;
+    runInstances: Record<string, RunInstanceState>;
+    runIdByWorkflowId: Record<string, string>;
     templatePreflight: TemplatePreflightState;
 };
 
@@ -103,7 +111,9 @@ export type SessionViewModel = {
     streamError: string | null;
     sessionTitle: string | null;
     mainWorkflowId: string | null;
+    mainRunId: string | null;
     isPaused: boolean;
+    pauseCheckpoint: { lastEventID: number; timestamp: string } | null;
     isCancelling: boolean;
     isCancelled: boolean;
     messages: RunMessage[];
@@ -120,6 +130,7 @@ export type RegistrySessionSummaryViewModel = {
     connectionState: ConnectionState;
     sessionTitle: string | null;
     mainWorkflowId: string | null;
+    mainRunId: string | null;
 };
 
 export type RegistryViewModel = {
@@ -143,22 +154,29 @@ export const DEFAULT_TEMPLATE_PREFLIGHT: TemplatePreflightState = {
 export const createInitialSessionState = (sessionKey: string, sessionId: string | null): RunSessionState => ({
     sessionKey,
     sessionId,
-    events: [],
-    messages: [],
+    lifecycle: "active",
     cards: [],
     cardsVersion: 0,
+    sessionTitle: null,
+    activeRunId: null,
+    runInstances: {},
+    runIdByWorkflowId: {},
+    templatePreflight: { ...DEFAULT_TEMPLATE_PREFLIGHT },
+});
+
+export const createInitialRunInstanceState = (runId: string, workflowId: string | null = null): RunInstanceState => ({
+    runId,
+    workflowId,
+    events: [],
+    messages: [],
+    deferredEvents: [],
+    lastEventID: 0,
     runPhase: "idle",
     status: "idle",
     connectionState: "idle",
     streamError: null,
-    sessionTitle: null,
-    mainWorkflowId: null,
-    isPaused: false,
     pauseCheckpoint: null,
     pauseReason: null,
-    isCancelling: false,
-    isCancelled: false,
-    templatePreflight: { ...DEFAULT_TEMPLATE_PREFLIGHT },
 });
 
 export const NEW_SESSION_KEY = "session:new";

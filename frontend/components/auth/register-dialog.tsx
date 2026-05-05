@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,6 +18,7 @@ import {
   type RegistrationFlow,
   type UpdateRegistrationFlowBody,
 } from "@/lib/kratos/client";
+import { emitAuthStateChanged } from "@/lib/session/auth-events";
 import { isUiNodeInputAttributes } from "@ory/integrations/ui";
 
 interface RegisterDialogProps {
@@ -27,6 +28,40 @@ interface RegisterDialogProps {
   onSwitchToLogin: () => void;
 }
 
+type UiMessageLike = { type?: string; text?: string };
+type UiNodeLike = { messages?: UiMessageLike[] };
+type UiPayloadLike = { ui?: { messages?: UiMessageLike[]; nodes?: UiNodeLike[] } };
+type HttpErrorLike = {
+  message?: string;
+  response?: {
+    status?: number;
+    data?: unknown;
+  };
+};
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === "object" && value !== null;
+
+const asHttpError = (value: unknown): HttpErrorLike | null => {
+  if (!isRecord(value)) return null;
+  return value as HttpErrorLike;
+};
+
+const collectUiErrors = (value: unknown): string[] => {
+  if (!isRecord(value)) return [];
+  const payload = value as UiPayloadLike;
+  const result: string[] = [];
+  (payload.ui?.messages || []).forEach((msg) => {
+    if (msg.type === "error" && typeof msg.text === "string") result.push(msg.text);
+  });
+  (payload.ui?.nodes || []).forEach((node) => {
+    (node.messages || []).forEach((msg) => {
+      if (msg.type === "error" && typeof msg.text === "string") result.push(msg.text);
+    });
+  });
+  return result;
+};
+
 export function RegisterDialog({
   open,
   onOpenChange,
@@ -34,38 +69,40 @@ export function RegisterDialog({
   onSwitchToLogin,
 }: RegisterDialogProps) {
   const [flow, setFlow] = useState<RegistrationFlow | null>(null);
-  const [formData, setFormData] = useState<Record<string, any>>({});
+  const [formData, setFormData] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState<string[]>([]);
 
-  useEffect(() => {
-    if (open && !flow) {
-      initFlow();
-    }
-  }, [open]);
+  const buildInitialData = useCallback((nextFlow: RegistrationFlow): Record<string, string> => {
+    const initialData: Record<string, string> = {};
+    nextFlow.ui.nodes.forEach((node) => {
+      if (!isUiNodeInputAttributes(node.attributes)) return;
+      if (node.attributes.type === "button" || node.attributes.type === "submit") return;
+      initialData[node.attributes.name] = typeof node.attributes.value === "string"
+        ? node.attributes.value
+        : "";
+    });
+    return initialData;
+  }, []);
 
-  const initFlow = async () => {
+  const initFlow = useCallback(async () => {
     try {
       const { data } = await ory.createBrowserRegistrationFlow();
       setFlow(data);
       setErrors([]);
-      
-      // Initialize form data with default values from the flow
-      const initialData: Record<string, any> = {};
-      data.ui.nodes.forEach((node) => {
-        if (isUiNodeInputAttributes(node.attributes)) {
-          if (node.attributes.type !== "button" && node.attributes.type !== "submit") {
-            initialData[node.attributes.name] = node.attributes.value || "";
-          }
-        }
-      });
-      setFormData(initialData);
+      setFormData(buildInitialData(data));
     } catch (error) {
       console.error("Failed to create registration flow:", error);
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
       setErrors([`Failed to initialize registration: ${errorMessage}`]);
     }
-  };
+  }, [buildInitialData]);
+
+  useEffect(() => {
+    if (open && !flow) {
+      void initFlow();
+    }
+  }, [open, flow, initFlow]);
 
   const handleInputChange = (name: string, value: string) => {
     setFormData(prev => ({
@@ -84,7 +121,11 @@ export function RegisterDialog({
     try {
       // Get the method value from the submit button
       const submitButton = getSubmitButton();
-      const method = (submitButton?.attributes as any)?.value || "profile";
+      const methodAttributes = submitButton?.attributes;
+      const method =
+        methodAttributes && isUiNodeInputAttributes(methodAttributes) && typeof methodAttributes.value === "string"
+          ? methodAttributes.value
+          : "profile";
       
       // Add method field to form data
       const submitData = {
@@ -120,45 +161,26 @@ export function RegisterDialog({
         setFormData({});
         setFlow(null);
         
-        // Trigger a custom event to notify other components
-        window.dispatchEvent(new CustomEvent('auth-state-changed'));
+        emitAuthStateChanged();
       } else {
         // This might be a multi-step flow, refresh the flow to get next step
         const { data: newFlow } = await ory.getRegistrationFlow({ id: flow.id });
         setFlow(newFlow);
-        
-        // Initialize form data for the new step
-        const initialData: Record<string, any> = {};
-        newFlow.ui.nodes.forEach((node) => {
-          if (isUiNodeInputAttributes(node.attributes)) {
-            if (node.attributes.type !== "button" && node.attributes.type !== "submit") {
-              initialData[node.attributes.name] = node.attributes.value || "";
-            }
-          }
-        });
-        setFormData(initialData);
+        setFormData(buildInitialData(newFlow));
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error("Registration error:", error);
-      
-      if (error.response?.status === 400) {
+
+      const httpError = asHttpError(error);
+      if (httpError?.response?.status === 400 && httpError.response.data) {
         // Form validation error - update flow with new data
-        setFlow(error.response.data);
-        const flowErrors: string[] = [];
-        
-        if (error.response.data.ui?.messages) {
-          flowErrors.push(...error.response.data.ui.messages.filter((m: any) => m.type === "error").map((m: any) => m.text));
+        if (isRecord(httpError.response.data)) {
+          setFlow(httpError.response.data as unknown as RegistrationFlow);
         }
-        
-        error.response.data.ui?.nodes?.forEach((node: any) => {
-          if (node.messages) {
-            flowErrors.push(...node.messages.filter((m: any) => m.type === "error").map((m: any) => m.text));
-          }
-        });
-        
+        const flowErrors = collectUiErrors(httpError.response.data);
         setErrors(flowErrors);
       } else {
-        setErrors([error.message || "Registration failed. Please try again."]);
+        setErrors([httpError?.message || "Registration failed. Please try again."]);
       }
     } finally {
       setLoading(false);
@@ -222,6 +244,11 @@ export function RegisterDialog({
             const value = formData[name] || "";
             const hasError = node.messages.some(m => m.type === "error");
             const label = node.meta.label?.text || name;
+            const attributesRecord = node.attributes as unknown as Record<string, unknown>;
+            const placeholder =
+              typeof attributesRecord.placeholder === "string"
+                ? attributesRecord.placeholder
+                : "";
 
             return (
               <div key={name} className="space-y-2">
@@ -235,7 +262,7 @@ export function RegisterDialog({
                   type={type}
                   value={value}
                   onChange={(e) => handleInputChange(name, e.target.value)}
-                  placeholder={(node.attributes as any).placeholder || ""}
+                  placeholder={placeholder}
                   required={required}
                   disabled={disabled || loading}
                   className={hasError ? "border-red-500" : ""}

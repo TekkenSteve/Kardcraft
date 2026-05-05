@@ -17,6 +17,7 @@ from ...llm.context import LLMRuntimeContext, reset_runtime_context, set_runtime
 from ...llm.usage_event import validate_usage_recorded_event
 from ...workflow.manager import WorkflowManager
 from ...services.redis import RedisClient
+from ...services.workflow_control import WorkflowCancelledByControl, WorkflowControlGate
 from ...services.workflow_event_bus import EventContext, WorkflowEventBus
 from ...utils.conversation_history import normalize_conversation_history
 from ...utils.logger import logger
@@ -34,6 +35,7 @@ class AgentActivities:
         self.workflow_manager = workflow_manager
         self.redis_client = redis_client
         self.event_bus = event_bus or WorkflowEventBus()
+        self.control_gate = WorkflowControlGate()
         # Per workflow/node dedupe cache to prevent stream event storms.
         self._progress_cache: Dict[str, Dict[str, Any]] = {}
         # Node lifecycle phase cache: key=task_id:node_name, value=started|completed|failed
@@ -50,7 +52,11 @@ class AgentActivities:
         task_id: str,
         session_id: Optional[str],
         user_id: Optional[str],
+        correlation_id: str,
     ) -> EventContext:
+        normalized_correlation_id = str(correlation_id or "").strip()
+        if not normalized_correlation_id:
+            raise ValueError("correlation_id is required")
         try:
             info = activity.info()
             workflow_id = str(getattr(info, "workflow_id", "") or "unknown-workflow")
@@ -68,7 +74,27 @@ class AgentActivities:
             user_id=str(user_id or "") or None,
             workflow_id=workflow_id,
             run_id=run_id,
+            correlation_id=normalized_correlation_id,
         )
+
+    def _resolve_correlation_id(
+        self,
+        *,
+        metadata: Optional[Dict[str, Any]] = None,
+        payload: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        metadata = metadata or {}
+        payload = payload or {}
+        candidates = (
+            metadata.get("request_id"),
+            payload.get("correlation_id"),
+            payload.get("request_id"),
+        )
+        for item in candidates:
+            value = str(item or "").strip()
+            if value:
+                return value
+        raise ValueError("correlation_id is required")
 
     @activity.defn(name="execute_agent_workflow")
     async def execute_agent_workflow(
@@ -83,6 +109,10 @@ class AgentActivities:
         task_type = input_data.get("task_type", "main")
         config = input_data.get("config", {})
         metadata = input_data.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        correlation_id = self._resolve_correlation_id(metadata=metadata)
+        metadata["request_id"] = correlation_id
 
         # Send the heartbeat immediately to prove the activity has started
         activity.heartbeat({"status": "initializing", "task_id": task_id})
@@ -176,6 +206,7 @@ class AgentActivities:
             task_id=str(task_id),
             session_id=session_id,
             user_id=str(user_id),
+            correlation_id=correlation_id,
         )
         self._event_contexts[str(task_id)] = event_ctx
         await self.event_bus.mark_task_running(str(task_id))
@@ -186,6 +217,7 @@ class AgentActivities:
         async def progress_callback(event_data: Dict[str, Any]):
             import asyncio
 
+            await self.control_gate.wait_until_runnable(str(task_id))
             current_time = asyncio.get_event_loop().time()
 
             # 每10秒至少heartbeat一次（防止30s timeout）
@@ -242,6 +274,7 @@ class AgentActivities:
                     input_data=workflow_input,
                     timeout=1800,  # Keep internal timeout as safety net
                     progress_callback=progress_callback,
+                    control_gate=lambda: self.control_gate.wait_until_runnable(str(task_id)),
                 )
             finally:
                 reset_runtime_context(llm_ctx_token)
@@ -361,14 +394,6 @@ class AgentActivities:
                     "message": "Workflow completed but result serialization failed",
                 }
 
-            # Emit terminal realtime events so frontend status/timeline can converge without page refresh.
-            await self._publish_terminal_events(
-                task_id=task_id,
-                event_type="WORKFLOW_FAILED" if status == "failed" else "WORKFLOW_COMPLETED",
-                message=message,
-                session_id=session_id,
-            )
-
             return {
                 "schema_version": "task-outcome",
                 "status": status,
@@ -385,7 +410,7 @@ class AgentActivities:
                 "saved_card_ids": saved_card_ids,
             }
 
-        except asyncio.CancelledError:
+        except WorkflowCancelledByControl:
             activity.logger.info(
                 f"Agent workflow cancelled by user/system task_id={task_id}"
             )
@@ -422,6 +447,11 @@ class AgentActivities:
                 "final_cards": [],
                 "saved_card_ids": [],
             }
+        except asyncio.CancelledError:
+            activity.logger.info(
+                f"Agent workflow activity cancellation requested task_id={task_id}"
+            )
+            raise
         except Exception as e:
             activity.logger.error(f"Agent workflow failed: {e}", exc_info=True)
             # Best-effort terminal event on failures; do not swallow original exception.
@@ -448,6 +478,10 @@ class AgentActivities:
         checkpoint_id = input_data.get("checkpoint_id")
         session_id = input_data.get("session_id")
         user_id = input_data.get("user_id")
+        metadata = input_data.get("metadata", {})
+        if not isinstance(metadata, dict):
+            metadata = {}
+        correlation_id = self._resolve_correlation_id(metadata=metadata, payload=input_data)
         activity.logger.info(
             f"Resuming workflow task_id={task_id} checkpoint={checkpoint_id}"
         )
@@ -459,11 +493,13 @@ class AgentActivities:
             task_id=str(task_id),
             session_id=str(session_id or ""),
             user_id=str(user_id or ""),
+            correlation_id=correlation_id,
         )
         self._event_contexts[str(task_id)] = event_ctx
         await self.event_bus.mark_task_running(str(task_id))
 
         async def progress_callback(event_data: Dict[str, Any]):
+            await self.control_gate.wait_until_runnable(str(task_id))
             await self._publish_progress_event(task_id, event_data)
             activity.heartbeat("Resuming...")
 
@@ -500,6 +536,7 @@ class AgentActivities:
                     additional_input=input_data.get("additional_input", {}),
                     timeout=1800,
                     progress_callback=progress_callback,
+                    control_gate=lambda: self.control_gate.wait_until_runnable(str(task_id)),
                 )
             finally:
                 reset_runtime_context(llm_ctx_token)
@@ -509,28 +546,65 @@ class AgentActivities:
                 if hasattr(result, "execution_time_ms")
                 else 0
             )
+            cleaned_result = (
+                self._deep_clean_result(result.result) if result.result else {}
+            )
+            if not isinstance(cleaned_result, dict):
+                cleaned_result = {"content": cleaned_result}
+            status = str(cleaned_result.get("status") or "success").strip().lower()
+            if status not in {"success", "need_user_input", "failed", "cancelled"}:
+                status = "success"
+            message = str(
+                cleaned_result.get("message")
+                or cleaned_result.get("response")
+                or ("Workflow failed" if status == "failed" else "Workflow completed")
+            ).strip()
+            if not message:
+                message = "Workflow failed" if status == "failed" else "Workflow completed"
+            additional_input = input_data.get("additional_input", {})
+            if not isinstance(additional_input, dict):
+                additional_input = {}
+            additional_payload = additional_input.get("input") or {}
+            if not isinstance(additional_payload, dict):
+                additional_payload = {}
+            additional_context = additional_payload.get("context") or {}
+            if not isinstance(additional_context, dict):
+                additional_context = {}
+            outcome_metadata = {
+                "template_id": str(
+                    cleaned_result.get("template_id")
+                    or additional_input.get("template_id")
+                    or additional_context.get("template_id")
+                    or ""
+                ).strip(),
+                "supported_question_types": cleaned_result.get("template_profiles") or [],
+                "selected_question_type": str(
+                    cleaned_result.get("selected_template_profile")
+                    or additional_input.get("selected_template_profile")
+                    or additional_context.get("template_profile")
+                    or ""
+                ).strip(),
+            }
 
             return {
-                "status": "success",
+                "schema_version": "task-outcome",
+                "status": status,
                 "task_id": task_id,
-                "result": result.result,
+                "user_id": user_id,
+                "session_id": session_id,
+                "message": message,
+                "metadata": outcome_metadata,
+                "result": cleaned_result,
                 "checkpoint_id": result.checkpoint_id,
                 "execution_time_ms": execution_time_ms,
+                "workflow_type": "main",
+                "final_cards": cleaned_result.get("final_cards", []),
+                "saved_card_ids": cleaned_result.get("saved_card_ids", []),
             }
 
         except asyncio.CancelledError:
             activity.logger.info(f"Agent workflow resume cancelled task_id={task_id}")
-            try:
-                await self.event_bus.mark_task_cancelling(str(task_id))
-            except Exception:
-                pass
-            return {
-                "status": "cancelled",
-                "task_id": task_id,
-                "checkpoint_id": checkpoint_id,
-                "execution_time_ms": 0,
-                "message": "Workflow resume cancelled",
-            }
+            raise
         except Exception as e:
             activity.logger.error(f"Agent workflow resume failed: {e}", exc_info=True)
             raise
@@ -560,11 +634,16 @@ class AgentActivities:
             f"Publishing workflow event: {event_type} for task {task_id}"
         )
         data = data if isinstance(data, dict) else {}
-        event_ctx = self._event_contexts.get(str(task_id)) or self._build_event_context(
-            task_id=str(task_id),
-            session_id=str(data.get("workspace_id") or data.get("session_id") or ""),
-            user_id=None,
-        )
+        event_ctx = self._event_contexts.get(str(task_id))
+        if event_ctx is None:
+            correlation_id = self._resolve_correlation_id(payload=data)
+            event_ctx = self._build_event_context(
+                task_id=str(task_id),
+                session_id=str(data.get("workspace_id") or data.get("session_id") or ""),
+                user_id=None,
+                correlation_id=correlation_id,
+            )
+            self._event_contexts[str(task_id)] = event_ctx
 
         try:
             normalized_event_type = str(event_type or "").strip()
@@ -682,10 +761,12 @@ class AgentActivities:
 
             event_ctx = self._event_contexts.get(str(task_id))
             if event_ctx is None:
+                correlation_id = self._resolve_correlation_id(payload=payload)
                 event_ctx = self._build_event_context(
                     task_id=str(task_id),
                     session_id=str(workspace_id or ""),
                     user_id=None,
+                    correlation_id=correlation_id,
                 )
                 self._event_contexts[str(task_id)] = event_ctx
 
@@ -723,23 +804,23 @@ class AgentActivities:
         event_type: str,
         message: str,
         session_id: Optional[str] = None,
+        payload: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Publish terminal realtime events so frontend can close status without waiting for refresh.
         Event order is: terminal event -> done.
         """
-        terminal_payload = {
+        terminal_payload = dict(payload or {})
+        terminal_payload.update({
             "message": message,
             "task_id": task_id,
-        }
+        })
         if session_id:
             terminal_payload["workspace_id"] = session_id
             terminal_payload["session_id"] = session_id
-        event_ctx = self._event_contexts.get(str(task_id)) or self._build_event_context(
-            task_id=str(task_id),
-            session_id=str(session_id or ""),
-            user_id=None,
-        )
+        event_ctx = self._event_contexts.get(str(task_id))
+        if event_ctx is None:
+            raise ValueError(f"missing event context for task_id={task_id}")
         await self.event_bus.publish_terminal(
             ctx=event_ctx,
             event_type=event_type,

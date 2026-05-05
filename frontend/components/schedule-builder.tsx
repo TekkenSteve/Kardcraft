@@ -195,7 +195,7 @@ function getNextRuns(cron: string, timezone: string, count: number = 3): Date[] 
 
     const now = new Date();
     // Start from the next minute to avoid duplicates
-    let current = new Date(now);
+    const current = new Date(now);
     current.setSeconds(0, 0);
     current.setMinutes(current.getMinutes() + 1);
 
@@ -246,27 +246,18 @@ function formatTime(hour: number, minute: number): string {
 }
 
 export function ScheduleBuilder({ value, onChange, timezone = "UTC" }: ScheduleBuilderProps) {
-    const [isAdvanced, setIsAdvanced] = useState(false);
-    const [config, setConfig] = useState<ScheduleConfig>({
-        frequency: "daily",
-        minuteOfHour: 0,
-        hour: 9,
-        minute: 0,
-        daysOfWeek: [1, 2, 3, 4, 5], // Weekdays
-        dayOfMonth: 1,
-    });
-
-    // Parse initial value
-    useEffect(() => {
-        const parsed = parseCronToConfig(value);
-        if (parsed) {
-            setConfig(parsed);
-            setIsAdvanced(false);
-        } else if (value && value !== "0 9 * * *") {
-            // Unrecognized pattern, show advanced mode
-            setIsAdvanced(true);
-        }
-    }, []); // Only on mount
+    const initialParsed = parseCronToConfig(value);
+    const [isAdvanced, setIsAdvanced] = useState(() => !initialParsed && value !== "" && value !== "0 9 * * *");
+    const [config, setConfig] = useState<ScheduleConfig>(() =>
+        initialParsed || {
+            frequency: "daily",
+            minuteOfHour: 0,
+            hour: 9,
+            minute: 0,
+            daysOfWeek: [1, 2, 3, 4, 5], // Weekdays
+            dayOfMonth: 1,
+        },
+    );
 
     // Update cron when config changes (not in advanced mode)
     useEffect(() => {
@@ -549,4 +540,3 @@ export function ScheduleBuilder({ value, onChange, timezone = "UTC" }: ScheduleB
 }
 
 export { type Frequency, type ScheduleConfig };
-

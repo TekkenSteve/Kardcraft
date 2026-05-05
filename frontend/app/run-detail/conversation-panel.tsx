@@ -3,6 +3,8 @@
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { RunConversation } from "@/components/run-conversation";
 import { ChatInput } from "@/components/chat-input";
+import type { UploadedFile } from "@/lib/file-upload/types";
+import { useState } from "react";
 import { useRunDetailData, useRunDetailActions, useRunDetailUi } from "./run-detail-hooks";
 
 export function ConversationPanel() {
@@ -12,12 +14,18 @@ export function ConversationPanel() {
         researchStrategy,
         runStatus,
         isPaused,
+        isControlSessionActive,
         isPauseLoading,
         isResumeLoading,
+        showPause,
+        showResume,
+        showCancel,
+        inputDisabled,
+        canControlTask,
         isCancelling,
         isNewSession,
         resolvedSessionId,
-        currentTaskId,
+        currentWorkflowId,
     } = useRunDetailData();
     const { conversationScrollRef } = useRunDetailUi();
     const {
@@ -27,61 +35,45 @@ export function ConversationPanel() {
         handleCancel,
         setSelectedAgentValue,
     } = useRunDetailActions();
-    const isControlSessionActive = runStatus === "running" || runStatus === "pausing" || runStatus === "paused" || runStatus === "cancelling";
-    const showTaskControls = isControlSessionActive && !!currentTaskId;
-    const inputDisabled = showTaskControls;
-
-    if (messages.length > 0) {
-        return (
-            <>
-                <div className="flex-1 min-h-0">
-                    <ScrollArea className="h-full" ref={conversationScrollRef}>
-                        <RunConversation messages={messages} agentType={selectedAgent} />
-                    </ScrollArea>
-                </div>
-                <div className="border-t bg-background p-4 shrink-0">
-                    <ChatInput
-                        sessionId={isNewSession ? undefined : resolvedSessionId ?? undefined}
-                        disabled={inputDisabled}
-                        isTaskComplete={!showTaskControls}
-                        selectedAgent={selectedAgent}
-                        onSelectedAgentChange={(agent) => setSelectedAgentValue(agent)}
-                        initialResearchStrategy={researchStrategy}
-                        onTaskCreated={handleTaskCreated}
-                        currentTaskId={currentTaskId}
-                        isTaskRunning={showTaskControls}
-                        isPaused={isPaused}
-                        isPauseLoading={isPauseLoading}
-                        isResumeLoading={isResumeLoading}
-                        isCancelling={isCancelling}
-                        onPause={handlePause}
-                        onResume={handleResume}
-                        onCancel={handleCancel}
-                    />
-                </div>
-            </>
-        );
-    }
+    const showTaskControls = isControlSessionActive;
+    const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
 
     return (
-        <ChatInput
-            sessionId={isNewSession ? undefined : resolvedSessionId ?? undefined}
-            disabled={inputDisabled}
-            isTaskComplete={!showTaskControls}
-            selectedAgent={selectedAgent}
-            onSelectedAgentChange={(agent) => setSelectedAgentValue(agent)}
-            initialResearchStrategy={researchStrategy}
-            onTaskCreated={handleTaskCreated}
-            currentTaskId={currentTaskId}
-            variant="centered"
-            isTaskRunning={showTaskControls}
-            isPaused={isPaused}
-            isPauseLoading={isPauseLoading}
-            isResumeLoading={isResumeLoading}
-            isCancelling={isCancelling}
-            onPause={handlePause}
-            onResume={handleResume}
-            onCancel={handleCancel}
-        />
+        <>
+            {(messages.length > 0 || showTaskControls) && (
+            <div className="flex-1 min-h-0">
+                <ScrollArea className="h-full" ref={conversationScrollRef}>
+                    <RunConversation messages={messages} agentType={selectedAgent} />
+                </ScrollArea>
+            </div>
+            )}
+            <div className={(messages.length > 0 || showTaskControls) ? "border-t bg-background p-4 shrink-0" : "flex-1 bg-background"}>
+                <ChatInput
+                    sessionId={isNewSession ? undefined : resolvedSessionId ?? undefined}
+                    disabled={inputDisabled}
+                    isTaskComplete={!showTaskControls}
+                    selectedAgent={selectedAgent}
+                    onSelectedAgentChange={(agent) => setSelectedAgentValue(agent)}
+                    initialResearchStrategy={researchStrategy}
+                    onTaskCreated={handleTaskCreated}
+                    currentWorkflowId={currentWorkflowId}
+                    variant={(messages.length > 0 || showTaskControls) ? "default" : "centered"}
+                    isTaskRunning={showTaskControls}
+                    isPaused={isPaused}
+                    isPauseLoading={isPauseLoading}
+                    isResumeLoading={isResumeLoading}
+                    showPause={showPause}
+                    showResume={showResume}
+                    showCancel={showCancel}
+                    canControlTask={canControlTask}
+                    isCancelling={isCancelling}
+                    onPause={handlePause}
+                    onResume={handleResume}
+                    onCancel={handleCancel}
+                    uploadedFiles={uploadedFiles}
+                    onUploadedFilesChange={setUploadedFiles}
+                />
+            </div>
+        </>
     );
 }

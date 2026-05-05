@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type ChangeEventHandler } from "react";
-import useSWR from "swr";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslation } from "react-i18next";
 import { LayoutTemplate, CheckCircle2, Loader2, Download, Upload, Eye } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -34,6 +34,7 @@ const templatesFetcher = async (): Promise<CardTemplateListResponse> => {
 
 export default function TemplatesPage() {
     const { t } = useTranslation();
+    const queryClient = useQueryClient();
     const [savingTemplateId, setSavingTemplateId] = useState<string | null>(null);
     const [exportingTemplateId, setExportingTemplateId] = useState<string | null>(null);
     const [importing, setImporting] = useState(false);
@@ -48,14 +49,12 @@ export default function TemplatesPage() {
     const [previewTemplateProfile, setPreviewTemplateProfile] = useState<string>("");
     const [previewMode, setPreviewMode] = useState<"safe" | "high_fidelity">("high_fidelity");
 
-    const { data, isLoading, mutate } = useSWR<CardTemplateListResponse>(
-        "card-templates",
-        templatesFetcher,
-        {
-            revalidateOnFocus: true,
-            dedupingInterval: 10_000,
-        }
-    );
+    const { data, isLoading } = useQuery({
+        queryKey: ["card-templates"],
+        queryFn: templatesFetcher,
+        staleTime: 10_000,
+        refetchOnWindowFocus: true,
+    });
 
     const templates = data?.templates || [];
     const userDefaultTemplateId = data?.user_default_template_id || "";
@@ -68,7 +67,7 @@ export default function TemplatesPage() {
                 default_template_id: templateId,
                 default_template_version: version,
             });
-            await mutate();
+            await queryClient.invalidateQueries({ queryKey: ["card-templates"] });
         } catch (err) {
             setError(toUiErrorMessage(err, t("templates.saveFailed")));
         } finally {
@@ -142,7 +141,7 @@ export default function TemplatesPage() {
                     setError(t("templates.importedValidationFailed", { detail: validationMessage }));
                 }
             }
-            await mutate();
+            await queryClient.invalidateQueries({ queryKey: ["card-templates"] });
         } catch (err) {
             setError(toUiErrorMessage(err, t("templates.importFailed")));
         } finally {
@@ -218,7 +217,7 @@ export default function TemplatesPage() {
             active = false;
             clearTimeout(timer);
         };
-    }, [previewTemplateId, previewTemplateVersion, previewTemplateProfile, previewMode]);
+    }, [previewTemplateId, previewTemplateVersion, previewTemplateProfile, previewMode, t]);
 
     const closePreview = () => {
         setPreviewTemplateId(null);

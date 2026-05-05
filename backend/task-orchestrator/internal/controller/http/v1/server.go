@@ -40,6 +40,9 @@ type TimelineEvent struct {
 	Message    string `json:"message,omitempty"`
 	Timestamp  string `json:"timestamp,omitempty"`
 	WorkflowID string `json:"workflow_id,omitempty"`
+	RunID      string `json:"run_id,omitempty"`
+	SessionID  string `json:"session_id,omitempty"`
+	Seq        int64  `json:"seq,omitempty"`
 	TaskID     string `json:"task_id,omitempty"`
 	StreamID   string `json:"stream_id,omitempty"`
 	Payload    any    `json:"payload,omitempty"`
@@ -111,16 +114,19 @@ type Server struct {
 	timelineByWorkflow map[string][]TimelineEvent
 	uploads            map[string]*uploadState
 
-	subscribers            map[string]map[int]chan v1stream.OutboundEvent
-	streamReaders          map[string]context.CancelFunc
-	subscriberSeq          int
-	eventSeq               int64
-	duplicateDrops         int64
-	seenStreamIDs          map[string]map[string]struct{}
-	llmUsageIngested       int64
-	llmUsageDeduped        int64
-	llmUsageFailed         int64
-	llmUsageInvalid        int64
+	subscribers             map[string]map[int]chan v1stream.OutboundEvent
+	streamReaders           map[string]context.CancelFunc
+	subscriberSeq           int
+	eventSeq                int64
+	duplicateDrops          int64
+	seenStreamIDs           map[string]map[string]struct{}
+	runSeqByRunID           map[string]int64
+	workflowRunByWorkflowID map[string]string
+	invalidRuntimeEvents    int64
+	llmUsageIngested        int64
+	llmUsageDeduped         int64
+	llmUsageFailed          int64
+	llmUsageInvalid         int64
 }
 
 type ServerDependencies struct {
@@ -150,22 +156,24 @@ func NewServer(port int, deps ServerDependencies) *Server {
 		ankiRuntimeURL = "http://anki-runtime:8012"
 	}
 	s := &Server{
-		port:               port,
-		mux:                http.NewServeMux(),
-		httpClient:         httpClient,
-		ankiRuntimeURL:     ankiRuntimeURL,
-		closeFuncs:         deps.CloseFuncs,
-		redisSvc:           deps.RedisSvc,
-		taskService:        deps.TaskService,
-		commandService:     deps.CommandService,
-		readModel:          deps.ReadModel,
-		workflowSvc:        deps.WorkflowSvc,
-		sessionStore:       deps.SessionStore,
-		timelineByWorkflow: make(map[string][]TimelineEvent),
-		uploads:            make(map[string]*uploadState),
-		subscribers:        make(map[string]map[int]chan v1stream.OutboundEvent),
-		streamReaders:      make(map[string]context.CancelFunc),
-		seenStreamIDs:      make(map[string]map[string]struct{}),
+		port:                    port,
+		mux:                     http.NewServeMux(),
+		httpClient:              httpClient,
+		ankiRuntimeURL:          ankiRuntimeURL,
+		closeFuncs:              deps.CloseFuncs,
+		redisSvc:                deps.RedisSvc,
+		taskService:             deps.TaskService,
+		commandService:          deps.CommandService,
+		readModel:               deps.ReadModel,
+		workflowSvc:             deps.WorkflowSvc,
+		sessionStore:            deps.SessionStore,
+		timelineByWorkflow:      make(map[string][]TimelineEvent),
+		uploads:                 make(map[string]*uploadState),
+		subscribers:             make(map[string]map[int]chan v1stream.OutboundEvent),
+		streamReaders:           make(map[string]context.CancelFunc),
+		seenStreamIDs:           make(map[string]map[string]struct{}),
+		runSeqByRunID:           make(map[string]int64),
+		workflowRunByWorkflowID: make(map[string]string),
 	}
 
 	s.registerRoutes()

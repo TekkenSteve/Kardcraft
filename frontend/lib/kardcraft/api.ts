@@ -1,5 +1,7 @@
 "use client";
 
+import { emitAuthStateChanged } from "@/lib/session/auth-events";
+
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_BASE_PATH || "").replace(/\/$/, "");
 
 function apiUrl(path: string): string {
@@ -36,6 +38,7 @@ export interface TaskSubmitRequest {
     task_type?: string;  // 添加 task_type 字段，默认为 "main"
     session_id?: string;
     context?: Record<string, unknown>;
+    template_id?: string;
     research_strategy?: "quick" | "standard" | "deep" | "academic";
     max_concurrent_agents?: number;
 }
@@ -43,6 +46,7 @@ export interface TaskSubmitRequest {
 export interface TaskSubmitResponse {
     task_id?: string;
     workflow_id: string;
+    run_id?: string;
     status: string;
     message?: string;
     created_at: string;
@@ -107,15 +111,23 @@ export async function submitTask(request: TaskSubmitRequest): Promise<TaskSubmit
         console.log('Request headers:', headers);
     }
 
-    // 统一请求结构：与 submitTaskWithFiles 保持一致，避免 context 丢失
+    const taskType = request.task_type || "main";
+    const input: Record<string, unknown> = {
+        session_id: request.session_id,
+        research_strategy: request.research_strategy,
+    };
+    if (taskType === "card_template") {
+        const templateId = request.template_id || (typeof request.context?.template_id === "string" ? request.context.template_id : "");
+        input.template_id = templateId;
+        input.variables = request.context;
+    } else {
+        input.context = request.context;
+    }
+
     const requestWithDefaults = {
-        task_type: request.task_type || "main",
+        task_type: taskType,
         query: request.query,
-        input: {
-            session_id: request.session_id,
-            context: request.context,
-            research_strategy: request.research_strategy,
-        },
+        input,
         config: request.max_concurrent_agents
             ? { max_concurrent_agents: request.max_concurrent_agents }
             : undefined,
@@ -195,7 +207,26 @@ export async function listTasks(limit: number = 50, offset: number = 0): Promise
 }
 
 export function getStreamUrl(workflowId: string): string {
-    return apiUrl(`/api/v1/stream/sse?workflow_id=${encodeURIComponent(workflowId)}`);
+    return getStreamUrlForWorkflows([workflowId]);
+}
+
+export function getStreamUrlForWorkflows(workflowIds: string[], options?: { lastEventID?: number; includeLastEventID?: boolean }): string {
+    const normalized = workflowIds
+        .map((item) => item.trim())
+        .filter((item) => item.length > 0);
+    const params = new URLSearchParams();
+    normalized.forEach((item) => params.append("workflow_id", item));
+
+    if (
+        typeof options?.lastEventID === "number" &&
+        Number.isFinite(options.lastEventID) &&
+        (options.lastEventID > 0 || options.includeLastEventID)
+    ) {
+        params.set("last_event_id", String(Math.floor(options.lastEventID)));
+    }
+
+    const query = params.toString();
+    return query.length > 0 ? apiUrl(`/api/v1/stream/sse?${query}`) : apiUrl("/api/v1/stream/sse");
 }
 
 // Session Types
@@ -759,9 +790,7 @@ async function extractApiError(response: Response, fallbackPrefix: string): Prom
 }
 
 function notifyAuthStateChanged() {
-    if (typeof window !== "undefined") {
-        window.dispatchEvent(new CustomEvent("auth-state-changed"));
-    }
+    emitAuthStateChanged();
 }
 
 async function assertApiOk(response: Response, fallbackPrefix: string): Promise<void> {

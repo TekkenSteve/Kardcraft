@@ -2,16 +2,16 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import { usePathname, useSearchParams, useRouter } from "next/navigation";
 import { Plus, History, Sparkles, Microscope, Bot, CalendarClock, MoreHorizontal, Pencil, Pin, Trash2, LayoutTemplate } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
-import { UserPanel } from "@/components/user-panel";
-import { useEffect, useState, Suspense, useCallback, useRef } from "react";
+import { useEffect, useState, Suspense, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { RootState } from "@/lib/store";
-import { Session, updateSession, deleteSession } from "@/lib/kardcraft/api";
+import { Session, updateSession, deleteSession, isUnauthenticatedApiError } from "@/lib/kardcraft/api";
 import { listSessions } from "@/lib/kardcraft/session-repository";
-import useSWR from "swr";
+import { dedupeSessionsById } from "@/lib/kardcraft/session-list";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -38,14 +38,19 @@ import {
 } from "@/components/ui/sidebar";
 import { useRegistryViewModel } from "@/lib/run/system";
 import { toSessionKey } from "@/lib/run/types";
-import { useSelector } from "react-redux";
+import { useSessionSelector } from "@/lib/session/system";
+
+const UserPanel = dynamic(
+  () => import("@/components/user-panel").then((mod) => mod.UserPanel),
+  { ssr: false },
+);
 
 function SidebarInner() {
   const pathname = usePathname();
+  const safePathname = pathname ?? "";
   const searchParams = useSearchParams();
   const router = useRouter();
-  const currentSessionId = searchParams.get("session_id");
-  const [recentSessions, setRecentSessions] = useState<Session[]>([]);
+  const currentSessionId = searchParams?.get("session_id") ?? null;
   const [editingSession, setEditingSession] = useState<Session | null>(null);
   const [editingTitle, setEditingTitle] = useState("");
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
@@ -53,12 +58,13 @@ function SidebarInner() {
   const prevStatusRef = useRef<string | null>(null);
   const { isMobile, setOpenMobile } = useSidebar();
   const { t } = useTranslation();
+  const queryClient = useQueryClient();
   
   const registry = useRegistryViewModel();
   const activeSummary = registry.sessions.find((session) => session.sessionKey === toSessionKey(currentSessionId && currentSessionId !== "new" ? currentSessionId : null));
   const runStatus = activeSummary?.status ?? "idle";
   const streamingTitle = activeSummary?.sessionTitle ?? null;
-  const userId = useSelector((state: RootState) => state.auth.userId);
+  const userId = useSessionSelector((snapshot) => snapshot.context.session?.identity?.id ?? null);
 
   // Close sidebar on mobile after navigation
   const handleNavClick = useCallback(() => {
@@ -73,79 +79,78 @@ function SidebarInner() {
     router.push(`/run-detail?session_id=new&new_session=${Date.now()}`);
   }, [handleNavClick, router]);
 
-  const sessionsKey = userId ? ["recent-sessions", userId] : null;
+  const sessionsKey = useMemo(
+    () => (userId ? (["recent-sessions", userId] as const) : null),
+    [userId],
+  );
   const sessionsFetcher = useCallback(async () => {
     try {
       const data = await listSessions(10, 0);
       return data.sessions || [];
     } catch (error) {
-      // Silently fail if unauthorized (user not logged in) or network error
-      if (error instanceof Error &&
-        (error.message.includes("unauthorized") ||
-          error.message.includes("Unauthorized") ||
-          error.message.includes("Failed to fetch"))) {
+      if (isUnauthenticatedApiError(error)) {
         return [];
       }
       throw error;
     }
   }, []);
 
-  const { data: swrSessions, mutate: mutateSessions } = useSWR<Session[]>(
-    sessionsKey,
-    sessionsFetcher,
-    {
-      dedupingInterval: 10_000,
-      revalidateOnFocus: true,
-      keepPreviousData: true,
-    }
-  );
+  const sessionsQuery = useQuery({
+    queryKey: sessionsKey || ["recent-sessions", "anonymous"],
+    queryFn: sessionsFetcher,
+    enabled: !!sessionsKey,
+    staleTime: 10_000,
+    refetchOnWindowFocus: false,
+  });
 
-  useEffect(() => {
-    if (swrSessions) {
-      setRecentSessions(swrSessions);
-    }
-  }, [swrSessions]);
+  const recentSessions = useMemo<Session[]>(
+    () => dedupeSessionsById(sessionsQuery.data || []),
+    [sessionsQuery.data],
+  );
 
   const handleEditTitle = useCallback((session: Session) => {
     setEditingSession(session);
     setEditingTitle(session.title || "");
-  }, []);
+  }, [setEditingSession, setEditingTitle]);
 
   const handleSaveTitle = useCallback(async () => {
     if (!editingSession) return;
     const nextTitle = editingTitle.trim();
     await updateSession(editingSession.session_id, { title: nextTitle });
-    setRecentSessions((prev) =>
-      prev.map((s) =>
+    queryClient.setQueryData<Session[] | undefined>(sessionsKey || ["recent-sessions", "anonymous"], (prev) =>
+      (prev || []).map((s) =>
         s.session_id === editingSession.session_id ? { ...s, title: nextTitle } : s
       )
     );
+    await queryClient.invalidateQueries({ queryKey: ["recent-sessions"] });
     setEditingSession(null);
-  }, [editingSession, editingTitle]);
+  }, [editingSession, editingTitle, queryClient, sessionsKey, setEditingSession]);
 
   const handleTogglePin = useCallback(async (session: Session) => {
     const nextPinned = !session.pinned;
     await updateSession(session.session_id, { pinned: nextPinned });
-    setRecentSessions((prev) =>
-      prev.map((s) =>
+    queryClient.setQueryData<Session[] | undefined>(sessionsKey || ["recent-sessions", "anonymous"], (prev) =>
+      (prev || []).map((s) =>
         s.session_id === session.session_id ? { ...s, pinned: nextPinned } : s
       )
     );
-    mutateSessions();
-  }, [mutateSessions]);
+    await queryClient.invalidateQueries({ queryKey: ["recent-sessions"] });
+  }, [queryClient, sessionsKey]);
 
   const handleDeleteSession = useCallback(async (session: Session) => {
     const confirmed = window.confirm(t("sidebar.deleteConfirm"));
     if (!confirmed) return;
     await deleteSession(session.session_id);
-    setRecentSessions((prev) => prev.filter((s) => s.session_id !== session.session_id));
-    mutateSessions();
+    queryClient.setQueryData<Session[] | undefined>(sessionsKey || ["recent-sessions", "anonymous"], (prev) =>
+      (prev || []).filter((s) => s.session_id !== session.session_id)
+    );
+    await queryClient.invalidateQueries({ queryKey: ["recent-sessions"] });
     if (currentSessionId === session.session_id) {
       router.push("/runs");
     }
-  }, [currentSessionId, mutateSessions, router, t]);
+  }, [currentSessionId, queryClient, router, sessionsKey, t]);
 
-  const visibleSessions = userId ? recentSessions : [];
+  const visibleSessions = useMemo(() => (userId ? recentSessions : []), [recentSessions, userId]);
 
   // Refresh when navigating to a new session (e.g., after creating a task)
   // This detects when currentSessionId changes to a value not in our list
@@ -160,21 +165,25 @@ function SidebarInner() {
     if (!sessionExists) {
       // New session detected, refresh the list after a short delay
       // (give the backend time to persist the session)
-      const timer = setTimeout(() => mutateSessions(), 1000);
+      const timer = setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: ["recent-sessions"] });
+      }, 1000);
       return () => clearTimeout(timer);
     }
-  }, [currentSessionId, visibleSessions, mutateSessions]);
+  }, [currentSessionId, queryClient, visibleSessions]);
 
   // Auto-refresh when a task completes (to update title)
   useEffect(() => {
     // Detect transition from running to completed
     if (prevStatusRef.current === "running" && runStatus === "completed") {
       // Delay refresh to allow backend to update session title
-      const timer = setTimeout(() => mutateSessions(), 1500);
+      const timer = setTimeout(() => {
+        void queryClient.invalidateQueries({ queryKey: ["recent-sessions"] });
+      }, 1500);
       return () => clearTimeout(timer);
     }
     prevStatusRef.current = runStatus;
-  }, [runStatus, mutateSessions]);
+  }, [queryClient, runStatus]);
 
   // Update sidebar immediately when streaming title arrives (title now generated at task start)
   // Re-run when recentSessions changes to handle case where title arrives before session is loaded
@@ -184,39 +193,40 @@ function SidebarInner() {
     // Check if current session exists and needs title update
     const session = visibleSessions.find(s => s.session_id === currentSessionId);
     if (session && !session.title) {
-      // Update the title in local state for immediate UI feedback
-      setRecentSessions(prev => prev.map(s =>
-        s.session_id === currentSessionId
-          ? { ...s, title: streamingTitle }
-          : s
-      ));
+      queryClient.setQueryData<Session[] | undefined>(sessionsKey || ["recent-sessions", "anonymous"], (prev) =>
+        (prev || []).map((item) =>
+          item.session_id === currentSessionId
+            ? { ...item, title: streamingTitle }
+            : item
+        )
+      );
     }
-  }, [streamingTitle, currentSessionId, visibleSessions]);
+  }, [currentSessionId, queryClient, sessionsKey, streamingTitle, visibleSessions]);
 
   const routes = [
     {
       label: t("sidebar.newTask"),
       icon: Plus,
       href: "/run-detail?session_id=new",
-      active: pathname.startsWith("/run-detail") && currentSessionId === "new",
+      active: safePathname.startsWith("/run-detail") && currentSessionId === "new",
     },
     {
       label: t("sidebar.myAgents"),
       icon: Bot,
       href: "/agents",
-      active: pathname.startsWith("/agents"),
+      active: safePathname.startsWith("/agents"),
     },
     {
       label: t("sidebar.schedules"),
       icon: CalendarClock,
       href: "/schedules",
-      active: pathname.startsWith("/schedules"),
+      active: safePathname.startsWith("/schedules"),
     },
     {
       label: t("sidebar.cardTemplates"),
       icon: LayoutTemplate,
       href: "/templates",
-      active: pathname.startsWith("/templates"),
+      active: safePathname.startsWith("/templates"),
     },
   ];
 

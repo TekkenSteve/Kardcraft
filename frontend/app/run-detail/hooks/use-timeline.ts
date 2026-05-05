@@ -85,6 +85,57 @@ const TERMINAL_EVENT_TYPES = new Set<string>([
     "STREAM_END",
 ]);
 
+function eventIdentity(event: RunEvent, index: number): string {
+    return event.stream_id ||
+        `${event.workflow_id || "unknown"}-${event.type}-${event.seq || event.timestamp || index}`;
+}
+
+function nodeLifecycleKey(event: RunEvent): string | null {
+    if (event.type !== "NODE_STARTED" && event.type !== "NODE_COMPLETED" && event.type !== "NODE_FAILED") {
+        return null;
+    }
+    const payload = "payload" in event ? event.payload : undefined;
+    if (!payload || typeof payload !== "object") return null;
+    const record = payload as Record<string, unknown>;
+    const nodeName = typeof record.node_name === "string" && record.node_name.trim().length > 0
+        ? record.node_name.trim()
+        : typeof record.event_name === "string" && record.event_name.trim().length > 0
+            ? record.event_name.trim()
+            : "";
+    if (!nodeName) return null;
+    return [event.workflow_id, event.run_id || "", nodeName].join("\u0000");
+}
+
+function buildNodeStatusOverrides(events: RunEvent[]): Map<string, TimelineDisplayEvent["status"]> {
+    const activeStartedByNode = new Map<string, string[]>();
+    const overrides = new Map<string, TimelineDisplayEvent["status"]>();
+
+    events.forEach((event, index) => {
+        const key = nodeLifecycleKey(event);
+        if (!key) return;
+
+        if (event.type === "NODE_STARTED") {
+            const active = activeStartedByNode.get(key) || [];
+            active.push(eventIdentity(event, index));
+            activeStartedByNode.set(key, active);
+            return;
+        }
+
+        const active = activeStartedByNode.get(key) || [];
+        const startedID = active.pop();
+        if (active.length > 0) {
+            activeStartedByNode.set(key, active);
+        } else {
+            activeStartedByNode.delete(key);
+        }
+        if (startedID) {
+            overrides.set(startedID, event.type === "NODE_FAILED" ? "failed" : "completed");
+        }
+    });
+
+    return overrides;
+}
+
 function stringifyPayloadForTimeline(payload: unknown): string {
     const seen = new WeakSet<object>();
     const redactedKeys = new Set([
@@ -125,14 +176,14 @@ function stringifyPayloadForTimeline(payload: unknown): string {
 
 export function useTimeline({
     runEvents,
-    currentTaskId,
+    currentWorkflowId,
     setActiveTab,
     conversationScrollRef,
 }: {
     runEvents: RunEvent[];
-    currentTaskId: string | null;
+    currentWorkflowId: string | null;
     setActiveTab: (value: string) => void;
-    conversationScrollRef: React.RefObject<HTMLDivElement>;
+    conversationScrollRef: React.RefObject<HTMLDivElement | null>;
 }) {
     const { t } = useTranslation();
 
@@ -243,6 +294,7 @@ export function useTimeline({
             "thread.message.completed",
             "LLM_PROMPT",
             "LLM_OUTPUT",
+            "LLM_USAGE_RECORDED",
         ]);
 
         const filteredRunEvents = runEvents
@@ -250,6 +302,7 @@ export function useTimeline({
             .slice(-MAX_TIMELINE_EVENTS);
 
         const deduplicatedEvents = filteredRunEvents;
+        const nodeStatusOverrides = buildNodeStatusOverrides(deduplicatedEvents);
 
         const terminalWorkflows = new Map<string, "completed" | "failed" | "cancelled">();
         runEvents.forEach((event) => {
@@ -264,13 +317,12 @@ export function useTimeline({
         });
 
         return deduplicatedEvents.map((event, index): TimelineDisplayEvent => {
+            const uniqueId = eventIdentity(event, index);
             const workflowTerminalStatus = terminalWorkflows.get(event.workflow_id);
+            const nodeStatusOverride = nodeStatusOverrides.get(uniqueId);
             const eventStatus = workflowTerminalStatus
                 ? workflowTerminalStatus
-                : getEventStatus(event.type);
-
-            const uniqueId = event.stream_id ||
-                `${event.workflow_id || 'unknown'}-${event.type}-${event.seq || event.timestamp || index}`;
+                : nodeStatusOverride || getEventStatus(event.type);
 
             const { details, detailsType } = extractEventDetails(event);
             const title = getFriendlyTitle(event);
@@ -283,10 +335,10 @@ export function useTimeline({
                 timestamp: event.timestamp ? new Date(event.timestamp).toLocaleTimeString() : "",
                 details,
                 detailsType,
-                messageId: event.type === "AGENT_COMPLETED" || event.type === "WORKFLOW_COMPLETED" ? `assistant-final-${currentTaskId}` : undefined
+                messageId: event.type === "AGENT_COMPLETED" || event.type === "WORKFLOW_COMPLETED" ? `assistant-final-${currentWorkflowId}` : undefined
             };
         });
-    }, [categorizeEvent, currentTaskId, getEventStatus, getFriendlyTitle, runEvents]);
+    }, [categorizeEvent, currentWorkflowId, getEventStatus, getFriendlyTitle, runEvents]);
 
     const scrollToMessage = (messageId: string) => {
         if (!conversationScrollRef.current) return;

@@ -22,6 +22,7 @@ class EventContext:
     user_id: Optional[str]
     workflow_id: str
     run_id: str
+    correlation_id: str
 
 
 class WorkflowEventBus:
@@ -122,6 +123,10 @@ class WorkflowEventBus:
         channel: str,
         payload: dict[str, Any],
     ) -> bool:
+        if not str(ctx.correlation_id or "").strip():
+            raise ValueError("event context correlation_id is required")
+        normalized_payload = dict(payload)
+        normalized_payload.setdefault("correlation_id", str(ctx.correlation_id))
         slot_acquired = False
         if self._process_gate is not None:
             slot_acquired = await self._process_gate.try_acquire_publish_slot(channel)
@@ -136,6 +141,12 @@ class WorkflowEventBus:
                 return False
 
         try:
+            normalized_payload.setdefault("task_id", ctx.task_id)
+            normalized_payload.setdefault("workflow_id", ctx.workflow_id)
+            normalized_payload.setdefault("run_id", ctx.run_id)
+            normalized_payload.setdefault("session_id", ctx.session_id or "")
+            normalized_payload.setdefault("workspace_id", ctx.session_id or "")
+            normalized_payload.setdefault("event_type", event_type)
             await self._repo.append_event(
                 task_id=ctx.task_id,
                 session_id=ctx.session_id,
@@ -144,7 +155,7 @@ class WorkflowEventBus:
                 run_id=ctx.run_id or "unknown-run",
                 event_type=event_type,
                 channel=channel,
-                payload=payload,
+                payload=normalized_payload,
             )
             return True
         except PublishRejectedError as exc:

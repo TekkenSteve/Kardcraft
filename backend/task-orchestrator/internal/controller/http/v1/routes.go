@@ -25,11 +25,13 @@ func (s *Server) registerTaskRoutes() {
 		IsTemporalEnabled:          s.isTemporalEnabled,
 		NextWorkflowID:             s.nextWorkflowID,
 		EnsureWorkflowStreamReader: s.ensureWorkflowStreamReader,
+		AppendTimelineWithStreamID: s.appendTimelineWithStreamID,
+		BindWorkflowRunID:          s.bindWorkflowRunID,
 		AuthorizeTaskAccess: func(r *http.Request, userID, taskID string) bool {
 			return s.authorizeTaskAccess(r.Context(), userID, taskID)
 		},
-		ActiveTaskCode:  errCodeActiveTaskExists,
-		AuthzDeniedCode: errCodeAuthzDenied,
+		ActiveTaskCode:          errCodeActiveTaskExists,
+		AuthzDeniedCode:         errCodeAuthzDenied,
 		IdempotencyRequiredCode: errCodeIdempotencyKeyRequired,
 	}
 	s.mux.HandleFunc("/api/v1/tasks", v1handlers.NewTasksHandler(tasksDeps))
@@ -67,22 +69,31 @@ func (s *Server) registerTaskRoutes() {
 			s.unsubscribe(workflowID, subscriberID)
 		},
 		EnsureWorkflowStreamReader: s.ensureWorkflowStreamReader,
-		Backlog: func(workflowID string) []map[string]any {
+		Backlog: func(workflowID string, afterEventID int64) []map[string]any {
 			s.mu.RLock()
 			backlog := append([]TimelineEvent(nil), s.timelineByWorkflow[workflowID]...)
 			s.mu.RUnlock()
 			out := make([]map[string]any, 0, len(backlog))
 			for _, ev := range backlog {
-				payload := map[string]any{
-					"type":        ev.Type,
-					"workflow_id": ev.WorkflowID,
-					"task_id":     ev.TaskID,
-					"message":     ev.Message,
-					"timestamp":   ev.Timestamp,
-					"stream_id":   ev.StreamID,
+				if afterEventID > 0 && ev.ID <= afterEventID {
+					continue
 				}
-				if ev.Payload != nil {
-					payload["payload"] = ev.Payload
+				correlationID := correlationIDFromPayload(anyToMap(ev.Payload), ev.WorkflowID, ev.RunID)
+				if correlationID == "" {
+					continue
+				}
+				payload := map[string]any{
+					"schema_version": 1,
+					"correlation_id": correlationID,
+					"event_id":    fmt.Sprintf("%d", ev.ID),
+					"event_type":  ev.Type,
+					"workflow_id": ev.WorkflowID,
+					"run_id":      ev.RunID,
+					"session_id":  ev.SessionID,
+					"seq":         ev.Seq,
+					"occurred_at": ev.Timestamp,
+					"stream_id":   ev.StreamID,
+					"payload":     ev.Payload,
 				}
 				out = append(out, payload)
 			}
@@ -92,6 +103,14 @@ func (s *Server) registerTaskRoutes() {
 	}))
 }
 
+func anyToMap(input any) map[string]any {
+	typed, ok := input.(map[string]any)
+	if !ok || typed == nil {
+		return map[string]any{}
+	}
+	return typed
+}
+
 func (s *Server) registerSessionAndTemplateRoutes() {
 	sessionsDeps := v1handlers.SessionsDeps{
 		WriteJSON:     writeJSON,
@@ -99,11 +118,11 @@ func (s *Server) registerSessionAndTemplateRoutes() {
 		UserID: func(r *http.Request) string {
 			return userIDFromContext(r.Context())
 		},
-		ReadModel:               s.readModel,
-		WorkflowSvc:             s.workflowSvc,
-		CommandService:          s.commandService,
-		IsTemporalEnabled:       s.isTemporalEnabled,
-		AuthzDeniedCode:         errCodeAuthzDenied,
+		ReadModel:         s.readModel,
+		WorkflowSvc:       s.workflowSvc,
+		CommandService:    s.commandService,
+		IsTemporalEnabled: s.isTemporalEnabled,
+		AuthzDeniedCode:   errCodeAuthzDenied,
 	}
 	s.mux.HandleFunc("/api/v1/sessions", v1handlers.NewSessionsHandler(sessionsDeps))
 	s.mux.HandleFunc("/api/v1/sessions/", v1handlers.NewSessionsRouter(sessionsDeps))

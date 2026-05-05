@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
@@ -38,6 +39,8 @@ type TasksDeps struct {
 	IsTemporalEnabled          func() bool
 	NextWorkflowID             func(taskType string) string
 	EnsureWorkflowStreamReader func(workflowID string)
+	AppendTimelineWithStreamID func(workflowID, sessionID, eventType, message, streamID string, payload any)
+	BindWorkflowRunID          func(workflowID, runID string)
 	AuthorizeTaskAccess        func(r *http.Request, userID, taskID string) bool
 
 	ActiveTaskCode          string
@@ -146,6 +149,11 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 		}
 		userID := deps.UserID(r)
 		sessionID := resolveSessionID(req.SessionID)
+		correlationID, err := ensureCorrelationID("")
+		if err != nil {
+			http.Error(w, "failed to generate correlation_id", http.StatusInternalServerError)
+			return
+		}
 		workflowID := deps.NextWorkflowID(ucdto.TaskTypeCardTemplate)
 		cmd := ucdto.CreateTaskCommand{
 			TaskID:    workflowID,
@@ -157,10 +165,14 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 				SessionID:  sessionID,
 				TemplateID: req.TemplateID,
 				Variables:  req.Variables,
+				ContextEnvelope: map[string]any{
+					"correlation_id": correlationID,
+				},
 			},
 			Config: ucdto.CreateTaskConfig{},
 			Metadata: ucdto.CreateTaskMetadata{
-				Source: "tasks/template",
+				RequestID: correlationID,
+				Source:    "tasks/template",
 			},
 		}
 		createResult, activeTaskID, err := deps.CommandService.CreateTaskInSession(r.Context(), cmd)
@@ -178,13 +190,14 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 		}
 		deps.EnsureWorkflowStreamReader(createResult.WorkflowID)
 		deps.WriteJSON(w, http.StatusCreated, map[string]any{
-			"workflow_id": createResult.WorkflowID,
-			"run_id":      createResult.RunID,
-			"status":      createResult.Status,
-			"message":     fmt.Sprintf("Template workflow started with template: %s", req.TemplateID),
-			"created_at":  deps.NowRFC3339(),
-			"stream_url":  fmt.Sprintf("/api/v1/stream/sse?workflow_id=%s", createResult.WorkflowID),
-			"session_id":  createResult.SessionID,
+			"workflow_id":    createResult.WorkflowID,
+			"run_id":         createResult.RunID,
+			"status":         createResult.Status,
+			"message":        fmt.Sprintf("Template workflow started with template: %s", req.TemplateID),
+			"created_at":     deps.NowRFC3339(),
+			"stream_url":     fmt.Sprintf("/api/v1/stream/sse?workflow_id=%s", createResult.WorkflowID),
+			"session_id":     createResult.SessionID,
+			"correlation_id": correlationID,
 		})
 	}
 }
@@ -293,6 +306,13 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 		inheritedFileIDs,
 		effectiveFileIDs,
 	)
+	correlationID, err := ensureCorrelationID(req.Metadata.RequestID)
+	if err != nil {
+		http.Error(w, "failed to generate correlation_id", http.StatusInternalServerError)
+		return
+	}
+	req.Metadata.RequestID = correlationID
+	req.Input.ContextEnvelope["correlation_id"] = correlationID
 
 	workflowID := deps.NextWorkflowID(taskType)
 	cmd := ucdto.CreateTaskCommand{
@@ -317,7 +337,7 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 		},
 		Config: ucdto.CreateTaskConfig{ActivityTaskQueue: req.Config.ActivityTaskQueue},
 		Metadata: ucdto.CreateTaskMetadata{
-			RequestID: req.Metadata.RequestID,
+			RequestID: correlationID,
 			Source:    req.Metadata.Source,
 			TraceID:   req.Metadata.TraceID,
 		},
@@ -344,6 +364,9 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 		userID,
 		req.Input.ContextEnvelope,
 	)
+	if deps.BindWorkflowRunID != nil {
+		deps.BindWorkflowRunID(createResult.WorkflowID, createResult.RunID)
+	}
 	persistPlannerTraceEvents(
 		r.Context(),
 		deps,
@@ -383,6 +406,7 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 		"created_at":  deps.NowRFC3339(),
 		"stream_url":  fmt.Sprintf("/api/v1/stream/sse?workflow_id=%s", createResult.WorkflowID),
 		"session_id":  createResult.SessionID,
+		"correlation_id": correlationID,
 		"file_ids":    effectiveFileIDs,
 	})
 }
@@ -1198,6 +1222,7 @@ func handleGetTask(w http.ResponseWriter, r *http.Request, taskID string, deps T
 	}
 	response := map[string]any{
 		"workflow_id": taskID,
+		"run_id":      desc.RunID,
 		"task_id":     taskID,
 		"task_type":   "main",
 		"query":       "",
@@ -1266,11 +1291,93 @@ func handleTaskControl(w http.ResponseWriter, r *http.Request, taskID string, ac
 		deps.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error(), "workflow_id": taskID})
 		return
 	}
+	appendControlTimelineEvent(r.Context(), taskID, action, req.Reason, userID, strings.TrimSpace(r.Header.Get("Idempotency-Key")), deps)
 	deps.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":     true,
 		"message":     fmt.Sprintf("Task %s signal sent successfully", action),
 		"workflow_id": taskID,
 	})
+}
+
+func appendControlTimelineEvent(ctx context.Context, taskID, action, reason, requestedBy, idempotencyKey string, deps TasksDeps) {
+	if deps.AppendTimelineWithStreamID == nil {
+		return
+	}
+	eventType, message := controlTimelineEvent(action, reason)
+	if eventType == "" {
+		return
+	}
+	sessionID := ""
+	if deps.ReadModel != nil {
+		if resolved, err := deps.ReadModel.GetTaskSession(ctx, taskID); err == nil {
+			sessionID = strings.TrimSpace(resolved)
+		}
+	}
+	runID := ""
+	if deps.WorkflowSvc != nil && deps.WorkflowSvc.Enabled() {
+		if desc, err := deps.WorkflowSvc.DescribeWorkflow(ctx, taskID, ""); err == nil {
+			runID = strings.TrimSpace(desc.RunID)
+		}
+	}
+	streamID := deterministicControlStreamID(taskID, action, idempotencyKey)
+	deps.AppendTimelineWithStreamID(taskID, sessionID, eventType, message, streamID, map[string]any{
+		"task_id":          taskID,
+		"workflow_id":      taskID,
+		"run_id":           runID,
+		"correlation_id":   strings.TrimSpace(idempotencyKey),
+		"action":           strings.ToLower(strings.TrimSpace(action)),
+		"reason":           strings.TrimSpace(reason),
+		"requested_by":     strings.TrimSpace(requestedBy),
+		"idempotency_key":  strings.TrimSpace(idempotencyKey),
+		"schema_version":   "task-control-event.v1",
+		"control_event_id": streamID,
+	})
+}
+
+func controlTimelineEvent(action, reason string) (string, string) {
+	normalizedAction := strings.ToLower(strings.TrimSpace(action))
+	normalizedReason := strings.TrimSpace(reason)
+	switch normalizedAction {
+	case "pause":
+		if normalizedReason == "" {
+			normalizedReason = "Task paused"
+		}
+		return "workflow.paused", normalizedReason
+	case "resume":
+		if normalizedReason == "" {
+			normalizedReason = "Task resumed"
+		}
+		return "workflow.resumed", normalizedReason
+	case "cancel":
+		if normalizedReason == "" {
+			normalizedReason = "Task cancelled"
+		}
+		return "workflow.cancelled", normalizedReason
+	default:
+		return "", ""
+	}
+}
+
+func deterministicControlStreamID(taskID, action, idempotencyKey string) string {
+	sum := sha1.Sum([]byte(strings.Join([]string{
+		"task-control",
+		strings.TrimSpace(taskID),
+		strings.ToLower(strings.TrimSpace(action)),
+		strings.TrimSpace(idempotencyKey),
+	}, "|")))
+	return "task_control:" + hex.EncodeToString(sum[:])
+}
+
+func ensureCorrelationID(value string) (string, error) {
+	trimmed := strings.TrimSpace(value)
+	if trimmed != "" {
+		return trimmed, nil
+	}
+	buf := make([]byte, 16)
+	if _, err := rand.Read(buf); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(buf), nil
 }
 
 func handleTaskPlannerTrace(w http.ResponseWriter, r *http.Request, taskID string, deps TasksDeps) {

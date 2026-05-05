@@ -94,6 +94,18 @@ type UsageLedgerRow struct {
 	CreatedAt         time.Time
 }
 
+type WorkflowOutboxEvent struct {
+	TaskID     string
+	SessionID  string
+	UserID     string
+	WorkflowID string
+	RunID      string
+	EventType  string
+	Channel    string
+	Payload    map[string]any
+	OccurredAt time.Time
+}
+
 type ModelUsageBreakdown struct {
 	Model               string  `json:"model"`
 	Provider            string  `json:"provider"`
@@ -777,29 +789,180 @@ func (s *SessionStore) UpdateTaskFinalState(
 	}
 
 	if sessionID != "" {
-		eventType := "WORKFLOW_COMPLETED"
-		message := "Workflow completed"
-		switch status {
-		case "failed":
-			eventType = "WORKFLOW_FAILED"
-			if strings.TrimSpace(errMsg) != "" {
-				message = strings.TrimSpace(errMsg)
-			} else {
-				message = "Workflow failed"
-			}
-		case "cancelled", "canceled":
-			eventType = "WORKFLOW_CANCELLED"
-			message = "Workflow cancelled"
-		}
-		streamID := fmt.Sprintf("terminal:%s:%s", taskID, status)
-		_ = s.InsertEvent(ctx, sessionID, taskID, taskID, eventType, message, "", streamID, completedAt)
-	}
-
-	if sessionID != "" {
 		s.invalidateSessionCache(ctx, sessionID, userID)
 		s.touchSessionActivity(ctx, sessionID, userID)
 	}
 	return nil
+}
+
+func (s *SessionStore) AppendWorkflowOutboxEvent(ctx context.Context, event WorkflowOutboxEvent) error {
+	if s == nil || s.pg == nil {
+		return fmt.Errorf("postgres not configured")
+	}
+	event.TaskID = strings.TrimSpace(event.TaskID)
+	event.WorkflowID = strings.TrimSpace(event.WorkflowID)
+	event.RunID = strings.TrimSpace(event.RunID)
+	event.EventType = strings.TrimSpace(event.EventType)
+	event.Channel = strings.TrimSpace(event.Channel)
+	if event.TaskID == "" {
+		return fmt.Errorf("task_id is required")
+	}
+	if event.WorkflowID == "" {
+		return fmt.Errorf("workflow_id is required")
+	}
+	if event.RunID == "" {
+		return fmt.Errorf("run_id is required")
+	}
+	if event.EventType == "" {
+		return fmt.Errorf("event_type is required")
+	}
+	if event.Channel == "" {
+		return fmt.Errorf("channel is required")
+	}
+	if event.Payload == nil {
+		event.Payload = map[string]any{}
+	}
+	occurredAt := event.OccurredAt.UTC()
+	if occurredAt.IsZero() {
+		occurredAt = time.Now().UTC()
+	}
+	payloadJSON, err := json.Marshal(event.Payload)
+	if err != nil {
+		return fmt.Errorf("marshal outbox payload: %w", err)
+	}
+
+	tx, err := s.pg.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	if _, err := tx.Exec(ctx, `
+        INSERT INTO task_lifecycle_state (
+            task_id,
+            phase,
+            accepting_progress,
+            accepting_usage,
+            terminal_event_emitted,
+            done_event_emitted,
+            updated_at
+        ) VALUES (
+            $1,
+            'running',
+            TRUE,
+            TRUE,
+            FALSE,
+            FALSE,
+            NOW()
+        )
+        ON CONFLICT (task_id) DO NOTHING
+    `, event.TaskID); err != nil {
+		return err
+	}
+
+	var phase string
+	var acceptingProgress, acceptingUsage, terminalEmitted, doneEmitted bool
+	if err := tx.QueryRow(ctx, `
+        SELECT phase, accepting_progress, accepting_usage, terminal_event_emitted, done_event_emitted
+        FROM task_lifecycle_state
+        WHERE task_id = $1
+        FOR UPDATE
+    `, event.TaskID).Scan(&phase, &acceptingProgress, &acceptingUsage, &terminalEmitted, &doneEmitted); err != nil {
+		return err
+	}
+	switch event.Channel {
+	case "progress":
+		if !acceptingProgress {
+			return fmt.Errorf("progress publish rejected by lifecycle gate: task_id=%s phase=%s", event.TaskID, phase)
+		}
+	case "usage":
+		if !acceptingUsage {
+			return fmt.Errorf("usage publish rejected by lifecycle gate: task_id=%s phase=%s", event.TaskID, phase)
+		}
+	case "terminal":
+		if terminalEmitted {
+			return nil
+		}
+	case "done":
+		if doneEmitted {
+			return nil
+		}
+	default:
+		return fmt.Errorf("unsupported outbox channel: %s", event.Channel)
+	}
+
+	var eventSeq int64
+	if err := tx.QueryRow(ctx, `
+        INSERT INTO task_event_seq (task_id, next_seq)
+        VALUES ($1, 1)
+        ON CONFLICT (task_id)
+        DO UPDATE SET next_seq = task_event_seq.next_seq + 1
+        RETURNING next_seq
+    `, event.TaskID).Scan(&eventSeq); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx, `
+        INSERT INTO workflow_event_outbox (
+            task_id,
+            session_id,
+            user_id,
+            workflow_id,
+            run_id,
+            event_seq,
+            event_type,
+            channel,
+            payload,
+            occurred_at,
+            status,
+            attempt_count
+        ) VALUES (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, 'pending', 0
+        )
+    `,
+		event.TaskID,
+		nullableString(event.SessionID),
+		nullableString(event.UserID),
+		event.WorkflowID,
+		event.RunID,
+		eventSeq,
+		event.EventType,
+		event.Channel,
+		string(payloadJSON),
+		occurredAt,
+	); err != nil {
+		return err
+	}
+
+	if event.Channel == "terminal" {
+		if _, err := tx.Exec(ctx, `
+            UPDATE task_lifecycle_state
+            SET
+                terminal_event_emitted = TRUE,
+                phase = 'terminal',
+                accepting_progress = FALSE,
+                accepting_usage = FALSE,
+                updated_at = NOW()
+            WHERE task_id = $1
+        `, event.TaskID); err != nil {
+			return err
+		}
+	} else if event.Channel == "done" {
+		if _, err := tx.Exec(ctx, `
+            UPDATE task_lifecycle_state
+            SET
+                done_event_emitted = TRUE,
+                phase = 'terminal',
+                accepting_progress = FALSE,
+                accepting_usage = FALSE,
+                updated_at = NOW()
+            WHERE task_id = $1
+        `, event.TaskID); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
 }
 
 func (s *SessionStore) InsertLLMUsage(ctx context.Context, row UsageLedgerRow) (bool, error) {
@@ -1549,4 +1712,12 @@ func (s *SessionStore) cacheSetJSON(ctx context.Context, key string, val any) {
 		return
 	}
 	_ = s.redisSvc.SetJSON(ctx, key, val, s.cacheTTL)
+}
+
+func nullableString(value string) any {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return nil
+	}
+	return trimmed
 }

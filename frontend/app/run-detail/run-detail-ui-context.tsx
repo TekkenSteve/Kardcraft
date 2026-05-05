@@ -11,8 +11,8 @@ export interface RunDetailUiContextValue {
     setShowWorkspace: (show: boolean) => void;
     workspaceExpanded: boolean;
     setWorkspaceExpanded: (expanded: boolean) => void;
-    conversationScrollRef: React.RefObject<HTMLDivElement>;
-    timelineScrollRef: React.RefObject<HTMLDivElement>;
+    conversationScrollRef: React.RefObject<HTMLDivElement | null>;
+    timelineScrollRef: React.RefObject<HTMLDivElement | null>;
 }
 
 const RunDetailUiContext = createContext<RunDetailUiContextValue | null>(null);

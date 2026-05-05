@@ -170,6 +170,50 @@ class WorkflowManager:
                 return True
         return False
 
+    def _normalize_main_resume_input(self, additional_input: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        normalized = dict(additional_input or {})
+        input_payload = normalized.get("input")
+        if not isinstance(input_payload, dict):
+            input_payload = {}
+        input_context = input_payload.get("context")
+        if not isinstance(input_context, dict):
+            input_context = {}
+
+        template_id = str(normalized.get("template_id") or input_context.get("template_id") or "").strip()
+        if template_id:
+            normalized["template_id"] = template_id
+
+        if normalized.get("template_version") in (None, ""):
+            try:
+                template_version = int(input_context.get("template_version") or 0)
+            except Exception:
+                template_version = 0
+            if template_version > 0:
+                normalized["template_version"] = template_version
+
+        selected_profile = str(
+            normalized.get("selected_template_profile")
+            or input_context.get("template_profile")
+            or ""
+        ).strip()
+        if selected_profile:
+            normalized["selected_template_profile"] = selected_profile
+
+        if not str(normalized.get("user_input") or "").strip():
+            normalized["user_input"] = str(input_payload.get("query") or "").strip()
+        if "file_ids" not in normalized:
+            normalized["file_ids"] = list(input_payload.get("file_ids") or [])
+        if "target_count" not in normalized:
+            normalized["target_count"] = input_payload.get("target_count", 10)
+        if "difficulty_level" not in normalized:
+            normalized["difficulty_level"] = input_payload.get("difficulty_level", "medium")
+        if "clarification_responses" not in normalized:
+            normalized["clarification_responses"] = input_payload.get("clarification_responses") or {}
+        if not normalized.get("conversation_history"):
+            normalized["conversation_history"] = input_payload.get("conversation_history") or []
+
+        return normalized
+
     def _history_preview(
         self,
         history: Optional[List[Dict[str, Any]]],
@@ -196,12 +240,41 @@ class WorkflowManager:
             )
         return preview
 
+    async def _publish_node_update_progress(
+        self,
+        *,
+        node_name: str,
+        node_output: Any,
+        workspace_id: Optional[str],
+        progress_callback: Callable[[Dict[str, Any]], Awaitable[None]],
+    ) -> None:
+        node_summary = self._summarize_node_output(
+            node_name=node_name,
+            node_output=node_output,
+        )
+        await progress_callback(
+            {
+                "type": "NODE_STARTED",
+                "node_name": node_name,
+                "workspace_id": workspace_id,
+            }
+        )
+        await progress_callback(
+            {
+                "type": "NODE_FAILED" if self._is_node_failed(node_summary) else "NODE_COMPLETED",
+                "node_name": node_name,
+                "node_output": node_summary,
+                "workspace_id": workspace_id,
+            }
+        )
+
     async def execute(
         self,
         workflow_type: str,
         input_data: Dict[str, Any],
         timeout: int = 1800,
         progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        control_gate: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> WorkflowResult:
         """
         Execute a workflow.
@@ -243,12 +316,11 @@ class WorkflowManager:
 
             value_events = []
             workspace_id = input_data.get("workspace_id")
-            active_node: Optional[str] = None
-            active_summary: Dict[str, Any] = {}
 
             # Run with streaming and timeout
             async def run_graph():
-                nonlocal active_node, active_summary
+                if control_gate:
+                    await control_gate()
                 # Stream both granular node updates (for progress) and full values (for final result).
                 astream_kwargs: Dict[str, Any] = {
                     "input": input_data,
@@ -259,44 +331,20 @@ class WorkflowManager:
                     astream_kwargs["context"] = main_graph_context
 
                 async for mode, event in graph.astream(**astream_kwargs):
+                    if control_gate:
+                        await control_gate()
                     if mode == "updates":
                         if progress_callback:
                             if isinstance(event, dict):
                                 for node_name, node_output in event.items():
-                                    node_summary = self._summarize_node_output(
+                                    if control_gate:
+                                        await control_gate()
+                                    await self._publish_node_update_progress(
                                         node_name=node_name,
                                         node_output=node_output,
+                                        workspace_id=workspace_id,
+                                        progress_callback=progress_callback,
                                     )
-                                    if active_node != node_name:
-                                        if active_node:
-                                            await progress_callback(
-                                                {
-                                                    "type": "NODE_COMPLETED",
-                                                    "node_name": active_node,
-                                                    "node_output": active_summary,
-                                                    "workspace_id": workspace_id,
-                                                }
-                                            )
-                                        await progress_callback(
-                                            {
-                                                "type": "NODE_STARTED",
-                                                "node_name": node_name,
-                                                "workspace_id": workspace_id,
-                                            }
-                                        )
-                                        active_node = node_name
-                                    active_summary = node_summary
-                                    if self._is_node_failed(node_summary):
-                                        await progress_callback(
-                                            {
-                                                "type": "NODE_FAILED",
-                                                "node_name": node_name,
-                                                "node_output": node_summary,
-                                                "workspace_id": workspace_id,
-                                            }
-                                        )
-                                        active_node = None
-                                        active_summary = {}
                             else:
                                 await progress_callback(
                                     {
@@ -308,16 +356,9 @@ class WorkflowManager:
                         continue
 
                     if mode == "values":
+                        if control_gate:
+                            await control_gate()
                         value_events.append(event)
-                if active_node and progress_callback:
-                    await progress_callback(
-                        {
-                            "type": "NODE_COMPLETED",
-                            "node_name": active_node,
-                            "node_output": active_summary,
-                            "workspace_id": workspace_id,
-                        }
-                    )
                 return value_events[-1] if value_events else {}
 
             final_state = await asyncio.wait_for(run_graph(), timeout=timeout)
@@ -344,6 +385,7 @@ class WorkflowManager:
         additional_input: Optional[Dict[str, Any]] = None,
         timeout: int = 1800,
         progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+        control_gate: Optional[Callable[[], Awaitable[None]]] = None,
     ) -> WorkflowResult:
         """
         Resume workflow from checkpoint.
@@ -365,7 +407,7 @@ class WorkflowManager:
 
         main_graph_context: Optional[MainGraphContext] = None
         if workflow_type == "main":
-            additional_input = additional_input or {}
+            additional_input = self._normalize_main_resume_input(additional_input)
             input_payload = additional_input.get("input") or {}
             main_graph_context = MainGraphContext(
                 user_id=additional_input.get("user_id"),
@@ -388,11 +430,10 @@ class WorkflowManager:
         try:
             value_events = []
             workspace_id = (additional_input or {}).get("workspace_id")
-            active_node: Optional[str] = None
-            active_summary: Dict[str, Any] = {}
 
             async def run_resume():
-                nonlocal active_node, active_summary
+                if control_gate:
+                    await control_gate()
                 astream_kwargs: Dict[str, Any] = {
                     "input": additional_input,
                     "config": config,
@@ -402,44 +443,20 @@ class WorkflowManager:
                     astream_kwargs["context"] = main_graph_context
 
                 async for mode, event in graph.astream(**astream_kwargs):
+                    if control_gate:
+                        await control_gate()
                     if mode == "updates":
                         if progress_callback:
                             if isinstance(event, dict):
                                 for node_name, node_output in event.items():
-                                    node_summary = self._summarize_node_output(
+                                    if control_gate:
+                                        await control_gate()
+                                    await self._publish_node_update_progress(
                                         node_name=node_name,
                                         node_output=node_output,
+                                        workspace_id=workspace_id,
+                                        progress_callback=progress_callback,
                                     )
-                                    if active_node != node_name:
-                                        if active_node:
-                                            await progress_callback(
-                                                {
-                                                    "type": "NODE_COMPLETED",
-                                                    "node_name": active_node,
-                                                    "node_output": active_summary,
-                                                    "workspace_id": workspace_id,
-                                                }
-                                            )
-                                        await progress_callback(
-                                            {
-                                                "type": "NODE_STARTED",
-                                                "node_name": node_name,
-                                                "workspace_id": workspace_id,
-                                            }
-                                        )
-                                        active_node = node_name
-                                    active_summary = node_summary
-                                    if self._is_node_failed(node_summary):
-                                        await progress_callback(
-                                            {
-                                                "type": "NODE_FAILED",
-                                                "node_name": node_name,
-                                                "node_output": node_summary,
-                                                "workspace_id": workspace_id,
-                                            }
-                                        )
-                                        active_node = None
-                                        active_summary = {}
                             else:
                                 await progress_callback(
                                     {
@@ -451,16 +468,9 @@ class WorkflowManager:
                         continue
 
                     if mode == "values":
+                        if control_gate:
+                            await control_gate()
                         value_events.append(event)
-                if active_node and progress_callback:
-                    await progress_callback(
-                        {
-                            "type": "NODE_COMPLETED",
-                            "node_name": active_node,
-                            "node_output": active_summary,
-                            "workspace_id": workspace_id,
-                        }
-                    )
                 return value_events[-1] if value_events else {}
 
             final_state = await asyncio.wait_for(run_resume(), timeout=timeout)

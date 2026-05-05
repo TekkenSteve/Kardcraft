@@ -13,7 +13,8 @@ export function extractResultContent(value: unknown): string {
     if (!value) return "";
     if (typeof value === "string") return value;
     if (typeof value === "object") {
-        const extracted = value.text || value.message || value.response || value.content || value.result || value.output;
+        const record = value as Record<string, unknown>;
+        const extracted = record.text || record.message || record.response || record.content || record.result || record.output;
         if (typeof extracted === "string") return extracted;
         try {
             return JSON.stringify(value);

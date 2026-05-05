@@ -167,14 +167,17 @@ export class FileValidator {
   }
 
   private isFileTypeAllowed(mimeType: string, fileName: string): boolean {
-    // If no mime type, check by extension
+    const extension = this.getFileExtension(fileName);
+    const extensionAllowed = this.isExtensionAllowed(extension);
+
+    // Browser-provided MIME is often inconsistent across platforms.
+    // Accept when either MIME or extension matches our allow-list.
     if (!mimeType || mimeType === 'application/octet-stream') {
-      const extension = this.getFileExtension(fileName);
-      return this.isExtensionAllowed(extension);
+      return extensionAllowed;
     }
 
-    // Check by mime type
-    return this.config.allowedTypes.includes(mimeType);
+    const mimeAllowed = this.config.allowedTypes.includes(mimeType);
+    return mimeAllowed || extensionAllowed;
   }
 
   private isExtensionAllowed(extension: string): boolean {
@@ -209,7 +212,7 @@ export class FileValidator {
     return !unsafePatterns.some(pattern => pattern.test(fileName));
   }
 
-  private formatFileSize(bytes: number): string {
+  formatFileSize(bytes: number): string {
     const units = ['B', 'KB', 'MB', 'GB'];
     let size = bytes;
     let unitIndex = 0;

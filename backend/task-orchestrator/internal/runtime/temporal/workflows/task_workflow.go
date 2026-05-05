@@ -118,36 +118,6 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 	resumeSignalChan := workflow.GetSignalChannel(ctx, ResumeWorkflowSignal)
 	cancelSignalChan := workflow.GetSignalChannel(ctx, CancelWorkflowSignal)
 
-	drainSignals := func() {
-		for {
-			var pause PauseSignal
-			if pauseSignalChan.ReceiveAsync(&pause) {
-				state.IsPaused = true
-				state.PauseReason = pause.Reason
-				state.PausedBy = pause.RequestBy
-				state.PausedAt = pause.Timestamp
-				continue
-			}
-			var resume ResumeSignal
-			if resumeSignalChan.ReceiveAsync(&resume) {
-				state.IsPaused = false
-				state.PauseReason = ""
-				state.PausedBy = ""
-				state.PausedAt = time.Time{}
-				continue
-			}
-			var cancel CancelSignal
-			if cancelSignalChan.ReceiveAsync(&cancel) {
-				state.IsCancelled = true
-				state.CancelReason = cancel.Reason
-				state.CancelledBy = cancel.RequestBy
-				state.CancelledAt = cancel.Timestamp
-				continue
-			}
-			break
-		}
-	}
-
 	activityQueue := "agent-activities-queue"
 	if strings.TrimSpace(input.Config.ActivityTaskQueue) != "" {
 		activityQueue = strings.TrimSpace(input.Config.ActivityTaskQueue)
@@ -196,11 +166,95 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 		"metadata":  input.Metadata,
 	}
 	var result map[string]any
-	activityFuture := workflow.ExecuteActivity(activityCtx, "execute_agent_workflow", payload)
+	var activityFuture workflow.Future
+	var cancelActivity workflow.CancelFunc
 	activityDone := false
 	var activityErr error
+	resumeRequested := false
+	startActivity := func(activityName string, activityPayload map[string]any) {
+		var cancellableActivityCtx workflow.Context
+		cancellableActivityCtx, cancelActivity = workflow.WithCancel(activityCtx)
+		activityFuture = workflow.ExecuteActivity(cancellableActivityCtx, activityName, activityPayload)
+		activityDone = false
+		activityErr = nil
+	}
+	startResumeActivity := func() {
+		additionalInput := map[string]any{
+			"task_id":              input.TaskID,
+			"user_id":              input.UserID,
+			"session_id":           strings.TrimSpace(input.Input.SessionID),
+			"task_type":            string(input.TaskType),
+			"input":                input.Input,
+			"workspace_id":         strings.TrimSpace(input.Input.SessionID),
+			"user_input":           input.Input.Query,
+			"conversation_history": input.Input.ConversationHistory,
+			"file_ids":             input.Input.FileIDs,
+			"target_count":         input.Input.TargetCount,
+			"difficulty_level":     input.Input.DifficultyLevel,
+			"metadata":             input.Metadata,
+			"config":               input.Config,
+		}
+		startActivity("resume_agent_workflow", map[string]any{
+			"task_id":          input.TaskID,
+			"checkpoint_id":    input.TaskID,
+			"session_id":       strings.TrimSpace(input.Input.SessionID),
+			"user_id":          input.UserID,
+			"metadata":         input.Metadata,
+			"additional_input": additionalInput,
+		})
+	}
+	applyQueuedResume := func() bool {
+		consumeResume, startResume := decideResumeAfterPause(resumeRequested, activityDone, activityErr)
+		if !consumeResume {
+			return false
+		}
+		resumeRequested = false
+		state.IsPaused = false
+		if startResume {
+			startResumeActivity()
+			return true
+		}
+		return false
+	}
+	drainSignals := func() {
+		for {
+			var pause PauseSignal
+			if pauseSignalChan.ReceiveAsync(&pause) {
+				state.IsPaused = true
+				state.PauseReason = pause.Reason
+				state.PausedBy = pause.RequestBy
+				state.PausedAt = pause.Timestamp
+				if cancelActivity != nil && !activityDone {
+					cancelActivity()
+				}
+				continue
+			}
+			var resume ResumeSignal
+			if resumeSignalChan.ReceiveAsync(&resume) {
+				state.PauseReason = ""
+				state.PausedBy = ""
+				state.PausedAt = time.Time{}
+				if state.IsPaused {
+					resumeRequested = true
+				} else {
+					state.IsPaused = false
+				}
+				continue
+			}
+			var cancel CancelSignal
+			if cancelSignalChan.ReceiveAsync(&cancel) {
+				state.IsCancelled = true
+				state.CancelReason = cancel.Reason
+				state.CancelledBy = cancel.RequestBy
+				state.CancelledAt = cancel.Timestamp
+				continue
+			}
+			break
+		}
+	}
+	startActivity("execute_agent_workflow", payload)
 
-	for !activityDone {
+	for {
 		drainSignals()
 		if state.IsCancelled {
 			return &TaskOutput{
@@ -212,16 +266,24 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 				StartedAt:  workflow.Now(ctx),
 			}, temporal.NewCanceledError("workflow cancelled")
 		}
+		if activityDone && !state.IsPaused {
+			break
+		}
 		if state.IsPaused {
+			if applyQueuedResume() {
+				continue
+			}
 			selector := workflow.NewSelector(ctx)
-			selector.AddReceive(resumeSignalChan, func(c workflow.ReceiveChannel, more bool) {
-				var sig ResumeSignal
-				c.Receive(ctx, &sig)
-				state.IsPaused = false
-				state.PauseReason = ""
-				state.PausedBy = ""
-				state.PausedAt = time.Time{}
-			})
+			if !resumeRequested {
+				selector.AddReceive(resumeSignalChan, func(c workflow.ReceiveChannel, more bool) {
+					var sig ResumeSignal
+					c.Receive(ctx, &sig)
+					state.PauseReason = ""
+					state.PausedBy = ""
+					state.PausedAt = time.Time{}
+					resumeRequested = true
+				})
+			}
 			selector.AddReceive(cancelSignalChan, func(c workflow.ReceiveChannel, more bool) {
 				var sig CancelSignal
 				c.Receive(ctx, &sig)
@@ -230,10 +292,19 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 				state.CancelledBy = sig.RequestBy
 				state.CancelledAt = sig.Timestamp
 			})
+			if activityFuture != nil && !activityDone {
+				selector.AddFuture(activityFuture, func(f workflow.Future) {
+					activityDone = true
+					activityErr = f.Get(activityCtx, &result)
+				})
+			}
 			// Paused means user explicitly wants execution to stop progressing.
-			// Do not consume activity completion while paused; resume/cancel controls
-			// when workflow state may continue forward.
+			// The current agent activity was cancellation-requested on pause. If it
+			// returns normally first, hold that result until resume keeps UI paused.
 			selector.Select(ctx)
+			if applyQueuedResume() {
+				continue
+			}
 			continue
 		}
 
@@ -245,6 +316,9 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 			state.PauseReason = sig.Reason
 			state.PausedBy = sig.RequestBy
 			state.PausedAt = sig.Timestamp
+			if cancelActivity != nil && !activityDone {
+				cancelActivity()
+			}
 		})
 		selector.AddReceive(cancelSignalChan, func(c workflow.ReceiveChannel, more bool) {
 			var sig CancelSignal
@@ -271,14 +345,28 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 			UserID:        input.UserID,
 			Message:       activityErr.Error(),
 		}
-		_ = workflow.ExecuteActivity(persistCtx, PersistTaskOutcomeActivity, PersistTaskOutcomeInput{
-			TaskID:      input.TaskID,
-			WorkflowID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
-			Status:      "failed",
-			Result:      failedOutcome.ToMap(),
-			Error:       activityErr.Error(),
-			CompletedAt: workflow.Now(ctx),
+		persistErr := workflow.ExecuteActivity(persistCtx, PersistTaskOutcomeActivity, PersistTaskOutcomeInput{
+			TaskID:        input.TaskID,
+			WorkflowID:    workflow.GetInfo(ctx).WorkflowExecution.ID,
+			RunID:         workflow.GetInfo(ctx).WorkflowExecution.RunID,
+			CorrelationID: resolveTaskCorrelationID(input),
+			Status:        "failed",
+			Result:        failedOutcome.ToMap(),
+			Error:         activityErr.Error(),
+			CompletedAt:   workflow.Now(ctx),
 		}).Get(persistCtx, nil)
+		if persistErr != nil {
+			logger.Error("persist failed outcome failed", "task_id", input.TaskID, "err", persistErr)
+			return &TaskOutput{
+				TaskID:      input.TaskID,
+				WorkflowID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
+				RunID:       workflow.GetInfo(ctx).WorkflowExecution.RunID,
+				Status:      "failed",
+				Error:       persistErr.Error(),
+				StartedAt:   workflow.Now(ctx),
+				CompletedAt: workflow.Now(ctx),
+			}, persistErr
+		}
 		return &TaskOutput{
 			TaskID:      input.TaskID,
 			WorkflowID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
@@ -301,23 +389,59 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 	if outcome.UserID == "" {
 		outcome.UserID = input.UserID
 	}
-	_ = workflow.ExecuteActivity(persistCtx, PersistTaskOutcomeActivity, PersistTaskOutcomeInput{
-		TaskID:       input.TaskID,
-		WorkflowID:   workflow.GetInfo(ctx).WorkflowExecution.ID,
-		Status:       "completed",
-		Result:       outcome.ToMap(),
-		CompletedAt:  workflow.Now(ctx),
-		TerminalNote: outcome.Message,
-	}).Get(persistCtx, nil)
+	if err := workflow.ExecuteActivity(persistCtx, PersistTaskOutcomeActivity, PersistTaskOutcomeInput{
+		TaskID:        input.TaskID,
+		WorkflowID:    workflow.GetInfo(ctx).WorkflowExecution.ID,
+		RunID:         workflow.GetInfo(ctx).WorkflowExecution.RunID,
+		CorrelationID: resolveTaskCorrelationID(input),
+		Status:        outcome.Status,
+		Result:        outcome.ToMap(),
+		CompletedAt:   workflow.Now(ctx),
+		TerminalNote:  outcome.Message,
+	}).Get(persistCtx, nil); err != nil {
+		logger.Error("persist completed outcome failed", "task_id", input.TaskID, "err", err)
+		return &TaskOutput{
+			TaskID:      input.TaskID,
+			WorkflowID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
+			RunID:       workflow.GetInfo(ctx).WorkflowExecution.RunID,
+			Status:      "failed",
+			Error:       err.Error(),
+			StartedAt:   workflow.Now(ctx),
+			CompletedAt: workflow.Now(ctx),
+		}, err
+	}
 	return &TaskOutput{
 		TaskID:      input.TaskID,
 		WorkflowID:  workflow.GetInfo(ctx).WorkflowExecution.ID,
 		RunID:       workflow.GetInfo(ctx).WorkflowExecution.RunID,
-		Status:      "completed",
+		Status:      outcome.Status,
 		Result:      outcome.ToMap(),
 		StartedAt:   workflow.Now(ctx),
 		CompletedAt: workflow.Now(ctx),
 	}, nil
+}
+
+func resolveTaskCorrelationID(input TaskInput) string {
+	correlationID := strings.TrimSpace(input.Metadata.RequestID)
+	if correlationID != "" {
+		return correlationID
+	}
+	if input.Input.ContextEnvelope != nil {
+		if value, ok := input.Input.ContextEnvelope["correlation_id"].(string); ok {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func decideResumeAfterPause(resumeRequested bool, activityDone bool, activityErr error) (consumeResume bool, startResumeActivity bool) {
+	if !resumeRequested {
+		return false, false
+	}
+	if !activityDone {
+		return true, true
+	}
+	return true, temporal.IsCanceledError(activityErr)
 }
 
 func validateTaskActivityPayload(input TaskInput) error {

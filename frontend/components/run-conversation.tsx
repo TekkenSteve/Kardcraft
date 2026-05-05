@@ -5,14 +5,14 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { RunMessage } from "@/lib/run/types";
-import { RootState } from "@/lib/store";
+import { getSessionDisplayName } from "@/lib/session/profile";
+import { useSessionSelector } from "@/lib/session/system";
 import { cn, openExternalUrl } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
 import { AlertCircle, Brain, Check, CheckCircle, CircleSlash, Clock, Copy, ExternalLink, File, FileAudio, FileText, FileVideo, FolderSync, Image as ImageIcon, Link, Loader2, MessageSquare, Microscope, Paperclip, Pause, Play, RefreshCw, Search, ShieldAlert, Sparkles, Users, XCircle, Zap } from "lucide-react";
 import React, { useMemo, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
-import { useSelector } from "react-redux";
 import rehypeHighlight from "rehype-highlight";
 import remarkGfm from "remark-gfm";
 
@@ -66,7 +66,7 @@ const extractDisplayMessageFromEnvelope = (raw: string): string | null => {
     return null;
 };
 
-type MarkdownComponentProps<Tag extends keyof JSX.IntrinsicElements> = ComponentPropsWithoutRef<Tag>;
+type MarkdownComponentProps<Tag extends keyof React.JSX.IntrinsicElements> = ComponentPropsWithoutRef<Tag>;
 type MarkdownCodeProps = MarkdownComponentProps<"code"> & { inline?: boolean };
 const getInitials = (value: string): string => {
     const trimmed = value.trim();
@@ -499,9 +499,18 @@ function getMarkdownComponents() {
 export function RunConversation({ messages, agentType = "normal" }: RunConversationProps) {
     const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
     const { t } = useTranslation();
-    const userName = useSelector((state: RootState) => state.auth.name);
+    const userName = useSessionSelector((snapshot) => getSessionDisplayName(snapshot.context.session));
     const userLabel = userName || t("chat.you");
     const userInitials = getInitials(userLabel);
+
+    // Debug: Check message rendering
+    console.log('[RunConversation] rendering messages:', {
+      count: messages.length,
+      ids: messages.map(m => m.id),
+      hasGenerating: messages.some(m => m.isGenerating),
+      hasStreaming: messages.some(m => m.isStreaming),
+      firstId: messages[0]?.id,
+    });
 
     // Debug: Check if any messages have citations
     const messagesWithCitations = messages.filter(m => m.metadata?.citations && m.metadata.citations.length > 0);
@@ -563,14 +572,12 @@ export function RunConversation({ messages, agentType = "normal" }: RunConversat
                         <Avatar className="h-7 w-7 sm:h-8 sm:w-8 shrink-0">
                             <AvatarFallback className={cn(
                                 message.role === "user" ? "bg-primary text-primary-foreground" :
-                                    message.role === "tool" ? "bg-orange-100 text-orange-700" :
-                                        message.role === "system" ? (message.isError ? "bg-red-100 dark:bg-red-900/30" : message.isCancelled ? "bg-yellow-100 dark:bg-yellow-900/30" : "bg-gray-100 dark:bg-gray-900/30") :
-                                            agentType === "card_template" ? "bg-violet-100 dark:bg-violet-900/30" : "bg-amber-100 dark:bg-amber-900/30"
+                                    message.role === "system" ? (message.isError ? "bg-red-100 dark:bg-red-900/30" : message.isCancelled ? "bg-yellow-100 dark:bg-yellow-900/30" : "bg-gray-100 dark:bg-gray-900/30") :
+                                        agentType === "card_template" ? "bg-violet-100 dark:bg-violet-900/30" : "bg-amber-100 dark:bg-amber-900/30"
                             )}>
                                 {message.role === "user" ? userInitials :
-                                    message.role === "tool" ? "T" :
-                                        message.role === "system" ? (message.isError ? <AlertCircle className="h-4 w-4 text-red-500" /> : message.isCancelled ? <XCircle className="h-4 w-4 text-yellow-600" /> : "S") :
-                                            agentType === "card_template" ? <Microscope className="h-4 w-4 text-violet-500" /> : <Sparkles className="h-4 w-4 text-amber-500" />}
+                                    message.role === "system" ? (message.isError ? <AlertCircle className="h-4 w-4 text-red-500" /> : message.isCancelled ? <XCircle className="h-4 w-4 text-yellow-600" /> : "S") :
+                                        agentType === "card_template" ? <Microscope className="h-4 w-4 text-violet-500" /> : <Sparkles className="h-4 w-4 text-amber-500" />}
                             </AvatarFallback>
                         </Avatar>
                         <div className={cn(
@@ -611,9 +618,8 @@ export function RunConversation({ messages, agentType = "normal" }: RunConversat
                                 <Card className={cn(
                                     "px-2 sm:px-3 py-1 text-sm prose prose-sm max-w-none prose-p:my-0.5 prose-p:leading-relaxed prose-ul:my-0.5 prose-ol:my-0.5 prose-li:my-0 prose-headings:mt-2 prose-headings:mb-0.5 prose-headings:leading-tight break-words overflow-wrap-anywhere overflow-hidden prose-pre:whitespace-pre-wrap prose-pre:break-all",
                                     message.role === "user" ? "bg-primary text-primary-foreground [&_a]:text-primary-foreground [&_a]:underline [&_a]:decoration-primary-foreground/50 [&_a:hover]:text-primary-foreground/80 [&_a:hover]:decoration-primary-foreground" :
-                                        message.role === "tool" ? "bg-muted/50 font-mono text-xs prose-pre:bg-transparent" :
-                                            message.role === "system" ? (message.isError ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800" : message.isCancelled ? "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800" : "bg-gray-50 dark:bg-gray-900/20") :
-                                                "bg-muted dark:prose-invert"
+                                        message.role === "system" ? (message.isError ? "bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-300 border-red-200 dark:border-red-800" : message.isCancelled ? "bg-yellow-50 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-300 border-yellow-200 dark:border-yellow-800" : "bg-gray-50 dark:bg-gray-900/20") :
+                                            "bg-muted dark:prose-invert"
                                 )}>
                                     {message.isGenerating ? (
                                         <span className="flex items-center gap-1 text-muted-foreground">

@@ -28,8 +28,13 @@ export type EventType =
     | "AGENT_THINKING"
     | "LLM_PROMPT"
     | "LLM_OUTPUT"
+    | "LLM_PARTIAL"
+    | "LLM_USAGE_RECORDED"
     | "DATA_PROCESSING"
     | "PROGRESS"
+    | "LANGGRAPH_PROGRESS"
+    | "SYNTHESIS"
+    | "REFLECTION"
     | "WAITING"
     | "APPROVAL_REQUESTED"
     | "APPROVAL_DECISION"
@@ -45,8 +50,10 @@ export type EventType =
     | "NODE_FAILED";
 
 export interface BaseEvent {
+    id?: number;
     type: EventType;
     workflow_id: string;
+    run_id?: string;
     agent_id?: string;
     seq?: number;
     stream_id?: string;
@@ -90,6 +97,13 @@ export interface LlmOutputEvent extends BaseEvent {
         text?: string;
     };
     message?: string;
+    metadata?: Record<string, unknown>;
+}
+
+export interface LlmPartialEvent extends BaseEvent {
+    type: "LLM_PARTIAL";
+    message?: string;
+    payload?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
 }
 
@@ -178,6 +192,24 @@ export interface ProgressEvent extends BaseEvent {
     message?: string;
 }
 
+export interface LangGraphProgressEvent extends BaseEvent {
+    type: "LANGGRAPH_PROGRESS";
+    message?: string;
+    payload?: Record<string, unknown>;
+}
+
+export interface SynthesisEvent extends BaseEvent {
+    type: "SYNTHESIS";
+    message?: string;
+    payload?: Record<string, unknown>;
+}
+
+export interface ReflectionEvent extends BaseEvent {
+    type: "REFLECTION";
+    message?: string;
+    payload?: Record<string, unknown>;
+}
+
 export interface DataProcessingEvent extends BaseEvent {
     type: "DATA_PROCESSING";
     message?: string;
@@ -231,6 +263,7 @@ export interface MessageReceivedEvent extends BaseEvent {
 export interface WorkspaceUpdatedEvent extends BaseEvent {
     type: "WORKSPACE_UPDATED";
     message?: string;
+    payload?: Record<string, unknown>;
 }
 
 export interface StatusUpdateEvent extends BaseEvent {
@@ -252,6 +285,12 @@ export interface NodeCompletedEvent extends BaseEvent {
 
 export interface NodeFailedEvent extends BaseEvent {
     type: "NODE_FAILED";
+    message?: string;
+    payload?: Record<string, unknown>;
+}
+
+export interface LlmUsageRecordedEvent extends BaseEvent {
+    type: "LLM_USAGE_RECORDED";
     message?: string;
     payload?: Record<string, unknown>;
 }
@@ -317,6 +356,9 @@ export type RunEvent =
     | TeamRetiredEvent
     | TeamStatusEvent
     | ProgressEvent
+    | LangGraphProgressEvent
+    | SynthesisEvent
+    | ReflectionEvent
     | DataProcessingEvent
     | WaitingEvent
     | ErrorRecoveryEvent
@@ -333,4 +375,6 @@ export type RunEvent =
     | NodeCompletedEvent
     | NodeFailedEvent
     | StreamEndEvent
-    | LlmOutputEvent;
+    | LlmOutputEvent
+    | LlmPartialEvent
+    | LlmUsageRecordedEvent;
