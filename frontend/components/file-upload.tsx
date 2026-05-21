@@ -6,6 +6,7 @@ import { FileUploadAPI } from "@/lib/file-upload/api";
 import { DEFAULT_UPLOAD_CONFIG, FileUploadConfig, UploadedFile } from "@/lib/file-upload/types";
 import { FileValidator } from "@/lib/file-upload/validation";
 import { cn } from "@/lib/utils";
+import { useTranslation } from "react-i18next";
 import { AlertCircle, Check, Eye, File, Image as ImageIcon, Loader2, Trash2, Upload, X } from "lucide-react";
 import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 
@@ -46,8 +47,9 @@ export function FileUpload({
   const [uploadingCount, setUploadingCount] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  const { t } = useTranslation();
   const uploadConfig = useMemo(() => ({ ...DEFAULT_UPLOAD_CONFIG, ...config }), [config]);
-  const validator = useMemo(() => new FileValidator(uploadConfig), [uploadConfig]);
+  const validator = useMemo(() => new FileValidator(uploadConfig, t), [uploadConfig, t]);
   const uploadAPI = useMemo(() => new FileUploadAPI(), []);
 
   // Notify parent when files change
@@ -167,7 +169,7 @@ export function FileUpload({
             ? {
                 ...file,
                 status: "error",
-                error: error instanceof Error ? error.message : "上传失败",
+                error: error instanceof Error ? error.message : t("fileUpload.uploadFailed"),
               }
             : file
         )
@@ -199,7 +201,7 @@ export function FileUpload({
           const fileId = await uploadFile(file);
           uploadedFileIds.push(fileId);
         } catch (error) {
-          errors.push(`${file.name}: ${error instanceof Error ? error.message : "上传失败"}`);
+          errors.push(`${file.name}: ${error instanceof Error ? error.message : t("fileUpload.uploadFailed")}`);
         } finally {
           setUploadingCount((prev) => prev - 1);
         }
@@ -217,7 +219,7 @@ export function FileUpload({
     }
 
     if (uploadedFileIds.length === 0 && pendingFiles.length > 0) {
-      throw new Error(errors.join("\n") || "文件上传失败");
+      throw new Error(errors.join("\n") || t("fileUpload.uploadFailed"));
     }
 
     return uploadedFileIds;

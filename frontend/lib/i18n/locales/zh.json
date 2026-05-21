@@ -335,5 +335,16 @@
     "published": "发布时间",
     "credibility": "可信度",
     "failedToCopy": "复制失败"
+  },
+  "fileUpload": {
+    "fileTooLarge": "文件太大：{{size}}（最大 {{maxSize}}）",
+    "unsupportedFileType": "不支持的文件类型：{{type}}",
+    "unknownType": "未知类型",
+    "unsafeFileName": "文件名包含不安全字符",
+    "contentMismatch": "文件内容与扩展名不匹配：检测到的内容类型与 .{{extension}} 不一致",
+    "contentValidationFailed": "无法验证文件内容",
+    "tooManyFiles": "文件数量过多：{{count}}（最多 {{max}} 个）",
+    "totalSizeTooLarge": "总文件大小过大：{{size}}（最大 {{maxSize}}）",
+    "uploadFailed": "上传失败"
   }
 }

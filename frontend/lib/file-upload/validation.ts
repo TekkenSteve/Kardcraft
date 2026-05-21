@@ -41,11 +41,17 @@ const EXTENSION_TO_MIME: Record<string, string> = {
   'pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
 };
 
+type TranslateFn = (key: string, options?: Record<string, unknown>) => string;
+
+const defaultT: TranslateFn = (key: string) => key;
+
 export class FileValidator {
   private config: FileUploadConfig;
+  private t: TranslateFn;
 
-  constructor(config: FileUploadConfig = DEFAULT_UPLOAD_CONFIG) {
+  constructor(config: FileUploadConfig = DEFAULT_UPLOAD_CONFIG, t?: TranslateFn) {
     this.config = config;
+    this.t = t ?? defaultT;
   }
 
   validateFile(file: File): FileValidationResult {
@@ -53,17 +59,22 @@ export class FileValidator {
 
     // Check file size
     if (file.size > this.config.maxFileSize) {
-      errors.push(`文件太大: ${this.formatFileSize(file.size)} (最大 ${this.formatFileSize(this.config.maxFileSize)})`);
+      errors.push(this.t('fileUpload.fileTooLarge', {
+        size: this.formatFileSize(file.size),
+        maxSize: this.formatFileSize(this.config.maxFileSize),
+      }));
     }
 
     // Check file type
     if (!this.isFileTypeAllowed(file.type, file.name)) {
-      errors.push(`不支持的文件类型: ${file.type || '未知类型'}`);
+      errors.push(this.t('fileUpload.unsupportedFileType', {
+        type: file.type || this.t('fileUpload.unknownType'),
+      }));
     }
 
     // Check file name (basic security)
     if (!this.isFileNameSafe(file.name)) {
-      errors.push('文件名包含不安全字符');
+      errors.push(this.t('fileUpload.unsafeFileName'));
     }
 
     return {
@@ -94,20 +105,17 @@ export class FileValidator {
     const maxBytes = Math.max(...signatures.map(s => s.length));
 
     try {
-      // Read the first N bytes of the file
       const header = await this.readFileHeader(file, maxBytes);
 
-      // Check if any signature matches
-      const matches = signatures.some(signature =>
-        signature.every((byte, index) => header[index] === byte)
+      const matches = signatures.some((signature) =>
+        header.length === signature.length && signature.every((byte, index) => header[index] === byte)
       );
 
       if (!matches) {
-        errors.push(`文件内容与扩展名不匹配: 检测到的内容类型与 .${extension} 不一致`);
+        errors.push(this.t('fileUpload.contentMismatch', { extension }));
       }
     } catch {
-      // If we can't read the file, we can't validate - return warning
-      errors.push('无法验证文件内容');
+      errors.push(this.t('fileUpload.contentValidationFailed'));
     }
 
     return {
@@ -143,13 +151,19 @@ export class FileValidator {
     // Check total number of files
     const totalFiles = files.length + existingFiles.length;
     if (totalFiles > this.config.maxFiles) {
-      errors.push(`文件数量过多: ${totalFiles} (最多 ${this.config.maxFiles} 个)`);
+      errors.push(this.t('fileUpload.tooManyFiles', {
+        count: totalFiles,
+        max: this.config.maxFiles,
+      }));
     }
 
     // Check total size
     const totalSize = [...files, ...existingFiles].reduce((sum, file) => sum + file.size, 0);
     if (totalSize > this.config.maxTotalSize) {
-      errors.push(`总文件大小过大: ${this.formatFileSize(totalSize)} (最大 ${this.formatFileSize(this.config.maxTotalSize)})`);
+      errors.push(this.t('fileUpload.totalSizeTooLarge', {
+        size: this.formatFileSize(totalSize),
+        maxSize: this.formatFileSize(this.config.maxTotalSize),
+      }));
     }
 
     // Validate each file

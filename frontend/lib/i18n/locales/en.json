@@ -335,5 +335,16 @@
     "published": "Published",
     "credibility": "Credibility",
     "failedToCopy": "Failed to copy message"
+  },
+  "fileUpload": {
+    "fileTooLarge": "File too large: {{size}} (max {{maxSize}})",
+    "unsupportedFileType": "Unsupported file type: {{type}}",
+    "unknownType": "unknown type",
+    "unsafeFileName": "File name contains unsafe characters",
+    "contentMismatch": "File content does not match .{{extension}} extension",
+    "contentValidationFailed": "Unable to validate file content",
+    "tooManyFiles": "Too many files: {{count}} (max {{max}})",
+    "totalSizeTooLarge": "Total file size too large: {{size}} (max {{maxSize}})",
+    "uploadFailed": "Upload failed"
   }
 }
