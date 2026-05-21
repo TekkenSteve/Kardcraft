@@ -7,7 +7,14 @@ import { DEFAULT_UPLOAD_CONFIG, FileUploadConfig, UploadedFile } from "@/lib/fil
 import { FileValidator } from "@/lib/file-upload/validation";
 import { cn } from "@/lib/utils";
 import { AlertCircle, Check, Eye, File, Image as ImageIcon, Loader2, Trash2, Upload, X } from "lucide-react";
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
+
+export interface FileUploadHandle {
+  uploadPendingFiles: () => Promise<string[]>;
+  clearFiles: () => void;
+}
+
+const EMPTY_CONFIG: Partial<FileUploadConfig> = {};
 
 interface FileUploadProps {
   sessionId?: string;
@@ -18,23 +25,20 @@ interface FileUploadProps {
   disabled?: boolean;
   maxHeight?: string;
   showManualUploadButton?: boolean;
+  ref?: React.Ref<FileUploadHandle>;
 }
 
-export interface FileUploadHandle {
-  uploadPendingFiles: () => Promise<string[]>;
-  clearFiles: () => void;
-}
-
-export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function FileUpload({
+export function FileUpload({
   sessionId,
   onFilesChange,
   onUploadComplete,
-  config = {},
+  config = EMPTY_CONFIG,
   className,
   disabled = false,
   maxHeight = "300px",
   showManualUploadButton = true,
-}: FileUploadProps, ref) {
+  ref,
+}: FileUploadProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const dropZoneRef = useRef<HTMLDivElement>(null);
   const [files, setFiles] = useState<UploadedFile[]>([]);
@@ -288,6 +292,14 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
         onClick={() => !disabled && fileInputRef.current?.click()}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            !disabled && fileInputRef.current?.click();
+          }
+        }}
       >
         <input
           ref={fileInputRef}
@@ -301,7 +313,7 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
 
         <div className="flex flex-col items-center justify-center gap-2">
           <div className="p-2 rounded-full bg-muted">
-            <Upload className="h-4 w-4 text-muted-foreground" />
+            <Upload className="size-4 text-muted-foreground" />
           </div>
 
           <div className="space-y-1">
@@ -321,7 +333,7 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
       {/* Error message */}
       {error && (
         <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 text-destructive">
-          <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+          <AlertCircle className="size-4 mt-0.5 shrink-0" />
           <div className="flex-1">
             <p className="text-sm font-medium">上传错误</p>
             <p className="text-sm whitespace-pre-wrap">{error}</p>
@@ -330,10 +342,10 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
             type="button"
             variant="ghost"
             size="icon"
-            className="h-6 w-6 shrink-0"
+            className="size-6 shrink-0"
             onClick={() => setError(null)}
           >
-            <X className="h-4 w-4" />
+            <X className="size-4" />
           </Button>
         </div>
       )}
@@ -348,7 +360,7 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
               </span>
               {isUploading && (
                 <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" />
+                  <Loader2 className="size-3 animate-spin" />
                   上传中 ({uploadingCount})
                 </span>
               )}
@@ -364,12 +376,12 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
                 >
                   {isUploading ? (
                     <>
-                      <Loader2 className="h-3 w-3 animate-spin" />
+                      <Loader2 className="size-3 animate-spin" />
                       上传中
                     </>
                   ) : (
                     <>
-                      <Upload className="h-3 w-3" />
+                      <Upload className="size-3" />
                       上传所有文件
                     </>
                   )}
@@ -398,9 +410,9 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
               >
                 <div className="p-2 rounded-md bg-muted">
                   {file.type.startsWith("image/") ? (
-                    <ImageIcon className="h-5 w-5" />
+                    <ImageIcon className="size-5" />
                   ) : (
-                    <File className="h-5 w-5" />
+                    <File className="size-5" />
                   )}
                 </div>
 
@@ -426,17 +438,17 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
 
                     {file.status === "uploaded" && (
                       <div className="flex items-center gap-1 text-xs text-green-600">
-                        <Check className="h-3 w-3" />
+                        <Check className="size-3" />
                         <span>已上传</span>
                         {file.previewUrl && (
                           <Button
                             type="button"
                             variant="ghost"
                             size="icon"
-                            className="h-5 w-5 ml-1"
+                            className="size-5 ml-1"
                             onClick={() => window.open(file.previewUrl, "_blank")}
                           >
-                            <Eye className="h-3 w-3" />
+                            <Eye className="size-3" />
                           </Button>
                         )}
                       </div>
@@ -445,7 +457,7 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
                     {file.status === "error" && (
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1 text-xs text-destructive">
-                          <AlertCircle className="h-3 w-3" />
+                          <AlertCircle className="size-3" />
                           <span>{file.error || "上传失败"}</span>
                         </div>
                         <Button
@@ -473,11 +485,11 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
                   type="button"
                   variant="ghost"
                   size="icon"
-                  className="h-8 w-8 shrink-0"
+                  className="size-8 shrink-0"
                   onClick={() => removeFile(file.id)}
                   disabled={disabled || file.status === "uploading"}
                 >
-                  <Trash2 className="h-4 w-4" />
+                  <Trash2 className="size-4" />
                 </Button>
               </div>
             ))}
@@ -499,4 +511,4 @@ export const FileUpload = forwardRef<FileUploadHandle, FileUploadProps>(function
       )}
     </div>
   );
-});
+}

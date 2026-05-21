@@ -53,9 +53,9 @@ export function UserPanel() {
     if (!isHydrated || (isChecking && !session)) {
         return (
             <div className="flex items-center gap-2 px-2 py-1.5 rounded-lg">
-                <Avatar className="h-8 w-8">
+                <Avatar className="size-8">
                     <AvatarFallback className="bg-muted">
-                        <User className="h-4 w-4" />
+                        <User className="size-4" />
                     </AvatarFallback>
                 </Avatar>
             </div>
@@ -70,9 +70,9 @@ export function UserPanel() {
                     className="w-full justify-start gap-2 px-2 py-1.5 h-auto hover:bg-accent group-data-[collapsible=icon]:justify-center"
                     onClick={() => setLoginOpen(true)}
                 >
-                    <Avatar className="h-8 w-8">
+                    <Avatar className="size-8">
                         <AvatarFallback className="bg-muted">
-                            <User className="h-4 w-4" />
+                            <User className="size-4" />
                         </AvatarFallback>
                     </Avatar>
                     <span className="text-sm font-medium group-data-[collapsible=icon]:hidden">{t("auth.login")}</span>
@@ -113,7 +113,7 @@ export function UserPanel() {
                     className="w-full justify-between gap-2 px-2 py-1.5 h-auto hover:bg-accent group-data-[collapsible=icon]:justify-center"
                 >
                     <div className="flex items-center gap-2 min-w-0 group-data-[collapsible=icon]:min-w-fit">
-                        <Avatar className="h-8 w-8 shrink-0">
+                        <Avatar className="size-8 shrink-0">
                             <AvatarFallback className="bg-primary text-primary-foreground text-xs">
                                 {initials}
                             </AvatarFallback>
@@ -127,7 +127,7 @@ export function UserPanel() {
                             </span>
                         </div>
                     </div>
-                    <ChevronDown className="h-4 w-4 shrink-0 group-data-[collapsible=icon]:hidden" />
+                    <ChevronDown className="size-4 shrink-0 group-data-[collapsible=icon]:hidden" />
                 </Button>
             </PopoverTrigger>
 
@@ -140,9 +140,9 @@ export function UserPanel() {
                                 size="sm"
                                 className="w-full justify-start gap-2 h-8 px-2"
                             >
-                                <Globe className="h-4 w-4" />
+                                <Globe className="size-4" />
                                 <span className="text-sm">{t("settings.language")}</span>
-                                <ChevronDown className="h-3 w-3 ml-auto" />
+                                <ChevronDown className="size-3 ml-auto" />
                             </Button>
                         </PopoverTrigger>
                         <PopoverContent className="w-32 p-1" align="start" side="right">
@@ -179,7 +179,7 @@ export function UserPanel() {
                         className="w-full justify-start gap-2 h-8 px-2"
                         disabled
                     >
-                        <Settings className="h-4 w-4" />
+                        <Settings className="size-4" />
                         <span className="text-sm">{t("settings.title")}</span>
                     </Button>
 
@@ -191,7 +191,7 @@ export function UserPanel() {
                         className="w-full justify-start gap-2 h-8 px-2 text-destructive hover:text-destructive hover:bg-destructive/10"
                         onClick={handleLogout}
                     >
-                        <LogOut className="h-4 w-4" />
+                        <LogOut className="size-4" />
                         <span className="text-sm">{t("auth.logout")}</span>
                     </Button>
                 </div>

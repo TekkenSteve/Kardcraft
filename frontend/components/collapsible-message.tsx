@@ -38,13 +38,13 @@ export function CollapsibleMessage({ sender, content, timestamp }: CollapsibleMe
                 <Button
                     variant="ghost"
                     size="sm"
-                    className="h-6 w-6 p-0 shrink-0"
+                    className="size-6 p-0 shrink-0"
                     onClick={() => setIsExpanded(!isExpanded)}
                 >
                     {isExpanded ? (
-                        <ChevronDown className="h-4 w-4" />
+                        <ChevronDown className="size-4" />
                     ) : (
-                        <ChevronRight className="h-4 w-4" />
+                        <ChevronRight className="size-4" />
                     )}
                 </Button>
                 

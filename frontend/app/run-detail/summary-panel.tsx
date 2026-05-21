@@ -26,7 +26,7 @@ export function SummaryPanel() {
     return (
         <div className="max-w-4xl mx-auto space-y-4 overflow-hidden">
             <div>
-                <h2 className="text-xl font-bold">{t("runDetail.summaryTitle")}</h2>
+                <h2 className="text-xl font-semibold">{t("runDetail.summaryTitle")}</h2>
                 <p className="text-sm text-muted-foreground">{t("runDetail.summarySubtitle")}</p>
                 {usagePendingCount > 0 && (
                     <p className="text-xs text-amber-700 dark:text-amber-400 mt-1">{t("runDetail.usageProcessing", { count: usagePendingCount })}</p>
@@ -39,13 +39,13 @@ export function SummaryPanel() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
                 <Card className="p-3">
                     <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{t("runDetail.totalTurns")}</div>
-                    <div className="text-xl sm:text-2xl font-bold mt-1">
+                    <div className="text-xl sm:text-2xl font-semibold mt-1">
                         {tasks.length}
                     </div>
                 </Card>
                 <Card className="p-3">
                     <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{t("runDetail.totalCosts")}</div>
-                    <div className="text-xl sm:text-2xl font-bold mt-1">
+                    <div className="text-xl sm:text-2xl font-semibold mt-1">
                         {hasCostData ? (
                             `$${tasks.reduce((sum, task) => sum + (task.total_cost_usd || 0), 0).toFixed(4)}`
                         ) : (
@@ -55,7 +55,7 @@ export function SummaryPanel() {
                 </Card>
                 <Card className="p-3">
                     <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{t("runDetail.totalTokens")}</div>
-                    <div className="text-xl sm:text-2xl font-bold mt-1">
+                    <div className="text-xl sm:text-2xl font-semibold mt-1">
                         {hasTokenData ? (
                             tasks.reduce((sum, task) => sum + (task.total_tokens || 0), 0).toLocaleString()
                         ) : (
@@ -65,7 +65,7 @@ export function SummaryPanel() {
                 </Card>
                 <Card className="p-3">
                     <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{t("runDetail.totalTime")}</div>
-                    <div className="text-xl sm:text-2xl font-bold mt-1">
+                    <div className="text-xl sm:text-2xl font-semibold mt-1">
                         {formatDuration(tasks.reduce((sum, task) => sum + (task.duration_ms || 0), 0) / 1000)}
                     </div>
                 </Card>
@@ -167,7 +167,7 @@ export function SummaryPanel() {
                                     <div className="flex items-center justify-between text-xs">
                                         <div className="flex items-center gap-2 min-w-0">
                                             <div
-                                                className={`w-2 h-2 rounded-full flex-shrink-0 ${barColors[index % barColors.length]}`}
+                                                className={`size-2 rounded-full flex-shrink-0 ${barColors[index % barColors.length]}`}
                                             />
                                             <span className="font-medium truncate">{usage.model}</span>
                                             <span className="text-muted-foreground text-[10px] flex-shrink-0">
@@ -233,7 +233,7 @@ export function SummaryPanel() {
                     <div className="grid grid-cols-2 gap-3 sm:gap-4">
                         <div>
                             <div className="text-xs text-muted-foreground">{t("runDetail.avgTokensPerTurn")}</div>
-                            <div className="text-lg font-bold mt-1">
+                            <div className="text-lg font-semibold mt-1">
                                 {Math.round(
                                     sessionHistory.tasks.reduce((sum, task) => sum + (task.total_tokens || 0), 0) / sessionHistory.tasks.length
                                 ).toLocaleString()}
@@ -241,7 +241,7 @@ export function SummaryPanel() {
                         </div>
                         <div>
                             <div className="text-xs text-muted-foreground">{t("runDetail.avgTimePerTurn")}</div>
-                            <div className="text-lg font-bold mt-1">
+                            <div className="text-lg font-semibold mt-1">
                                 {formatDuration(
                                     sessionHistory.tasks.reduce((sum, task) => sum + (task.duration_ms || 0), 0) /
                                     sessionHistory.tasks.length / 1000

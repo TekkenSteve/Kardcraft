@@ -11,10 +11,12 @@ export type StatePanelAction = {
     variant?: "default" | "outline" | "secondary" | "ghost";
 };
 
+const EMPTY_ACTIONS: StatePanelAction[] = [];
+
 export function StatePanel({
     title,
     description,
-    actions = [],
+    actions = EMPTY_ACTIONS,
     tone = "neutral",
     className,
 }: {
@@ -40,18 +42,18 @@ export function StatePanel({
             )}
             {actions.length > 0 && (
                 <div className="flex flex-wrap items-center justify-center gap-2">
-                    {actions.map((action, index) => {
+                    {actions.map((action) => {
                         const variant = action.variant || "outline";
                         if (action.href) {
                             return (
-                                <Button key={`${action.label}-${index}`} variant={variant} asChild>
+                                <Button key={action.label} variant={variant} asChild>
                                     <Link href={action.href}>{action.label}</Link>
                                 </Button>
                             );
                         }
                         return (
                             <Button
-                                key={`${action.label}-${index}`}
+                                key={action.label}
                                 variant={variant}
                                 onClick={action.onClick}
                             >

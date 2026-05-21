@@ -18,7 +18,7 @@ export function CollapsibleDetails({ content, type, status }: CollapsibleDetails
 
     if (isShort) {
         return (
-            <div className="text-xs text-slate-400 font-mono bg-slate-950/50 px-2 py-1 rounded border border-slate-800/50 inline-block">
+            <div className="text-xs text-zinc-400 font-mono bg-zinc-950/50 px-2 py-1 rounded border border-zinc-800/50 inline-block">
                 {content}
             </div>
         );
@@ -32,18 +32,18 @@ export function CollapsibleDetails({ content, type, status }: CollapsibleDetails
                 onClick={() => setIsOpen(!isOpen)}
                 className={cn(
                     "h-6 px-0 text-xs font-normal hover:bg-transparent hover:text-blue-400 transition-colors flex items-center gap-1",
-                    status === "running" ? "text-blue-400/70" : "text-slate-500"
+                    status === "running" ? "text-blue-400/70" : "text-zinc-500"
                 )}
             >
-                {isOpen ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
+                {isOpen ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
                 {isOpen ? "Hide" : "View"} {type === "json" ? "Payload" : "Output"}
-                {type === "json" ? <Code2 className="h-3 w-3 ml-1 opacity-50" /> : <FileText className="h-3 w-3 ml-1 opacity-50" />}
+                {type === "json" ? <Code2 className="size-3 ml-1 opacity-50" /> : <FileText className="size-3 ml-1 opacity-50" />}
             </Button>
 
             {isOpen && (
                 <div className="mt-2 relative w-full grid grid-cols-1 min-w-0 overflow-hidden">
-                    <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-slate-800" />
-                    <pre className="ml-3 overflow-x-auto rounded-md bg-slate-950 p-3 text-[10px] leading-relaxed font-mono text-slate-300 border border-slate-800/50 max-h-[300px] w-full min-w-0 custom-scrollbar block">
+                    <div className="absolute left-0 top-0 bottom-0 w-0.5 bg-zinc-800" />
+                    <pre className="ml-3 overflow-x-auto rounded-md bg-zinc-950 p-3 text-[10px] leading-relaxed font-mono text-zinc-300 border border-zinc-800/50 max-h-[300px] w-full min-w-0 custom-scrollbar block">
                         {content}
                     </pre>
                 </div>

@@ -348,7 +348,7 @@ export function CardWorkspace({
         >
             {card.edit_state.status === "ai_editing" && (
                 <div className="absolute top-0 right-0 p-1 opacity-20">
-                    <Sparkles className="w-3 h-3 text-blue-500 animate-spin-slow" />
+                    <Sparkles className="size-3 text-blue-500 animate-spin-slow" />
                 </div>
             )}
             <CardHeader className="p-3 pb-0 space-y-0">
@@ -367,8 +367,8 @@ export function CardWorkspace({
                             )}
                         >
                             {card.edit_state.status === "ai_editing"
-                                ? <><Sparkles className="w-2.5 h-2.5" /> {t("workspace.aiOptimizing")}</>
-                                : <><User className="w-2.5 h-2.5" /> {t("workspace.userEditing")}</>}
+                                ? <><Sparkles className="size-2.5" /> {t("workspace.aiOptimizing")}</>
+                                : <><User className="size-2.5" /> {t("workspace.userEditing")}</>}
                         </Badge>
                     )}
                 </div>
@@ -461,8 +461,8 @@ export function CardWorkspace({
         return (
             <div className="flex flex-col items-center justify-center h-full w-full p-8 text-center text-muted-foreground bg-[var(--app-surface-1)] animate-in fade-in duration-500">
                 <div className="relative mb-6">
-                    <Layers className="w-16 h-16 opacity-10" />
-                    <Brain className="w-8 h-8 absolute -bottom-2 -right-2 text-blue-500/20 animate-pulse" />
+                    <Layers className="size-16 opacity-10" />
+                    <Brain className="size-8 absolute -bottom-2 -right-2 text-blue-500/20 animate-pulse" />
                 </div>
                 <h3 className="text-lg font-medium text-foreground/80 mb-2">{t("workspace.emptyTitle")}</h3>
                 <p className="text-sm max-w-[200px]">{t("workspace.emptyDesc")}</p>
@@ -499,7 +499,7 @@ export function CardWorkspace({
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
                         <div className="p-1.5 rounded-lg bg-blue-500/10">
-                            <Layers className="w-4 h-4 text-blue-600 dark:text-blue-400" />
+                            <Layers className="size-4 text-blue-600 dark:text-blue-400" />
                         </div>
                         <div>
                             <h3 className="text-sm font-semibold leading-none">{t("workspace.headerTitle")}</h3>
@@ -515,11 +515,11 @@ export function CardWorkspace({
                                 type="button"
                                 variant={inspectorOpen ? "secondary" : "ghost"}
                                 size="icon"
-                                className="h-7 w-7"
+                                className="size-7"
                                 onClick={() => setInspectorOpen(!inspectorOpen)}
                                 aria-label={t("workspace.toggleInspector")}
                             >
-                                <FileText className="h-4 w-4" />
+                                <FileText className="size-4" />
                             </Button>
                         )}
                         {isFullscreen && (
@@ -527,11 +527,11 @@ export function CardWorkspace({
                                 type="button"
                                 variant={headerPinned ? "secondary" : "ghost"}
                                 size="icon"
-                                className="h-7 w-7"
+                                className="size-7"
                                 onClick={() => setHeaderPinned(!headerPinned)}
                                 aria-label={headerPinned ? t("workspace.unlockHeader") : t("workspace.lockHeader")}
                             >
-                                {headerPinned ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+                                {headerPinned ? <Lock className="size-4" /> : <Unlock className="size-4" />}
                             </Button>
                         )}
                         {onToggleFullscreen && (
@@ -539,11 +539,11 @@ export function CardWorkspace({
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7"
+                                className="size-7"
                                 onClick={onToggleFullscreen}
                                 aria-label={isFullscreen ? t("runDetail.collapseWorkspace") : t("runDetail.expandWorkspace")}
                             >
-                                {isFullscreen ? <Minimize2 className="h-4 w-4" /> : <Maximize2 className="h-4 w-4" />}
+                                {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
                             </Button>
                         )}
                         {onClose && (
@@ -551,11 +551,11 @@ export function CardWorkspace({
                                 type="button"
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7"
+                                className="size-7"
                                 onClick={onClose}
                                 aria-label={t("runDetail.closeWorkspace")}
                             >
-                                <X className="h-4 w-4" />
+                                <X className="size-4" />
                             </Button>
                         )}
                     </div>
@@ -573,7 +573,7 @@ export function CardWorkspace({
                             <div className="truncate">
                                 {templatePreflight.message || "Template precheck"}
                             </div>
-                            <div className="mt-0.5 text-[10px] opacity-80 truncate font-mono">
+                            <div className="mt-0.5 text-[10px] opacity-80 truncate font-mono" suppressHydrationWarning>
                                 {templatePreflight.templateId || "template"}@v{templatePreflight.templateVersion ?? "?"}
                                 {templatePreflight.checkedAt ? ` • ${new Date(templatePreflight.checkedAt).toLocaleTimeString()}` : ""}
                             </div>
@@ -650,25 +650,25 @@ export function CardWorkspace({
                             type="button"
                             variant={viewMode === "list" ? "secondary" : "ghost"}
                             size="icon"
-                            className="h-6 w-6"
+                            className="size-6"
                             aria-label={t("workspace.viewList")}
                             onClick={() => setViewMode("list")}
                         >
-                            <List className="h-3.5 w-3.5" />
+                            <List className="size-3.5" />
                         </Button>
                         <Button
                             type="button"
                             variant={viewMode === "grid" ? "secondary" : "ghost"}
                             size="icon"
-                            className="h-6 w-6"
+                            className="size-6"
                             aria-label={t("workspace.viewGrid")}
                             onClick={() => setViewMode("grid")}
                         >
-                            <LayoutGrid className="h-3.5 w-3.5" />
+                            <LayoutGrid className="size-3.5" />
                         </Button>
                     </div>
                     <div className="flex items-center gap-1">
-                        <SlidersHorizontal className="h-3.5 w-3.5" />
+                        <SlidersHorizontal className="size-3.5" />
                         <Button
                             type="button"
                             variant={density === "compact" ? "secondary" : "ghost"}
@@ -750,7 +750,7 @@ export function CardWorkspace({
                                 <div className="grid grid-cols-1 gap-2">
                                     <button
                                         className={cn(
-                                            "text-[10px] font-semibold uppercase tracking-widest border rounded-md px-2 py-2 bg-[var(--app-surface-1)] hover:bg-[var(--app-surface-2)] transition-colors border-[var(--app-border-subtle)]",
+                                            "text-[10px] font-semibold uppercase tracking-widest border rounded-md p-2 bg-[var(--app-surface-1)] hover:bg-[var(--app-surface-2)] transition-colors border-[var(--app-border-subtle)]",
                                             focusRing
                                         )}
                                         type="button"
@@ -761,7 +761,7 @@ export function CardWorkspace({
                                     </button>
                                     <button
                                         className={cn(
-                                            "text-[10px] font-semibold uppercase tracking-widest border rounded-md px-2 py-2 bg-[var(--app-surface-1)] hover:bg-[var(--app-surface-2)] transition-colors border-[var(--app-border-subtle)]",
+                                            "text-[10px] font-semibold uppercase tracking-widest border rounded-md p-2 bg-[var(--app-surface-1)] hover:bg-[var(--app-surface-2)] transition-colors border-[var(--app-border-subtle)]",
                                             focusRing
                                         )}
                                         type="button"
@@ -772,14 +772,14 @@ export function CardWorkspace({
                                     </button>
                                     <button
                                         className={cn(
-                                            "text-[10px] font-semibold uppercase tracking-widest border rounded-md px-2 py-2 bg-[var(--app-surface-1)] hover:bg-[var(--app-surface-2)] transition-colors border-[var(--app-border-subtle)] inline-flex items-center justify-center gap-1.5",
+                                            "text-[10px] font-semibold uppercase tracking-widest border rounded-md p-2 bg-[var(--app-surface-1)] hover:bg-[var(--app-surface-2)] transition-colors border-[var(--app-border-subtle)] inline-flex items-center justify-center gap-1.5",
                                             focusRing
                                         )}
                                         type="button"
                                         disabled={statusCounts.confirmed === 0 || exporting}
                                         onClick={handleExportApkg}
                                     >
-                                        <Download className="w-3 h-3" />
+                                        <Download className="size-3" />
                                         {exporting || exportTask?.status === "processing" ? t("workspace.exportingApkg") : t("workspace.exportApkg")}
                                     </button>
                                 </div>
@@ -813,7 +813,7 @@ export function CardWorkspace({
                                         </Badge>
                                     </div>
                                     <div className="text-xs font-semibold flex items-center gap-2">
-                                        <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                                        <FileText className="size-3.5 text-muted-foreground" />
                                         {selectedCard.content.data.front.slice(0, 80)}
                                     </div>
                                     <div className="space-y-1">
@@ -869,13 +869,13 @@ export function CardWorkspace({
                                     </div>
                                     <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                                         {selectedCard.edit_state.status === "confirmed" ? (
-                                            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                            <CheckCircle2 className="size-3.5 text-emerald-500" />
                                         ) : (
-                                            <Clock className="w-3.5 h-3.5" />
+                                            <Clock className="size-3.5" />
                                         )}
                                         {selectedCard.edit_state.status}
                                     </div>
-                                    <div className="text-[10px] text-muted-foreground">
+                                    <div className="text-[10px] text-muted-foreground" suppressHydrationWarning>
                                         {t("workspace.updatedAt", { date: new Date(selectedCard.meta.modified_at).toLocaleString() })}
                                     </div>
                                 </div>
@@ -919,7 +919,7 @@ export function CardWorkspace({
                                     onClick={handleExportApkg}
                                     className="inline-flex items-center gap-1.5"
                                 >
-                                    <Download className="w-3 h-3" />
+                                    <Download className="size-3" />
                                     {exporting || exportTask?.status === "processing" ? t("workspace.exportingApkg") : t("workspace.exportApkg")}
                                 </Button>
                                 {selectedCard && (
@@ -1042,7 +1042,7 @@ export function CardWorkspace({
                         disabled={statusCounts.confirmed === 0 || exporting}
                         onClick={handleExportApkg}
                     >
-                        <Download className="w-3 h-3" />
+                        <Download className="size-3" />
                         {exporting || exportTask?.status === "processing" ? t("workspace.exportingApkg") : t("workspace.exportApkg")}
                     </button>
                 </div>
@@ -1075,7 +1075,7 @@ export function CardWorkspace({
                             </Badge>
                         </div>
                         <div className="text-xs font-semibold flex items-center gap-2">
-                            <FileText className="w-3.5 h-3.5 text-muted-foreground" />
+                            <FileText className="size-3.5 text-muted-foreground" />
                             {selectedCard.content.data.front.slice(0, 80)}
                         </div>
                         <div className="space-y-1">
@@ -1131,13 +1131,13 @@ export function CardWorkspace({
                         </div>
                         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                             {selectedCard.edit_state.status === "confirmed" ? (
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
+                                <CheckCircle2 className="size-3.5 text-emerald-500" />
                             ) : (
-                                <Clock className="w-3.5 h-3.5" />
+                                <Clock className="size-3.5" />
                             )}
                             {selectedCard.edit_state.status}
                         </div>
-                        <div className="text-[10px] text-muted-foreground">
+                        <div className="text-[10px] text-muted-foreground" suppressHydrationWarning>
                             {t("workspace.updatedAt", { date: new Date(selectedCard.meta.modified_at).toLocaleString() })}
                         </div>
                     </div>
@@ -1149,7 +1149,7 @@ export function CardWorkspace({
                     </div>
                 </>
             )}
-            <style jsx>{`
+            <style>{`
                 .custom-scrollbar::-webkit-scrollbar {
                     width: 4px;
                 }

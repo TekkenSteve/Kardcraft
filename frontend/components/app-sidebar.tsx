@@ -234,7 +234,7 @@ function SidebarInner() {
     <Sidebar collapsible="icon">
       <SidebarHeader>
         <div className="flex items-center justify-between w-full group-data-[collapsible=icon]:justify-center">
-          <Link href="/run-detail?session_id=new" onClick={navigateToFreshSession} className="flex items-center gap-2 px-2 py-2 hover:opacity-90 transition-opacity group-data-[collapsible=icon]:hidden">
+          <Link href="/run-detail?session_id=new" onClick={navigateToFreshSession} className="flex items-center gap-2 p-2 hover:opacity-90 transition-opacity group-data-[collapsible=icon]:hidden">
             <Image
               src="/app-icon.png"
               alt="Kardcraft Agents"
@@ -293,10 +293,10 @@ function SidebarInner() {
               <Link
                 href="/runs"
                 onClick={handleNavClick}
-                className="h-5 w-5 flex items-center justify-center rounded-md hover:bg-muted transition-colors group-data-[collapsible=icon]:hidden"
+                className="size-5 flex items-center justify-center rounded-md hover:bg-muted transition-colors group-data-[collapsible=icon]:hidden"
                 title={t("sidebar.viewAll")}
               >
-                <History className="h-3 w-3 text-muted-foreground" />
+                <History className="size-3 text-muted-foreground" />
               </Link>
             </div>
             <SidebarGroupContent>
@@ -335,9 +335,9 @@ function SidebarInner() {
                             }}
                           >
                             {isResearch ? (
-                              <Microscope className="h-3.5 w-3.5 text-violet-500 shrink-0" />
+                              <Microscope className="size-3.5 text-violet-500 shrink-0" />
                             ) : (
-                              <Sparkles className="h-3.5 w-3.5 text-amber-500 shrink-0" />
+                              <Sparkles className="size-3.5 text-amber-500 shrink-0" />
                             )}
                               <span className={`truncate text-sm ${!session.title ? 'text-muted-foreground' : ''}`}>
                               {displayTitle}
@@ -349,25 +349,25 @@ function SidebarInner() {
                             <Button
                               variant="ghost"
                               size="icon"
-                              className={`h-7 w-7 transition-opacity ${hoveredSessionId === session.session_id ? "opacity-100" : "opacity-0"}`}
+                              className={`size-7 transition-opacity ${hoveredSessionId === session.session_id ? "opacity-100" : "opacity-0"}`}
                               aria-label={t("sidebar.editTitle")}
                               onClick={(e) => e.preventDefault()}
                             >
-                              <MoreHorizontal className="h-4 w-4" />
+                              <MoreHorizontal className="size-4" />
                             </Button>
                           </DropdownMenuTrigger>
                           <DropdownMenuContent align="end" className="w-40">
                             <DropdownMenuItem onClick={() => handleEditTitle(session)}>
-                              <Pencil className="h-4 w-4" />
+                              <Pencil className="size-4" />
                               {t("sidebar.editTitle")}
                             </DropdownMenuItem>
                             <DropdownMenuItem onClick={() => handleTogglePin(session)}>
-                              <Pin className="h-4 w-4" />
+                              <Pin className="size-4" />
                               {session.pinned ? t("common.unpin") : t("common.pin")}
                             </DropdownMenuItem>
                             <DropdownMenuSeparator />
                             <DropdownMenuItem onClick={() => handleDeleteSession(session)} className="text-red-600">
-                              <Trash2 className="h-4 w-4" />
+                              <Trash2 className="size-4" />
                               {t("common.delete")}
                             </DropdownMenuItem>
                           </DropdownMenuContent>
@@ -382,11 +382,11 @@ function SidebarInner() {
         )}
       </SidebarContent>
       <SidebarFooter>
-        <div className="flex items-center justify-between px-2 py-2 group-data-[collapsible=icon]:justify-center">
+        <div className="flex items-center justify-between p-2 group-data-[collapsible=icon]:justify-center">
           <span className="text-sm group-data-[collapsible=icon]:hidden">{t("sidebar.theme")}</span>
           <ThemeToggle />
         </div>
-        <div className="flex items-center justify-center px-2 py-2">
+        <div className="flex items-center justify-center p-2">
           <UserPanel />
         </div>
       </SidebarFooter>

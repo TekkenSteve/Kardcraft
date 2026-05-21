@@ -215,7 +215,7 @@ function WorkflowTypeBadge({ taskContext }: { taskContext?: Record<string, any> 
     if (type === "auto") {
         return (
             <Badge variant="secondary" className="text-xs">
-                <Icon className="h-3 w-3 mr-1" />
+                <Icon className="size-3 mr-1" />
                 Auto
             </Badge>
         );
@@ -224,7 +224,7 @@ function WorkflowTypeBadge({ taskContext }: { taskContext?: Record<string, any> 
     if (type.startsWith("research_")) {
         return (
             <Badge className="bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30 text-xs">
-                <Icon className="h-3 w-3 mr-1" />
+                <Icon className="size-3 mr-1" />
                 {info.label.replace("Research - ", "")}
             </Badge>
         );
@@ -233,7 +233,7 @@ function WorkflowTypeBadge({ taskContext }: { taskContext?: Record<string, any> 
     if (type === "data_analytics" || type === "ga4_analytics") {
         return (
             <Badge className="bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30 text-xs">
-                <Icon className="h-3 w-3 mr-1" />
+                <Icon className="size-3 mr-1" />
                 {type === "ga4_analytics" ? "GA4" : "Analytics"}
             </Badge>
         );
@@ -241,7 +241,7 @@ function WorkflowTypeBadge({ taskContext }: { taskContext?: Record<string, any> 
 
     return (
         <Badge variant="outline" className="text-xs">
-            <Icon className="h-3 w-3 mr-1" />
+            <Icon className="size-3 mr-1" />
             Custom
         </Badge>
     );
@@ -339,7 +339,7 @@ function ScheduleStatusBadge({ status }: { status: ScheduleStatus }) {
     if (status === "ACTIVE") {
         return (
             <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
-                <CheckCircle2 className="h-3 w-3 mr-1" />
+                <CheckCircle2 className="size-3 mr-1" />
                 Active
             </Badge>
         );
@@ -347,7 +347,7 @@ function ScheduleStatusBadge({ status }: { status: ScheduleStatus }) {
     if (status === "PAUSED") {
         return (
             <Badge className="bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30">
-                <Pause className="h-3 w-3 mr-1" />
+                <Pause className="size-3 mr-1" />
                 Paused
             </Badge>
         );
@@ -365,28 +365,28 @@ function RunStatusBadge({ status }: { status: string }) {
         case "COMPLETED":
             return (
                 <Badge className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30">
-                    <CheckCircle2 className="h-3 w-3 mr-1" />
+                    <CheckCircle2 className="size-3 mr-1" />
                     Completed
                 </Badge>
             );
         case "FAILED":
             return (
                 <Badge className="bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30">
-                    <XCircle className="h-3 w-3 mr-1" />
+                    <XCircle className="size-3 mr-1" />
                     Failed
                 </Badge>
             );
         case "RUNNING":
             return (
                 <Badge className="bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30">
-                    <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                    <Loader2 className="size-3 mr-1 animate-spin" />
                     Running
                 </Badge>
             );
         default:
             return (
                 <Badge variant="secondary">
-                    <AlertCircle className="h-3 w-3 mr-1" />
+                    <AlertCircle className="size-3 mr-1" />
                     Unknown
                 </Badge>
             );
@@ -453,9 +453,9 @@ function ScheduleRow({
                         className="flex items-center gap-2 text-left w-full"
                     >
                         {isExpanded ? (
-                            <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <ChevronDown className="size-4 text-muted-foreground shrink-0" />
                         ) : (
-                            <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <ChevronRight className="size-4 text-muted-foreground shrink-0" />
                         )}
                         <div className="flex flex-col min-w-0">
                             <span className="font-medium truncate">{schedule.name}</span>
@@ -475,11 +475,11 @@ function ScheduleRow({
                         <Tooltip>
                             <TooltipTrigger asChild>
                                 <div className="flex items-center gap-2 cursor-default">
-                                    <Clock className="h-4 w-4 text-muted-foreground" />
+                                    <Clock className="size-4 text-muted-foreground" />
                                     <span className="text-sm">{formatCron(schedule.cron_expression)}</span>
                                 </div>
                             </TooltipTrigger>
-                            <TooltipContent>
+                            <TooltipContent suppressHydrationWarning>
                                 <p className="font-mono text-xs">{schedule.cron_expression}</p>
                                 <p className="text-xs text-muted-foreground mt-1">{schedule.timezone}</p>
                             </TooltipContent>
@@ -497,7 +497,7 @@ function ScheduleRow({
                                     {formatRelativeTime(schedule.next_run_at)}
                                 </span>
                             </TooltipTrigger>
-                            <TooltipContent>
+                            <TooltipContent suppressHydrationWarning>
                                 {schedule.next_run_at
                                     ? new Date(schedule.next_run_at).toLocaleString()
                                     : "No next run scheduled"}
@@ -520,7 +520,7 @@ function ScheduleRow({
                                         <span className="text-sm">{successRate}%</span>
                                     </div>
                                 </TooltipTrigger>
-                                <TooltipContent>
+                                <TooltipContent suppressHydrationWarning>
                                     <p>{schedule.successful_runs} / {schedule.total_runs} runs successful</p>
                                     {schedule.failed_runs > 0 && (
                                         <p className="text-red-400">{schedule.failed_runs} failed</p>
@@ -543,10 +543,10 @@ function ScheduleRow({
                                         onClick={() => onEdit(schedule)}
                                         disabled={isThisPending}
                                     >
-                                        <Pencil className="h-4 w-4" />
+                                        <Pencil className="size-4" />
                                     </Button>
                                 </TooltipTrigger>
-                                <TooltipContent>Edit schedule</TooltipContent>
+                                <TooltipContent suppressHydrationWarning>Edit schedule</TooltipContent>
                             </Tooltip>
                         </TooltipProvider>
                         {schedule.status === "ACTIVE" ? (
@@ -560,13 +560,13 @@ function ScheduleRow({
                                             disabled={isThisPending}
                                         >
                                             {isThisPending ? (
-                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                <Loader2 className="size-4 animate-spin" />
                                             ) : (
-                                                <Pause className="h-4 w-4" />
+                                                <Pause className="size-4" />
                                             )}
                                         </Button>
                                     </TooltipTrigger>
-                                    <TooltipContent>Pause schedule</TooltipContent>
+                                    <TooltipContent suppressHydrationWarning>Pause schedule</TooltipContent>
                                 </Tooltip>
                             </TooltipProvider>
                         ) : schedule.status === "PAUSED" ? (
@@ -580,13 +580,13 @@ function ScheduleRow({
                                             disabled={isThisPending}
                                         >
                                             {isThisPending ? (
-                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                <Loader2 className="size-4 animate-spin" />
                                             ) : (
-                                                <Play className="h-4 w-4" />
+                                                <Play className="size-4" />
                                             )}
                                         </Button>
                                     </TooltipTrigger>
-                                    <TooltipContent>Resume schedule</TooltipContent>
+                                    <TooltipContent suppressHydrationWarning>Resume schedule</TooltipContent>
                                 </Tooltip>
                             </TooltipProvider>
                         ) : null}
@@ -600,10 +600,10 @@ function ScheduleRow({
                                         disabled={isThisPending}
                                         className="text-red-500 hover:text-red-600 hover:bg-red-500/10"
                                     >
-                                        <Trash2 className="h-4 w-4" />
+                                        <Trash2 className="size-4" />
                                     </Button>
                                 </TooltipTrigger>
-                                <TooltipContent>Delete schedule</TooltipContent>
+                                <TooltipContent suppressHydrationWarning>Delete schedule</TooltipContent>
                             </Tooltip>
                         </TooltipProvider>
                     </div>
@@ -623,7 +623,7 @@ function ScheduleRow({
                                     onClick={fetchRuns}
                                     disabled={isLoadingRuns}
                                 >
-                                    <RefreshCw className={`h-3 w-3 ${isLoadingRuns ? "animate-spin" : ""}`} />
+                                    <RefreshCw className={`size-3 ${isLoadingRuns ? "animate-spin" : ""}`} />
                                 </Button>
                             </div>
 
@@ -633,7 +633,7 @@ function ScheduleRow({
 
                             {isLoadingRuns ? (
                                 <div className="flex items-center justify-center py-4">
-                                    <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+                                    <Loader2 className="size-5 animate-spin text-muted-foreground" />
                                 </div>
                             ) : runs.length === 0 ? (
                                 <div className="text-sm text-muted-foreground py-4 text-center">
@@ -667,7 +667,7 @@ function ScheduleRow({
                                                                         {formatRelativeTime(run.triggered_at)}
                                                                     </span>
                                                                 </TooltipTrigger>
-                                                                <TooltipContent>
+                                                                <TooltipContent suppressHydrationWarning>
                                                                     {new Date(run.triggered_at).toLocaleString()}
                                                                 </TooltipContent>
                                                             </Tooltip>
@@ -678,19 +678,19 @@ function ScheduleRow({
                                                     </td>
                                                     <td className="p-3 hidden sm:table-cell">
                                                         <div className="flex items-center gap-1.5 text-muted-foreground">
-                                                            <Timer className="h-3.5 w-3.5" />
+                                                            <Timer className="size-3.5" />
                                                             {formatDuration(run.duration_ms)}
                                                         </div>
                                                     </td>
                                                     <td className="p-3 hidden md:table-cell">
                                                         <div className="flex items-center gap-1.5 text-muted-foreground">
-                                                            <Zap className="h-3.5 w-3.5" />
+                                                            <Zap className="size-3.5" />
                                                             {run.total_tokens.toLocaleString()}
                                                         </div>
                                                     </td>
                                                     <td className="p-3 hidden md:table-cell">
                                                         <div className="flex items-center gap-1.5 text-muted-foreground">
-                                                            <DollarSign className="h-3.5 w-3.5" />
+                                                            <DollarSign className="size-3.5" />
                                                             {run.total_cost_usd.toFixed(4)}
                                                         </div>
                                                     </td>
@@ -961,7 +961,7 @@ function ScheduleFormDialog({
                             id="name"
                             placeholder="Daily report"
                             value={formData.name}
-                            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                            onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value })}
                             required
                         />
                     </div>
@@ -972,7 +972,7 @@ function ScheduleFormDialog({
                             id="description"
                             placeholder="Generate daily summary report"
                             value={formData.description}
-                            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                            onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value })}
                         />
                     </div>
 
@@ -980,7 +980,7 @@ function ScheduleFormDialog({
                         <Label htmlFor="workflow_type">Workflow Type</Label>
                         <Select
                             value={formData.workflow_type}
-                            onValueChange={(value) => setFormData({ ...formData, workflow_type: value as WorkflowType })}
+                            onValueChange={(value) => setFormData(prev => ({ ...prev, workflow_type: value as WorkflowType })}
                         >
                             <SelectTrigger id="workflow_type">
                                 <SelectValue placeholder="Select workflow type" />
@@ -991,7 +991,7 @@ function ScheduleFormDialog({
                                     return (
                                         <SelectItem key={type.value} value={type.value}>
                                             <div className="flex items-center gap-2">
-                                                <Icon className="h-4 w-4 text-muted-foreground" />
+                                                <Icon className="size-4 text-muted-foreground" />
                                                 <span>{type.label}</span>
                                             </div>
                                         </SelectItem>
@@ -1013,7 +1013,7 @@ function ScheduleFormDialog({
                                 id="custom_context"
                                 placeholder='{"research_strategy": "deep", "force_research": true}'
                                 value={formData.custom_context}
-                                onChange={(e) => setFormData({ ...formData, custom_context: e.target.value })}
+                                onChange={(e) => setFormData(prev => ({ ...prev, custom_context: e.target.value })}
                                 className="font-mono text-sm"
                                 rows={4}
                             />
@@ -1025,7 +1025,7 @@ function ScheduleFormDialog({
 
                     <ScheduleBuilder
                         value={formData.cron_expression}
-                        onChange={(cron) => setFormData({ ...formData, cron_expression: cron })}
+                        onChange={(cron) => setFormData(prev => ({ ...prev, cron_expression: cron })}
                         timezone={formData.timezone}
                     />
 
@@ -1033,7 +1033,7 @@ function ScheduleFormDialog({
                         <Label htmlFor="timezone">Timezone</Label>
                         <Select
                             value={formData.timezone}
-                            onValueChange={(value) => setFormData({ ...formData, timezone: value })}
+                            onValueChange={(value) => setFormData(prev => ({ ...prev, timezone: value })}
                         >
                             <SelectTrigger id="timezone">
                                 <SelectValue placeholder="Select timezone" />
@@ -1055,7 +1055,7 @@ function ScheduleFormDialog({
                             className="placeholder:text-muted-foreground border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] disabled:opacity-50"
                             placeholder="What task should be executed?"
                             value={formData.task_query}
-                            onChange={(e) => setFormData({ ...formData, task_query: e.target.value })}
+                            onChange={(e) => setFormData(prev => ({ ...prev, task_query: e.target.value })}
                             required
                             rows={3}
                         />
@@ -1072,7 +1072,7 @@ function ScheduleFormDialog({
                                 max="10"
                                 placeholder="e.g. 1.00"
                                 value={formData.max_budget_per_run_usd}
-                                onChange={(e) => setFormData({ ...formData, max_budget_per_run_usd: e.target.value })}
+                                onChange={(e) => setFormData(prev => ({ ...prev, max_budget_per_run_usd: e.target.value })}
                             />
                             <p className="text-xs text-muted-foreground">Max $10.00 per run</p>
                         </div>
@@ -1084,7 +1084,7 @@ function ScheduleFormDialog({
                                 min="60"
                                 placeholder="e.g. 300"
                                 value={formData.timeout_seconds}
-                                onChange={(e) => setFormData({ ...formData, timeout_seconds: e.target.value })}
+                                onChange={(e) => setFormData(prev => ({ ...prev, timeout_seconds: e.target.value })}
                             />
                             <p className="text-xs text-muted-foreground">Min 60 seconds</p>
                         </div>
@@ -1095,7 +1095,7 @@ function ScheduleFormDialog({
                             Cancel
                         </Button>
                         <Button type="submit" disabled={isSubmitting}>
-                            {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
+                            {isSubmitting && <Loader2 className="size-4 mr-2 animate-spin" />}
                             {isEditing ? "Save Changes" : "Create Schedule"}
                         </Button>
                     </DialogFooter>
@@ -1214,11 +1214,11 @@ export default function SchedulesPage() {
                         onClick={fetchSchedules}
                         disabled={isLoading}
                     >
-                        <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+                        <RefreshCw className={`size-4 ${isLoading ? "animate-spin" : ""}`} />
                         <span className="hidden sm:inline ml-2">Refresh</span>
                     </Button>
                     <Button size="sm" onClick={() => setIsFormOpen(true)}>
-                        <Plus className="h-4 w-4" />
+                        <Plus className="size-4" />
                         <span className="hidden sm:inline ml-2">Create</span>
                     </Button>
                 </div>
@@ -1226,7 +1226,7 @@ export default function SchedulesPage() {
 
             <div className="flex items-center gap-4">
                 <div className="relative flex-1 max-w-sm">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
                     <Input
                         type="search"
                         placeholder="Search schedules..."
@@ -1244,10 +1244,10 @@ export default function SchedulesPage() {
                         <Button
                             variant="ghost"
                             size="sm"
-                            className="h-6 w-6 p-0 text-red-600 hover:text-red-800 hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-900/50"
+                            className="size-6 p-0 text-red-600 hover:text-red-800 hover:bg-red-100 dark:text-red-400 dark:hover:bg-red-900/50"
                             onClick={() => setError(null)}
                         >
-                            <XCircle className="h-4 w-4" />
+                            <XCircle className="size-4" />
                         </Button>
                     </div>
                     <Button
@@ -1266,7 +1266,7 @@ export default function SchedulesPage() {
 
             {isLoading ? (
                 <div className="flex items-center justify-center py-12">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                    <Loader2 className="size-8 animate-spin text-primary" />
                 </div>
             ) : (
                 <div className="rounded-md border">
@@ -1307,7 +1307,7 @@ export default function SchedulesPage() {
                                                 <div className="space-y-3">
                                                     <p>No schedules yet.</p>
                                                     <Button size="sm" onClick={() => setIsFormOpen(true)}>
-                                                        <Plus className="h-4 w-4 mr-2" />
+                                                        <Plus className="size-4 mr-2" />
                                                         Create your first schedule
                                                     </Button>
                                                 </div>
@@ -1363,7 +1363,7 @@ export default function SchedulesPage() {
                             className="bg-red-600 hover:bg-red-700 focus:ring-red-600"
                         >
                             {pendingAction === deleteConfirmId ? (
-                                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                                <Loader2 className="size-4 mr-2 animate-spin" />
                             ) : null}
                             Delete
                         </AlertDialogAction>

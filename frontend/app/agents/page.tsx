@@ -23,7 +23,7 @@ export default function AgentsPage() {
     return (
         <div className="p-4 sm:p-8 space-y-6 sm:space-y-8">
             <div>
-                <h1 className="text-3xl font-bold tracking-tight">{t("agentsPage.title")}</h1>
+                <h1 className="text-3xl font-semibold tracking-tight">{t("agentsPage.title")}</h1>
                 <p className="text-muted-foreground">
                     {t("agentsPage.subtitle")}
                 </p>
@@ -35,7 +35,7 @@ export default function AgentsPage() {
                     <CardHeader>
                         <div className="flex items-center gap-3">
                             <div className="p-3 rounded-xl bg-amber-100 dark:bg-amber-900/30">
-                                <Sparkles className="h-6 w-6 text-amber-500" />
+                                <Sparkles className="size-6 text-amber-500" />
                             </div>
                             <div>
                                 <CardTitle className="text-xl">{t("agentsPage.everydayTitle")}</CardTitle>
@@ -49,21 +49,21 @@ export default function AgentsPage() {
                         </p>
                         <ul className="text-sm space-y-2">
                             <li className="flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                <span className="size-1.5 rounded-full bg-amber-500" />
                                 {t("agentsPage.everydayPoint1")}
                             </li>
                             <li className="flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                <span className="size-1.5 rounded-full bg-amber-500" />
                                 {t("agentsPage.everydayPoint2")}
                             </li>
                             <li className="flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-amber-500" />
+                                <span className="size-1.5 rounded-full bg-amber-500" />
                                 {t("agentsPage.everydayPoint3")}
                             </li>
                         </ul>
                         <Button variant="ghost" className="w-full group-hover:bg-amber-50 dark:group-hover:bg-amber-900/20">
                             {t("agentsPage.everydayAction")}
-                            <ArrowRight className="ml-2 h-4 w-4" />
+                            <ArrowRight className="ml-2 size-4" />
                         </Button>
                     </CardContent>
                 </Card>
@@ -73,7 +73,7 @@ export default function AgentsPage() {
                     <CardHeader>
                         <div className="flex items-center gap-3">
                             <div className="p-3 rounded-xl bg-violet-100 dark:bg-violet-900/30">
-                                <LayoutTemplate className="h-6 w-6 text-violet-500" />
+                                <LayoutTemplate className="size-6 text-violet-500" />
                             </div>
                             <div>
                                 <CardTitle className="text-xl">{t("agentsPage.templateTitle")}</CardTitle>
@@ -87,21 +87,21 @@ export default function AgentsPage() {
                         </p>
                         <ul className="text-sm space-y-2">
                             <li className="flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+                                <span className="size-1.5 rounded-full bg-violet-500" />
                                 {t("agentsPage.templatePoint1")}
                             </li>
                             <li className="flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+                                <span className="size-1.5 rounded-full bg-violet-500" />
                                 {t("agentsPage.templatePoint2")}
                             </li>
                             <li className="flex items-center gap-2">
-                                <span className="w-1.5 h-1.5 rounded-full bg-violet-500" />
+                                <span className="size-1.5 rounded-full bg-violet-500" />
                                 {t("agentsPage.templatePoint3")}
                             </li>
                         </ul>
                         <Button variant="ghost" className="w-full group-hover:bg-violet-50 dark:group-hover:bg-violet-900/20">
                             {t("agentsPage.templateAction")}
-                            <ArrowRight className="ml-2 h-4 w-4" />
+                            <ArrowRight className="ml-2 size-4" />
                         </Button>
                     </CardContent>
                 </Card>

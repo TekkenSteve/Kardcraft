@@ -151,54 +151,54 @@ const extractMessageAttachments = (message: Message): MessageAttachment[] => {
 function StatusIcon({ eventType }: { eventType?: string }) {
     switch (eventType) {
         case "AGENT_THINKING":
-            return <Brain className="h-3.5 w-3.5 text-blue-500 animate-pulse" />;
+            return <Brain className="size-3.5 text-blue-500 animate-pulse" />;
         case "AGENT_STARTED":
-            return <Play className="h-3.5 w-3.5 text-green-500" />;
+            return <Play className="size-3.5 text-green-500" />;
         case "AGENT_COMPLETED":
-            return <CheckCircle className="h-3.5 w-3.5 text-green-500" />;
+            return <CheckCircle className="size-3.5 text-green-500" />;
         case "DELEGATION":
-            return <Users className="h-3.5 w-3.5 text-purple-500" />;
+            return <Users className="size-3.5 text-purple-500" />;
         case "PROGRESS":
         case "STATUS_UPDATE":
-            return <Zap className="h-3.5 w-3.5 text-amber-500" />;
+            return <Zap className="size-3.5 text-amber-500" />;
         case "DATA_PROCESSING":
-            return <Loader2 className="h-3.5 w-3.5 text-green-500 animate-spin" />;
+            return <Loader2 className="size-3.5 text-green-500 animate-spin" />;
         case "TOOL_INVOKED":
-            return <Search className="h-3.5 w-3.5 text-blue-500 animate-pulse" />;
+            return <Search className="size-3.5 text-blue-500 animate-pulse" />;
         case "TOOL_OBSERVATION":
-            return <Sparkles className="h-3.5 w-3.5 text-emerald-500" />;
+            return <Sparkles className="size-3.5 text-emerald-500" />;
         case "APPROVAL_REQUESTED":
-            return <AlertCircle className="h-3.5 w-3.5 text-orange-500" />;
+            return <AlertCircle className="size-3.5 text-orange-500" />;
         case "APPROVAL_DECISION":
-            return <CheckCircle className="h-3.5 w-3.5 text-green-500" />;
+            return <CheckCircle className="size-3.5 text-green-500" />;
         case "WAITING":
-            return <Clock className="h-3.5 w-3.5 text-amber-500 animate-pulse" />;
+            return <Clock className="size-3.5 text-amber-500 animate-pulse" />;
         case "DEPENDENCY_SATISFIED":
-            return <Link className="h-3.5 w-3.5 text-green-500" />;
+            return <Link className="size-3.5 text-green-500" />;
         case "ERROR_OCCURRED":
-            return <ShieldAlert className="h-3.5 w-3.5 text-red-500" />;
+            return <ShieldAlert className="size-3.5 text-red-500" />;
         case "ERROR_RECOVERY":
-            return <RefreshCw className="h-3.5 w-3.5 text-amber-500 animate-spin" />;
+            return <RefreshCw className="size-3.5 text-amber-500 animate-spin" />;
         case "MESSAGE_SENT":
         case "MESSAGE_RECEIVED":
-            return <MessageSquare className="h-3.5 w-3.5 text-blue-500" />;
+            return <MessageSquare className="size-3.5 text-blue-500" />;
         case "WORKSPACE_UPDATED":
-            return <FolderSync className="h-3.5 w-3.5 text-purple-500" />;
+            return <FolderSync className="size-3.5 text-purple-500" />;
         case "workflow.pausing":
-            return <Pause className="h-3.5 w-3.5 text-amber-500 animate-pulse" />;
+            return <Pause className="size-3.5 text-amber-500 animate-pulse" />;
         case "workflow.paused":
-            return <Pause className="h-3.5 w-3.5 text-amber-500" />;
+            return <Pause className="size-3.5 text-amber-500" />;
         case "workflow.resuming":
-            return <Play className="h-3.5 w-3.5 text-green-500 animate-pulse" />;
+            return <Play className="size-3.5 text-green-500 animate-pulse" />;
         case "workflow.resumed":
-            return <Play className="h-3.5 w-3.5 text-green-500" />;
+            return <Play className="size-3.5 text-green-500" />;
         case "workflow.cancelling":
-            return <CircleSlash className="h-3.5 w-3.5 text-red-500 animate-pulse" />;
+            return <CircleSlash className="size-3.5 text-red-500 animate-pulse" />;
         case "workflow.cancelled":
-            return <XCircle className="h-3.5 w-3.5 text-red-500" />;
+            return <XCircle className="size-3.5 text-red-500" />;
         case "WORKFLOW_STARTED":
         default:
-            return <Loader2 className="h-3.5 w-3.5 text-muted-foreground animate-spin" />;
+            return <Loader2 className="size-3.5 text-muted-foreground animate-spin" />;
     }
 }
 
@@ -239,7 +239,7 @@ function CitationLink({ index, citation }: { index: number; citation: Citation }
                         </div>
                         {citation.source && (
                             <div className="text-xs text-muted-foreground flex items-center gap-1">
-                                <ExternalLink className="h-3 w-3" />
+                                <ExternalLink className="size-3" />
                                 <span className="truncate">{citation.source}</span>
                             </div>
                         )}
@@ -269,11 +269,11 @@ function FileAttachment({ file }: { file: { fileId: string; filename: string; si
     };
 
     const getFileIcon = (mimeType: string) => {
-        if (mimeType.startsWith('image/')) return <ImageIcon className="h-4 w-4" />;
-        if (mimeType.startsWith('video/')) return <FileVideo className="h-4 w-4" />;
-        if (mimeType.startsWith('audio/')) return <FileAudio className="h-4 w-4" />;
-        if (mimeType.includes('pdf') || mimeType.includes('document')) return <FileText className="h-4 w-4" />;
-        return <File className="h-4 w-4" />;
+        if (mimeType.startsWith('image/')) return <ImageIcon className="size-4" />;
+        if (mimeType.startsWith('video/')) return <FileVideo className="size-4" />;
+        if (mimeType.startsWith('audio/')) return <FileAudio className="size-4" />;
+        if (mimeType.includes('pdf') || mimeType.includes('document')) return <FileText className="size-4" />;
+        return <File className="size-4" />;
     };
 
     return (
@@ -569,15 +569,15 @@ export function RunConversation({ messages, agentType = "normal" }: RunConversat
                         )}
                         style={{ contentVisibility: "auto", containIntrinsicSize: "1px 180px" }}
                     >
-                        <Avatar className="h-7 w-7 sm:h-8 sm:w-8 shrink-0">
+                        <Avatar className="size-7 sm:h-8 sm:w-8 shrink-0">
                             <AvatarFallback className={cn(
                                 message.role === "user" ? "bg-primary text-primary-foreground" :
                                     message.role === "system" ? (message.isError ? "bg-red-100 dark:bg-red-900/30" : message.isCancelled ? "bg-yellow-100 dark:bg-yellow-900/30" : "bg-gray-100 dark:bg-gray-900/30") :
                                         agentType === "card_template" ? "bg-violet-100 dark:bg-violet-900/30" : "bg-amber-100 dark:bg-amber-900/30"
                             )}>
                                 {message.role === "user" ? userInitials :
-                                    message.role === "system" ? (message.isError ? <AlertCircle className="h-4 w-4 text-red-500" /> : message.isCancelled ? <XCircle className="h-4 w-4 text-yellow-600" /> : "S") :
-                                        agentType === "card_template" ? <Microscope className="h-4 w-4 text-violet-500" /> : <Sparkles className="h-4 w-4 text-amber-500" />}
+                                    message.role === "system" ? (message.isError ? <AlertCircle className="size-4 text-red-500" /> : message.isCancelled ? <XCircle className="size-4 text-yellow-600" /> : "S") :
+                                        agentType === "card_template" ? <Microscope className="size-4 text-violet-500" /> : <Sparkles className="size-4 text-amber-500" />}
                             </AvatarFallback>
                         </Avatar>
                         <div className={cn(
@@ -599,7 +599,7 @@ export function RunConversation({ messages, agentType = "normal" }: RunConversat
                                                 className="inline-flex items-center gap-1 rounded-full border border-border/70 bg-muted/50 px-2 py-0.5 text-[11px] text-muted-foreground max-w-[180px]"
                                                 title={file.filename}
                                             >
-                                                <Paperclip className="h-3 w-3 shrink-0" />
+                                                <Paperclip className="size-3 shrink-0" />
                                                 <span className="truncate">{file.filename}</span>
                                             </span>
                                         ))}
@@ -648,13 +648,13 @@ export function RunConversation({ messages, agentType = "normal" }: RunConversat
                                                     <Button
                                                         variant="ghost"
                                                         size="sm"
-                                                        className="h-5 w-5 p-0 hover:bg-muted"
+                                                        className="size-5 p-0 hover:bg-muted"
                                                         onClick={() => handleCopyMessage(message.id, message.content)}
                                                     >
                                                         {copiedMessageId === message.id ? (
-                                                            <Check className="h-3 w-3" />
+                                                            <Check className="size-3" />
                                                         ) : (
-                                                            <Copy className="h-3 w-3" />
+                                                            <Copy className="size-3" />
                                                         )}
                                                     </Button>
                                                 </TooltipTrigger>

@@ -216,10 +216,10 @@ export function LoginDialog({
                 <form onSubmit={handleSubmit} className="space-y-4">
                     {errors.length > 0 && (
                         <Alert variant="destructive">
-                            <AlertCircle className="h-4 w-4" />
+                            <AlertCircle className="size-4" />
                             <AlertDescription>
-                                {errors.map((error, index) => (
-                                    <div key={`${error}-${index}`}>{error}</div>
+                                {errors.map((error) => (
+                                    <div key={error}>{error}</div>
                                 ))}
                             </AlertDescription>
                         </Alert>
@@ -250,8 +250,8 @@ export function LoginDialog({
                                     disabled={disabled || isAuthenticating}
                                     className={hasError ? "border-red-500" : ""}
                                 />
-                                {node.messages.map((message, index) => (
-                                    <p key={`${name}-msg-${index}`} className={`text-sm ${message.type === "error" ? "text-red-500" : "text-gray-600"}`}>
+                                {node.messages.map((message) => (
+                                    <p key={message.text} className={`text-sm ${message.type === "error" ? "text-red-500" : "text-gray-600"}`}>
                                         {message.text}
                                     </p>
                                 ))}
@@ -261,7 +261,7 @@ export function LoginDialog({
 
                     <div className="flex flex-col gap-2">
                         <Button type="submit" disabled={isAuthenticating || !flow} className="w-full">
-                            {isAuthenticating && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                            {isAuthenticating && <Loader2 className="mr-2 size-4 animate-spin" />}
                             {getSubmitButton()?.meta.label?.text || "Sign In"}
                         </Button>
 

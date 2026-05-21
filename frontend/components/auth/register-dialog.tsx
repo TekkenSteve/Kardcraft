@@ -227,10 +227,10 @@ export function RegisterDialog({
         <form onSubmit={handleSubmit} className="space-y-4">
           {errors.length > 0 && (
             <Alert variant="destructive">
-              <AlertCircle className="h-4 w-4" />
+              <AlertCircle className="size-4" />
               <AlertDescription>
-                {errors.map((error, i) => (
-                  <div key={i}>{error}</div>
+                {errors.map((error) => (
+                  <div key={error}>{error}</div>
                 ))}
               </AlertDescription>
             </Alert>
@@ -267,8 +267,8 @@ export function RegisterDialog({
                   disabled={disabled || loading}
                   className={hasError ? "border-red-500" : ""}
                 />
-                {node.messages.map((message, i) => (
-                  <p key={i} className={`text-sm ${message.type === "error" ? "text-red-500" : "text-gray-600"}`}>
+                {node.messages.map((message) => (
+                  <p key={message.text} className={`text-sm ${message.type === "error" ? "text-red-500" : "text-gray-600"}`}>
                     {message.text}
                   </p>
                 ))}
@@ -278,7 +278,7 @@ export function RegisterDialog({
 
           <div className="flex flex-col gap-2">
             <Button type="submit" disabled={loading || !flow} className="w-full">
-              {loading && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {loading && <Loader2 className="mr-2 size-4 animate-spin" />}
               {getSubmitButton()?.meta.label?.text || "Create Account"}
             </Button>
 

@@ -72,16 +72,16 @@ const TimelineItem = ({
     const isCancelled = event.status === "cancelled";
 
     const getIcon = () => {
-        if (isCompleted) return <CheckCircle2 className="h-3 w-3" />;
-        if (event.status === "failed") return <AlertCircle className="h-3 w-3" />;
-        if (event.status === "cancelled") return <Clock className="h-3 w-3" />;
-        if (event.status === "paused") return <Activity className="h-3 w-3" />;
+        if (isCompleted) return <CheckCircle2 className="size-3" />;
+        if (event.status === "failed") return <AlertCircle className="size-3" />;
+        if (event.status === "cancelled") return <Clock className="size-3" />;
+        if (event.status === "paused") return <Activity className="size-3" />;
 
         switch (event.type) {
-            case "agent": return <BrainCircuit className="h-3 w-3" />;
-            case "tool": return <Wrench className="h-3 w-3" />;
-            case "llm": return <Cpu className="h-3 w-3" />;
-            default: return <Terminal className="h-3 w-3" />;
+            case "agent": return <BrainCircuit className="size-3" />;
+            case "tool": return <Wrench className="size-3" />;
+            case "llm": return <Cpu className="size-3" />;
+            default: return <Terminal className="size-3" />;
         }
     };
 
@@ -95,7 +95,7 @@ const TimelineItem = ({
         >
             {/* Minimalist Status Node */}
             <div className={cn(
-                "absolute left-[13px] top-[18px] flex h-3.5 w-3.5 items-center justify-center rounded-full z-10 bg-background border transition-all duration-300",
+                "absolute left-[13px] top-[18px] flex size-3.5 items-center justify-center rounded-full z-10 bg-background border transition-all duration-300",
                 isRunning ? "border-primary ring-2 ring-primary/5 shadow-sm shadow-primary/10" :
                     isCompleted ? "border-emerald-500/40 text-emerald-500/70" :
                         isCancelled ? "border-yellow-600/40 text-yellow-700/80" :
@@ -103,7 +103,7 @@ const TimelineItem = ({
                         "border-muted/50"
             )}>
                 {isRunning ? (
-                    <div className="h-1.5 w-1.5 rounded-full bg-primary animate-pulse" />
+                    <div className="size-1.5 rounded-full bg-primary animate-pulse" />
                 ) : (
                     <div className="scale-75">{getIcon()}</div>
                 )}
@@ -124,7 +124,7 @@ const TimelineItem = ({
                                 onClick={() => onNavigate(event.messageId!)}
                                 className="opacity-0 group-hover:opacity-100 transition-opacity flex items-center gap-1 text-[9px] text-primary hover:underline font-bold whitespace-nowrap shrink-0"
                             >
-                                {goToChatLabel} <ExternalLink className="h-2 w-2" />
+                                {goToChatLabel} <ExternalLink className="size-2" />
                             </button>
                         )}
                     </div>

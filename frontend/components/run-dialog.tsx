@@ -59,7 +59,7 @@ export function RunDialog({ scenarioName, triggerButton }: RunDialogProps) {
             <DialogTrigger asChild>
                 {triggerButton || (
                     <Button size="sm">
-                        <Play className="mr-2 h-4 w-4" />
+                        <Play className="mr-2 size-4" />
                         Run
                     </Button>
                 )}
@@ -96,8 +96,8 @@ export function RunDialog({ scenarioName, triggerButton }: RunDialogProps) {
                     <Button onClick={handleRun} disabled={isSubmitting || !query.trim()}>
                         {isSubmitting ? (
                             <>
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                Submitting...
+                                <Loader2 className="mr-2 size-4 animate-spin" />
+                                Submitting…
                             </>
                         ) : (
                             "Start Execution"

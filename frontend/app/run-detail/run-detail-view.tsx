@@ -71,7 +71,7 @@ export function RunDetailView() {
             <div className="flex items-center justify-center h-screen">
                 <div className="text-center space-y-4">
                     <div className="text-red-500 text-5xl mb-4">⚠️</div>
-                    <h2 className="text-2xl font-bold">{t("runDetail.failedTitle")}</h2>
+                    <h2 className="text-2xl font-semibold">{t("runDetail.failedTitle")}</h2>
                     <p className="text-muted-foreground">{error}</p>
                     <p className="text-sm text-muted-foreground">{t("runDetail.failedHint")}</p>
                     <div className="flex items-center justify-center gap-2">
@@ -104,7 +104,7 @@ export function RunDetailView() {
         <div className="flex h-full flex-col overflow-hidden">
             {isLoading && sessionId !== "new" && (
                 <div className="flex items-center gap-2 border-b px-6 py-2 text-xs text-muted-foreground bg-muted/40">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    <Loader2 className="size-3.5 animate-spin" />
                     <span>{t("runDetail.loadingSession")}</span>
                 </div>
             )}
@@ -152,7 +152,7 @@ export function RunDetailView() {
                                     className="gap-2"
                                     aria-label={t("runDetail.timeline")}
                                 >
-                                    <Eye className="h-4 w-4" />
+                                    <Eye className="size-4" />
                                     <span className="hidden sm:inline">{t("runDetail.timeline")}</span>
                                 </Button>
                                 )}
@@ -163,7 +163,7 @@ export function RunDetailView() {
                                     className={cn("gap-2 transition-all", showWorkspace && "bg-blue-50 border-blue-200 text-blue-700")}
                                     aria-label={showWorkspace ? t("runDetail.closeWorkspace") : t("runDetail.openWorkspace")}
                                 >
-                                    {showWorkspace ? <PanelRightClose className="h-4 w-4" /> : <PanelRight className="h-4 w-4" />}
+                                    {showWorkspace ? <PanelRightClose className="size-4" /> : <PanelRight className="size-4" />}
                                     <span className="hidden sm:inline">{showWorkspace ? t("runDetail.closeWorkspace") : t("runDetail.openWorkspace")}</span>
                                 </Button>
                             </div>

@@ -152,7 +152,7 @@ export default function RunsPage() {
         <div className="h-full overflow-y-auto p-4 sm:p-8 space-y-6 sm:space-y-8">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                 <div>
-                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">{t("runs.title")}</h1>
+                    <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight">{t("runs.title")}</h1>
                     <p className="text-muted-foreground text-sm sm:text-base">
                         {t("runs.subtitle")}
                     </p>
@@ -167,7 +167,7 @@ export default function RunsPage() {
                         disabled={isLoading || isLoadingMore}
                         aria-label={t("common.refresh")}
                     >
-                        <RefreshCw className={`h-4 w-4 ${isLoading ? "animate-spin" : ""}`} />
+                        <RefreshCw className={`size-4 ${isLoading ? "animate-spin" : ""}`} />
                         <span className="hidden sm:inline ml-2">{t("common.refresh")}</span>
                     </Button>
                 </div>
@@ -175,7 +175,7 @@ export default function RunsPage() {
 
             <div className="flex items-center gap-4">
                 <div className="relative flex-1 max-w-sm">
-                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Search className="absolute left-2.5 top-2.5 size-4 text-muted-foreground" />
                     <Input
                         type="search"
                         placeholder={t("runs.searchPlaceholder")}
@@ -243,7 +243,7 @@ export default function RunsPage() {
                                             checked={allSelected}
                                             onChange={toggleSelectAll}
                                             aria-label={t("runs.selectAll")}
-                                            className="h-4 w-4 accent-primary"
+                                            className="size-4 accent-primary"
                                         />
                                     </th>
                                     <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">
@@ -289,7 +289,7 @@ export default function RunsPage() {
                                                     checked={selectedSet.has(session.session_id)}
                                                     onChange={() => toggleSelectOne(session.session_id)}
                                                     aria-label={t("runs.selectOne", { id: session.session_id })}
-                                                    className="h-4 w-4 accent-primary"
+                                                    className="size-4 accent-primary"
                                                 />
                                             </td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">
@@ -312,13 +312,13 @@ export default function RunsPage() {
                                                             <TooltipProvider>
                                                                 <Tooltip>
                                                                     <TooltipTrigger asChild>
-                                                                        <div className={`mt-1.5 w-2 h-2 rounded-full shrink-0 ${
+                                                                        <div className={`mt-1.5 size-2 rounded-full shrink-0 ${
                                                                             isRunning ? "bg-blue-500 animate-pulse" : 
                                                                             isActive ? "bg-emerald-500" : "bg-gray-300"
                                                                         }`} />
                                                                     </TooltipTrigger>
-                                                                    <TooltipContent>
-                                                                        <p>{isRunning 
+                                                                    <TooltipContent suppressHydrationWarning>
+                                                                        <p suppressHydrationWarning>{isRunning 
                                                                             ? t("runs.running") 
                                                                             : isActive 
                                                                                 ? t("runs.active", { when: session.last_activity_at ? new Date(session.last_activity_at).toLocaleString() : t("runs.recently") })
@@ -339,9 +339,9 @@ export default function RunsPage() {
                                                                 >
                                                                     {displayTitle}
                                                                 </Link>
-                                                                <span className="text-xs text-muted-foreground">
+                                                                 <span className="text-xs text-muted-foreground" suppressHydrationWarning>
                                                                     {new Date(session.created_at).toLocaleString()}
-                                                                </span>
+                                                                 </span>
                                                                 {showQueryBelow && (
                                                                     <span className="text-xs text-muted-foreground truncate max-w-[280px] mt-0.5">
                                                                         {session.latest_task_query}
@@ -357,15 +357,15 @@ export default function RunsPage() {
                                                 <TooltipProvider>
                                                     <Tooltip>
                                                         <TooltipTrigger asChild>
-                                                            <div className="flex items-center justify-center w-8 h-8 rounded-full cursor-default hover:bg-muted transition-colors">
+                                                            <div className="flex items-center justify-center size-8 rounded-full cursor-default hover:bg-muted transition-colors">
                                                                 {session.first_task_mode === "card_template" || session.is_research_session ? (
-                                                                    <Microscope className="h-5 w-5 text-violet-500" />
+                                                                    <Microscope className="size-5 text-violet-500" />
                                                                 ) : (
-                                                                    <Sparkles className="h-5 w-5 text-amber-500" />
+                                                                    <Sparkles className="size-5 text-amber-500" />
                                                                 )}
                                                             </div>
                                                         </TooltipTrigger>
-                                                        <TooltipContent>
+                                                        <TooltipContent suppressHydrationWarning>
                                                             <p>{session.first_task_mode === "card_template" || session.is_research_session ? t("runs.deepResearch") : t("runs.everyday")}</p>
                                                         </TooltipContent>
                                                     </Tooltip>
@@ -376,19 +376,19 @@ export default function RunsPage() {
                                                     <Tooltip>
                                                         <TooltipTrigger asChild>
                                                             <div className="flex items-center gap-2 cursor-default">
-                                                                <Layers className="h-4 w-4 text-muted-foreground" />
+                                                                <Layers className="size-4 text-muted-foreground" />
                                                                 <span>{session.task_count}</span>
                                                             </div>
                                                         </TooltipTrigger>
-                                                        <TooltipContent>
+                                                        <TooltipContent suppressHydrationWarning>
                                                             <div className="flex flex-col gap-1">
                                                                 <div className="flex items-center gap-1.5">
-                                                                    <CheckCircle2 className="h-3 w-3 text-emerald-500" />
+                                                                    <CheckCircle2 className="size-3 text-emerald-500" />
                                                                     <span>{session.successful_tasks || 0} {t("runs.successful")}</span>
                                                                 </div>
                                                                 {(session.failed_tasks || 0) > 0 && (
                                                                     <div className="flex items-center gap-1.5">
-                                                                        <XCircle className="h-3 w-3 text-red-500" />
+                                                                        <XCircle className="size-3 text-red-500" />
                                                                         <span>{session.failed_tasks} {t("runs.failed")}</span>
                                                                     </div>
                                                                 )}
@@ -402,11 +402,11 @@ export default function RunsPage() {
                                                     <Tooltip>
                                                         <TooltipTrigger asChild>
                                                             <div className="flex items-center gap-2 cursor-default">
-                                                                <DollarSign className="h-4 w-4 text-muted-foreground" />
+                                                                <DollarSign className="size-4 text-muted-foreground" />
                                                                 <span>${(session.total_cost_usd || 0).toFixed(3)}</span>
                                                             </div>
                                                         </TooltipTrigger>
-                                                        <TooltipContent>
+                                                        <TooltipContent suppressHydrationWarning>
                                                             <div className="flex flex-col gap-1 text-xs">
                                                                 <span>{t("runs.tokens", { count: session.tokens_used })}</span>
                                                                 {session.average_cost_per_task !== undefined && session.average_cost_per_task > 0 && (
@@ -424,24 +424,24 @@ export default function RunsPage() {
                                                             <Button
                                                                 variant="ghost"
                                                                 size="icon"
-                                                                className="h-8 w-8"
+                                                                className="size-8"
                                                                 aria-label={t("sidebar.editTitle")}
                                                             >
-                                                                <MoreHorizontal className="h-4 w-4" />
+                                                                <MoreHorizontal className="size-4" />
                                                             </Button>
                                                         </DropdownMenuTrigger>
                                                         <DropdownMenuContent align="end" className="w-40">
                                                             <DropdownMenuItem onClick={() => handleEditTitle(session)}>
-                                                                <Pencil className="h-4 w-4" />
+                                                                <Pencil className="size-4" />
                                                                 {t("sidebar.editTitle")}
                                                             </DropdownMenuItem>
                                                             <DropdownMenuItem onClick={() => handleTogglePin(session)}>
-                                                                <Pin className="h-4 w-4" />
+                                                                <Pin className="size-4" />
                                                                 {session.pinned ? t("common.unpin") : t("common.pin")}
                                                             </DropdownMenuItem>
                                                             <DropdownMenuSeparator />
                                                             <DropdownMenuItem onClick={() => handleDeleteSession(session)} className="text-red-600">
-                                                                <Trash2 className="h-4 w-4" />
+                                                                <Trash2 className="size-4" />
                                                                 {t("common.delete")}
                                                             </DropdownMenuItem>
                                                         </DropdownMenuContent>
@@ -455,7 +455,7 @@ export default function RunsPage() {
                                                             }
                                                         }}
                                                     >
-                                                        <MessageSquare className="h-4 w-4 mr-2" />
+                                                        <MessageSquare className="size-4 mr-2" />
                                                         {t("common.view")}
                                                     </Link>
                                                 </Button>
@@ -480,7 +480,7 @@ export default function RunsPage() {
                                     disabled={isLoadingMore}
                                 >
                                     {isLoadingMore && (
-                                        <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                                        <Loader2 className="mr-2 size-3 animate-spin" />
                                     )}
                                     {t("runs.loadMore")}
                                 </Button>

@@ -32,6 +32,54 @@ const templatesFetcher = async (): Promise<CardTemplateListResponse> => {
     return listCardTemplates(100, 0);
 };
 
+interface PreviewHeaderProps {
+    previewTemplateProfile: string | null;
+    setPreviewTemplateProfile: (v: string | null) => void;
+    isHighFidelity: boolean;
+    handleModeToggle: () => void;
+    previewData: TemplatePreviewResponse | null;
+}
+
+function PreviewHeader({ previewTemplateProfile, setPreviewTemplateProfile, isHighFidelity, handleModeToggle, previewData }: PreviewHeaderProps) {
+    return (
+        <div className="flex flex-wrap items-center gap-2">
+            <Select value={previewTemplateProfile || "__auto__"} onValueChange={(value) => setPreviewTemplateProfile(value === "__auto__" ? null : value)}>
+                <SelectTrigger className="w-[180px]">
+                    <SelectValue placeholder="Template Profile" />
+                </SelectTrigger>
+                <SelectContent>
+                    <SelectItem value="__auto__">Auto</SelectItem>
+                    {(previewData?.available_profiles?.length ? previewData.available_profiles : []).map((profile) => (
+                        <SelectItem key={profile} value={profile}>
+                            {profile}
+                        </SelectItem>
+                    ))}
+                </SelectContent>
+            </Select>
+            <Button type="button" variant={isHighFidelity ? "default" : "outline"} size="sm" onClick={handleModeToggle}>
+                {isHighFidelity ? "High Fidelity" : "Safe Mode"}
+            </Button>
+        </div>
+    );
+}
+
+interface PreviewFrameProps {
+    title: string;
+    srcDoc: string;
+    sandbox: string;
+}
+
+function PreviewFrame({ title, srcDoc, sandbox }: PreviewFrameProps) {
+    return (
+        <iframe
+            title={title}
+            sandbox={sandbox}
+            srcDoc={srcDoc}
+            className="w-full h-[480px] rounded border bg-white"
+        />
+    );
+}
+
 export default function TemplatesPage() {
     const { t } = useTranslation();
     const queryClient = useQueryClient();
@@ -236,38 +284,6 @@ export default function TemplatesPage() {
 
     const previewSandbox = isHighFidelity ? "allow-same-origin allow-scripts" : "allow-same-origin";
 
-    const renderPreviewHeader = () => (
-        <div className="flex flex-wrap items-center gap-2">
-            <Select value={previewTemplateProfile || "__auto__"} onValueChange={(value) => setPreviewTemplateProfile(value === "__auto__" ? "" : value)}>
-                <SelectTrigger className="w-[180px]">
-                    <SelectValue placeholder="Template Profile" />
-                </SelectTrigger>
-                <SelectContent>
-                    <SelectItem value="__auto__">Auto</SelectItem>
-                    {(previewData?.available_profiles?.length
-                        ? previewData.available_profiles
-                        : []).map((profile) => (
-                        <SelectItem key={profile} value={profile}>
-                            {profile}
-                        </SelectItem>
-                    ))}
-                </SelectContent>
-            </Select>
-            <Button type="button" variant={isHighFidelity ? "default" : "outline"} size="sm" onClick={handleModeToggle}>
-                {isHighFidelity ? "High Fidelity" : "Safe Mode"}
-            </Button>
-        </div>
-    );
-
-    const renderPreviewFrame = (title: string, srcDoc: string) => (
-        <iframe
-            title={title}
-            sandbox={previewSandbox}
-            srcDoc={srcDoc}
-            className="w-full h-[480px] rounded border bg-white"
-        />
-    );
-
     const previewOpen = !!previewTemplateId;
 
     const previewLoading = !previewData || previewingTemplateId === previewTemplateId;
@@ -287,12 +303,12 @@ export default function TemplatesPage() {
     return (
         <div className="p-4 sm:p-8 space-y-6 sm:space-y-8">
             <div className="space-y-2">
-                <h1 className="text-3xl font-bold tracking-tight">{t("templates.title")}</h1>
+                <h1 className="text-3xl font-semibold tracking-tight">{t("templates.title")}</h1>
                 <p className="text-muted-foreground">{t("templates.subtitle")}</p>
                 <div className="flex items-center gap-2">
                     <Button asChild size="sm" variant="outline" disabled={importing}>
                         <label className="cursor-pointer">
-                            {importing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
+                            {importing ? <Loader2 className="size-4 animate-spin" /> : <Upload className="size-4" />}
                             Import Template
                             <input
                                 type="file"
@@ -323,7 +339,7 @@ export default function TemplatesPage() {
                                 <CardHeader className="space-y-3">
                                     <div className="flex items-center justify-between gap-2">
                                         <div className="flex items-center gap-2 min-w-0">
-                                            <LayoutTemplate className="h-4 w-4 text-sky-600 shrink-0" />
+                                            <LayoutTemplate className="size-4 text-sky-600 shrink-0" />
                                             <CardTitle className="text-base truncate">{template.name}</CardTitle>
                                         </div>
                                         {template.is_default && (
@@ -346,10 +362,10 @@ export default function TemplatesPage() {
                                         disabled={isSaving}
                                     >
                                         {isSaving ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                            <Loader2 className="size-4 animate-spin" />
                                         ) : isCurrentDefault ? (
                                             <>
-                                                <CheckCircle2 className="h-4 w-4" />
+                                                <CheckCircle2 className="size-4" />
                                                 {t("templates.currentDefault")}
                                             </>
                                         ) : (
@@ -364,10 +380,10 @@ export default function TemplatesPage() {
                                         disabled={exportingTemplateId === template.template_id}
                                     >
                                         {exportingTemplateId === template.template_id ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                            <Loader2 className="size-4 animate-spin" />
                                         ) : (
                                             <>
-                                                <Download className="h-4 w-4" />
+                                                <Download className="size-4" />
                                                 Export
                                             </>
                                         )}
@@ -380,10 +396,10 @@ export default function TemplatesPage() {
                                         disabled={previewingTemplateId === template.template_id}
                                     >
                                         {previewingTemplateId === template.template_id ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                            <Loader2 className="size-4 animate-spin" />
                                         ) : (
                                             <>
-                                                <Eye className="h-4 w-4" />
+                                                <Eye className="size-4" />
                                                 {t("common.view")}
                                             </>
                                         )}
@@ -401,10 +417,10 @@ export default function TemplatesPage() {
                         <DialogTitle>{t("templates.previewTitle")}</DialogTitle>
                     </DialogHeader>
                     <div className="space-y-3 flex-1 min-h-0 overflow-y-auto pr-1">
-                        {renderPreviewHeader()}
+                        <PreviewHeader previewTemplateProfile={previewTemplateProfile || null} setPreviewTemplateProfile={(v) => setPreviewTemplateProfile(v || "")} isHighFidelity={isHighFidelity} handleModeToggle={handleModeToggle} previewData={previewData} />
                         {previewLoading ? (
                             <div className="h-[520px] flex items-center justify-center text-sm text-muted-foreground">
-                                <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                                <Loader2 className="size-4 animate-spin mr-2" />
                                 {t("templates.previewLoading")}
                             </div>
                         ) : (
@@ -465,10 +481,10 @@ export default function TemplatesPage() {
                                     <TabsTrigger value="back">{t("templates.previewBack")}</TabsTrigger>
                                 </TabsList>
                                 <TabsContent value="front" className="mt-3">
-                                    {renderPreviewFrame("template-front-preview", previewData.front_document)}
+                                                                    <PreviewFrame title="template-front-preview" srcDoc={previewData.front_document} sandbox={previewSandbox} />
                                 </TabsContent>
                                 <TabsContent value="back" className="mt-3">
-                                    {renderPreviewFrame("template-back-preview", previewData.back_document)}
+                                                                    <PreviewFrame title="template-back-preview" srcDoc={previewData.back_document} sandbox={previewSandbox} />
                                 </TabsContent>
                             </Tabs>
                             </div>
