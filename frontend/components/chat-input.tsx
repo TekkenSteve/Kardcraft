@@ -25,8 +25,135 @@ import { ChevronDown, LayoutTemplate, Loader2, Paperclip, Pause, Play, Save, Sen
 import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
+type TFunction = (key: string) => string;
+
 export type AgentSelection = "normal" | "card_template";
 export type ResearchStrategy = "quick" | "standard" | "deep" | "academic";
+
+
+interface AgentPopoverProps {
+    selectedAgent: AgentSelection;
+    onSelectedAgentChange?: (agent: AgentSelection) => void;
+    t: TFunction;
+}
+
+function AgentPopover({ selectedAgent, onSelectedAgentChange, t }: AgentPopoverProps) {
+    if (!onSelectedAgentChange) return null;
+    const agentLabel = selectedAgent === "card_template"
+        ? t("chat.agentDeepResearch")
+        : t("chat.agentEveryday");
+    return (
+        <Popover>
+            <PopoverTrigger asChild>
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 gap-1 text-xs"
+                    aria-label={t("chat.agentLabel")}
+                >
+                    {selectedAgent === "card_template" ? (
+                        <LayoutTemplate className="size-4 text-violet-500" />
+                    ) : (
+                        <Sparkles className="size-4 text-amber-500" />
+                    )}
+                    <span className="max-w-[88px] truncate">{agentLabel}</span>
+                    <ChevronDown className="size-3 text-muted-foreground" />
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-56 p-2">
+                <div className="space-y-2">
+                    <div className="text-xs text-muted-foreground">{t("chat.agentLabel")}</div>
+                    <div className="grid gap-1">
+                        <Button
+                            type="button"
+                            variant={selectedAgent === "normal" ? "secondary" : "ghost"}
+                            size="sm"
+                            className="justify-start gap-2"
+                            onClick={() => onSelectedAgentChange("normal")}
+                        >
+                            <Sparkles className="size-4 text-amber-500" />
+                            {t("chat.agentEveryday")}
+                        </Button>
+                        <Button
+                            type="button"
+                            variant={selectedAgent === "card_template" ? "secondary" : "ghost"}
+                            size="sm"
+                            className="justify-start gap-2"
+                            onClick={() => onSelectedAgentChange("card_template")}
+                        >
+                            <LayoutTemplate className="size-4 text-violet-500" />
+                            {t("chat.agentDeepResearch")}
+                        </Button>
+                    </div>
+                    {selectedAgent === "card_template" && (
+                        <div className="text-xs text-muted-foreground">{t("chat.templateBuilderMode")}</div>
+                    )}
+                </div>
+            </PopoverContent>
+        </Popover>
+    );
+}
+
+interface TemplatePopoverProps {
+    templates: CardTemplate[];
+    selectedTemplateId: string;
+    isTemplatesLoading: boolean;
+    isSavingTemplatePref: boolean;
+    onTemplateSelect: (template: CardTemplate) => void;
+    t: TFunction;
+}
+
+function TemplatePopover({ templates, selectedTemplateId, isTemplatesLoading, isSavingTemplatePref, onTemplateSelect, t }: TemplatePopoverProps) {
+    const selectedTemplate = templates.find((item) => item.template_id === selectedTemplateId);
+    const templateLabel = selectedTemplate?.name || selectedTemplateId || t("chat.templateUnselected");
+
+    return (
+        <Popover>
+            <PopoverTrigger asChild>
+                <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 px-2 gap-1 text-xs"
+                    aria-label={t("chat.templateLabel")}
+                >
+                    <LayoutTemplate className="size-4 text-sky-600" />
+                    <span className="max-w-[98px] truncate">{templateLabel}</span>
+                    <ChevronDown className="size-3 text-muted-foreground" />
+                </Button>
+            </PopoverTrigger>
+            <PopoverContent align="end" className="w-64 p-2">
+                <div className="space-y-2">
+                    <div className="text-xs text-muted-foreground">{t("chat.templateLabel")}</div>
+                    {isTemplatesLoading ? (
+                        <div className="text-xs text-muted-foreground px-2 py-1">{t("chat.templateLoading")}</div>
+                    ) : templates.length === 0 ? (
+                        <div className="text-xs text-muted-foreground px-2 py-1">{t("chat.templateFallback")}</div>
+                    ) : (
+                        <div className="grid gap-1">
+                            {templates.map((template) => (
+                                <Button
+                                    key={template.template_id}
+                                    type="button"
+                                    variant={selectedTemplateId === template.template_id ? "secondary" : "ghost"}
+                                    size="sm"
+                                    className="justify-start"
+                                    onClick={() => { void onTemplateSelect(template); }}
+                                >
+                                    <span className="truncate">{template.name}</span>
+                                </Button>
+                            ))}
+                        </div>
+                    )}
+                    {isSavingTemplatePref && (
+                        <div className="text-[11px] text-muted-foreground px-2 py-1">{t("chat.templateSaving")}</div>
+                    )}
+                </div>
+            </PopoverContent>
+        </Popover>
+    );
+}
 
 interface ChatInputProps {
     sessionId?: string;
@@ -105,7 +232,7 @@ export function ChatInput({
     const [isTemplatesLoading, setIsTemplatesLoading] = useState(true);
     const [isSavingTemplatePref, setIsSavingTemplatePref] = useState(false);
     const [isSavingFromTask, setIsSavingFromTask] = useState(false);
-    const [allowAutoFocus, setAllowAutoFocus] = useState(false);
+    const allowAutoFocusRef = useRef(false);
     const fileUploadRef = useRef<FileUploadHandle>(null);
     const filePanelRef = useRef<HTMLDivElement>(null);
     const chatInputRootRef = useRef<HTMLDivElement>(null);
@@ -117,7 +244,7 @@ export function ChatInput({
     const shouldShowPause = showPause ?? (isTaskRunning && !shouldShowResume);
     const shouldShowCancel = showCancel ?? isTaskRunning;
     useEffect(() => {
-        setAllowAutoFocus(!window.matchMedia("(pointer: coarse)").matches);
+        allowAutoFocusRef.current = !window.matchMedia("(pointer: coarse)").matches;
     }, []);
     
     // Use ref for composition state to avoid race conditions with state updates
@@ -557,123 +684,14 @@ export function ChatInput({
         }
     };
 
-    const AgentPopover = () => {
-        if (!onSelectedAgentChange) return null;
-        const agentLabel = selectedAgent === "card_template"
-            ? t("chat.agentDeepResearch")
-            : t("chat.agentEveryday");
-        return (
-            <Popover>
-                <PopoverTrigger asChild>
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 gap-1 text-xs"
-                        aria-label={t("chat.agentLabel")}
-                    >
-                        {selectedAgent === "card_template" ? (
-                            <LayoutTemplate className="h-4 w-4 text-violet-500" />
-                        ) : (
-                            <Sparkles className="h-4 w-4 text-amber-500" />
-                        )}
-                        <span className="max-w-[88px] truncate">{agentLabel}</span>
-                        <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                    </Button>
-                </PopoverTrigger>
-                <PopoverContent align="end" className="w-56 p-2">
-                    <div className="space-y-2">
-                        <div className="text-xs text-muted-foreground">{t("chat.agentLabel")}</div>
-                        <div className="grid gap-1">
-                            <Button
-                                type="button"
-                                variant={selectedAgent === "normal" ? "secondary" : "ghost"}
-                                size="sm"
-                                className="justify-start gap-2"
-                                onClick={() => onSelectedAgentChange("normal")}
-                            >
-                                <Sparkles className="h-4 w-4 text-amber-500" />
-                                {t("chat.agentEveryday")}
-                            </Button>
-                            <Button
-                                type="button"
-                                variant={selectedAgent === "card_template" ? "secondary" : "ghost"}
-                                size="sm"
-                                className="justify-start gap-2"
-                                onClick={() => onSelectedAgentChange("card_template")}
-                            >
-                                <LayoutTemplate className="h-4 w-4 text-violet-500" />
-                                {t("chat.agentDeepResearch")}
-                            </Button>
-                        </div>
-                        {selectedAgent === "card_template" && (
-                            <div className="text-xs text-muted-foreground">{t("chat.templateBuilderMode")}</div>
-                        )}
-                    </div>
-                </PopoverContent>
-            </Popover>
-        );
-    };
-
-    const TemplatePopover = () => {
-        const selectedTemplate = templates.find((item) => item.template_id === selectedTemplateId);
-        const templateLabel = selectedTemplate?.name || selectedTemplateId || t("chat.templateUnselected");
-
-        return (
-            <Popover>
-                <PopoverTrigger asChild>
-                    <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 px-2 gap-1 text-xs"
-                        aria-label={t("chat.templateLabel")}
-                    >
-                        <LayoutTemplate className="h-4 w-4 text-sky-600" />
-                        <span className="max-w-[98px] truncate">{templateLabel}</span>
-                        <ChevronDown className="h-3 w-3 text-muted-foreground" />
-                    </Button>
-                </PopoverTrigger>
-                <PopoverContent align="end" className="w-64 p-2">
-                    <div className="space-y-2">
-                        <div className="text-xs text-muted-foreground">{t("chat.templateLabel")}</div>
-                        {isTemplatesLoading ? (
-                            <div className="text-xs text-muted-foreground px-2 py-1">{t("chat.templateLoading")}</div>
-                        ) : templates.length === 0 ? (
-                            <div className="text-xs text-muted-foreground px-2 py-1">{t("chat.templateFallback")}</div>
-                        ) : (
-                            <div className="grid gap-1">
-                                {templates.map((template) => (
-                                    <Button
-                                        key={template.template_id}
-                                        type="button"
-                                        variant={selectedTemplateId === template.template_id ? "secondary" : "ghost"}
-                                        size="sm"
-                                        className="justify-start"
-                                        onClick={() => { void handleTemplateSelect(template); }}
-                                    >
-                                        <span className="truncate">{template.name}</span>
-                                    </Button>
-                                ))}
-                            </div>
-                        )}
-                        {isSavingTemplatePref && (
-                            <div className="text-[11px] text-muted-foreground px-2 py-1">{t("chat.templateSaving")}</div>
-                        )}
-                    </div>
-                </PopoverContent>
-            </Popover>
-        );
-    };
-
-    // Centered variant for empty sessions - modern ChatGPT-style layout
+    // Centered variant for empty sessions
     if (variant === "centered") {
         return (
             <div className="flex flex-col items-center justify-center h-full p-8" data-kc-chat-input-root="true" ref={chatInputRootRef}>
                 <div className="w-full max-w-2xl space-y-6">
                     <div className="text-center space-y-2">
-                        <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-primary/10 mb-4">
-                            <Sparkles className="w-6 h-6 text-primary" />
+                        <div className="inline-flex items-center justify-center size-12 rounded-full bg-primary/10 mb-4">
+                            <Sparkles className="size-6 text-primary" />
                         </div>
                         <h2 className="text-2xl font-semibold tracking-tight">{t("chat.centeredTitle")}</h2>
                         <p className="text-muted-foreground">
@@ -697,11 +715,11 @@ export function ChatInput({
                                                 type="button"
                                                 variant={isFilePanelOpen ? "secondary" : "ghost"}
                                                 size="icon"
-                                                className="h-8 w-8 relative"
+                                                className="size-8 relative"
                                                 onClick={() => setIsFilePanelOpen((prev) => !prev)}
                                                 aria-label={t("common.attachFiles")}
                                             >
-                                                <Paperclip className="h-4 w-4" />
+                                                <Paperclip className="size-4" />
                                                 {uploadedFiles.length > 0 && (
                                                     <span className="absolute -top-1 -right-1 h-4 min-w-[16px] rounded-full bg-primary text-[9px] text-primary-foreground flex items-center justify-center px-1">
                                                         {uploadedFiles.length}
@@ -741,8 +759,8 @@ export function ChatInput({
                                         </div>
                                     </div>
                                 )}
-                                {TemplatePopover()}
-                                {AgentPopover()}
+                                <TemplatePopover templates={templates} selectedTemplateId={selectedTemplateId} isTemplatesLoading={isTemplatesLoading} isSavingTemplatePref={isSavingTemplatePref} onTemplateSelect={handleTemplateSelect} t={t} />
+                                <AgentPopover selectedAgent={selectedAgent} onSelectedAgentChange={onSelectedAgentChange} t={t} />
                                 {selectedAgent === "card_template" && currentWorkflowId && (
                                     <Button
                                         type="button"
@@ -752,7 +770,7 @@ export function ChatInput({
                                         onClick={() => { void handleSaveCurrentTaskAsTemplate(); }}
                                         disabled={isSavingFromTask}
                                     >
-                                        {isSavingFromTask ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                                        {isSavingFromTask ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
                                         Save
                                     </Button>
                                 )}
@@ -762,7 +780,6 @@ export function ChatInput({
                                 value={query}
                                 onChange={(e) => setQuery(e.target.value)}
                                 disabled={isInputDisabled || isSubmitting}
-                                autoFocus={allowAutoFocus}
                                 rows={4}
                                 onCompositionStart={handleCompositionStart}
                                 onCompositionEnd={handleCompositionEnd}
@@ -785,9 +802,9 @@ export function ChatInput({
                                             aria-label={t("chat.resumeWorkflow")}
                                         >
                                             {isResumeLoading ? (
-                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                <Loader2 className="size-4 animate-spin" />
                                             ) : (
-                                                <Play className="h-4 w-4" />
+                                                <Play className="size-4" />
                                             )}
                                         </Button>
                                     )}
@@ -802,9 +819,9 @@ export function ChatInput({
                                             aria-label={t("chat.pauseAtCheckpoint")}
                                         >
                                             {isPauseLoading ? (
-                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                <Loader2 className="size-4 animate-spin" />
                                             ) : (
-                                                <Pause className="h-4 w-4" />
+                                                <Pause className="size-4" />
                                             )}
                                         </Button>
                                     )}
@@ -819,9 +836,9 @@ export function ChatInput({
                                             aria-label={t("chat.stop")}
                                         >
                                             {isCancelling ? (
-                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                                <Loader2 className="size-4 animate-spin" />
                                             ) : (
-                                                <Square className="h-4 w-4" />
+                                                <Square className="size-4" />
                                             )}
                                         </Button>
                                     )}
@@ -836,9 +853,9 @@ export function ChatInput({
                                     onClick={() => { void handleSubmit(); }}
                                 >
                                     {isSubmitting ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        <Loader2 className="size-4 animate-spin" />
                                     ) : (
-                                        <Send className="h-4 w-4" />
+                                        <Send className="size-4" />
                                     )}
                                 </Button>
                             )}
@@ -898,11 +915,11 @@ export function ChatInput({
                                         type="button"
                                         variant={isFilePanelOpen ? "secondary" : "ghost"}
                                         size="icon"
-                                        className="h-7 w-7 relative"
+                                        className="size-7 relative"
                                         onClick={() => setIsFilePanelOpen((prev) => !prev)}
                                         aria-label={t("common.attachFiles")}
                                     >
-                                        <Paperclip className="h-4 w-4" />
+                                        <Paperclip className="size-4" />
                                         {uploadedFiles.length > 0 && (
                                             <span className="absolute -top-1 -right-1 h-4 min-w-[16px] rounded-full bg-primary text-[9px] text-primary-foreground flex items-center justify-center px-1">
                                                 {uploadedFiles.length}
@@ -943,8 +960,8 @@ export function ChatInput({
                                 </div>
                             </div>
                         )}
-                        {TemplatePopover()}
-                        {AgentPopover()}
+                        <TemplatePopover templates={templates} selectedTemplateId={selectedTemplateId} isTemplatesLoading={isTemplatesLoading} isSavingTemplatePref={isSavingTemplatePref} onTemplateSelect={handleTemplateSelect} t={t} />
+                        <AgentPopover selectedAgent={selectedAgent} onSelectedAgentChange={onSelectedAgentChange} t={t} />
                         {selectedAgent === "card_template" && currentWorkflowId && (
                             <Button
                                 type="button"
@@ -954,7 +971,7 @@ export function ChatInput({
                                 onClick={() => { void handleSaveCurrentTaskAsTemplate(); }}
                                 disabled={isSavingFromTask}
                             >
-                                {isSavingFromTask ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+                                {isSavingFromTask ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
                                 Save
                             </Button>
                         )}
@@ -964,7 +981,6 @@ export function ChatInput({
                         value={query}
                         onChange={(e) => setQuery(e.target.value)}
                         disabled={isInputDisabled || isSubmitting}
-                        autoFocus={allowAutoFocus}
                         rows={2}
                         onCompositionStart={handleCompositionStart}
                         onCompositionEnd={handleCompositionEnd}
@@ -989,9 +1005,9 @@ export function ChatInput({
                                 aria-label={t("chat.resumeWorkflow")}
                             >
                                 {isResumeLoading ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    <Loader2 className="size-4 animate-spin" />
                                 ) : (
-                                    <Play className="h-4 w-4" />
+                                    <Play className="size-4" />
                                 )}
                             </Button>
                         )}
@@ -1006,9 +1022,9 @@ export function ChatInput({
                                 aria-label={t("chat.pauseAtCheckpoint")}
                             >
                                 {isPauseLoading ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    <Loader2 className="size-4 animate-spin" />
                                 ) : (
-                                    <Pause className="h-4 w-4" />
+                                    <Pause className="size-4" />
                                 )}
                             </Button>
                         )}
@@ -1023,9 +1039,9 @@ export function ChatInput({
                                 aria-label={t("chat.stop")}
                             >
                                 {isCancelling ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    <Loader2 className="size-4 animate-spin" />
                                 ) : (
-                                    <Square className="h-4 w-4" />
+                                    <Square className="size-4" />
                                 )}
                             </Button>
                         )}
@@ -1039,9 +1055,9 @@ export function ChatInput({
                         onClick={() => { void handleSubmit(); }}
                     >
                         {isSubmitting ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <Loader2 className="size-4 animate-spin" />
                         ) : (
-                            <Send className="h-4 w-4" />
+                            <Send className="size-4" />
                         )}
                     </Button>
                 )}
