@@ -961,7 +961,7 @@ function ScheduleFormDialog({
                             id="name"
                             placeholder="Daily report"
                             value={formData.name}
-                            onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value })}
+                            onChange={(e) => setFormData(prev => ({ ...prev, name: e.target.value }))}
                             required
                         />
                     </div>
@@ -972,7 +972,7 @@ function ScheduleFormDialog({
                             id="description"
                             placeholder="Generate daily summary report"
                             value={formData.description}
-                            onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value })}
+                            onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
                         />
                     </div>
 
@@ -980,7 +980,7 @@ function ScheduleFormDialog({
                         <Label htmlFor="workflow_type">Workflow Type</Label>
                         <Select
                             value={formData.workflow_type}
-                            onValueChange={(value) => setFormData(prev => ({ ...prev, workflow_type: value as WorkflowType })}
+                            onValueChange={(value) => setFormData(prev => ({ ...prev, workflow_type: value as WorkflowType }))}
                         >
                             <SelectTrigger id="workflow_type">
                                 <SelectValue placeholder="Select workflow type" />
@@ -1013,7 +1013,7 @@ function ScheduleFormDialog({
                                 id="custom_context"
                                 placeholder='{"research_strategy": "deep", "force_research": true}'
                                 value={formData.custom_context}
-                                onChange={(e) => setFormData(prev => ({ ...prev, custom_context: e.target.value })}
+                                onChange={(e) => setFormData(prev => ({ ...prev, custom_context: e.target.value }))}
                                 className="font-mono text-sm"
                                 rows={4}
                             />
@@ -1025,7 +1025,7 @@ function ScheduleFormDialog({
 
                     <ScheduleBuilder
                         value={formData.cron_expression}
-                        onChange={(cron) => setFormData(prev => ({ ...prev, cron_expression: cron })}
+                        onChange={(cron) => setFormData(prev => ({ ...prev, cron_expression: cron }))}
                         timezone={formData.timezone}
                     />
 
@@ -1033,7 +1033,7 @@ function ScheduleFormDialog({
                         <Label htmlFor="timezone">Timezone</Label>
                         <Select
                             value={formData.timezone}
-                            onValueChange={(value) => setFormData(prev => ({ ...prev, timezone: value })}
+                            onValueChange={(value) => setFormData(prev => ({ ...prev, timezone: value }))}
                         >
                             <SelectTrigger id="timezone">
                                 <SelectValue placeholder="Select timezone" />
@@ -1055,7 +1055,7 @@ function ScheduleFormDialog({
                             className="placeholder:text-muted-foreground border-input focus-visible:border-ring focus-visible:ring-ring/50 w-full rounded-md border bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:ring-[3px] disabled:opacity-50"
                             placeholder="What task should be executed?"
                             value={formData.task_query}
-                            onChange={(e) => setFormData(prev => ({ ...prev, task_query: e.target.value })}
+                            onChange={(e) => setFormData(prev => ({ ...prev, task_query: e.target.value }))}
                             required
                             rows={3}
                         />
@@ -1072,7 +1072,7 @@ function ScheduleFormDialog({
                                 max="10"
                                 placeholder="e.g. 1.00"
                                 value={formData.max_budget_per_run_usd}
-                                onChange={(e) => setFormData(prev => ({ ...prev, max_budget_per_run_usd: e.target.value })}
+                                onChange={(e) => setFormData(prev => ({ ...prev, max_budget_per_run_usd: e.target.value }))}
                             />
                             <p className="text-xs text-muted-foreground">Max $10.00 per run</p>
                         </div>
@@ -1084,7 +1084,7 @@ function ScheduleFormDialog({
                                 min="60"
                                 placeholder="e.g. 300"
                                 value={formData.timeout_seconds}
-                                onChange={(e) => setFormData(prev => ({ ...prev, timeout_seconds: e.target.value })}
+                                onChange={(e) => setFormData(prev => ({ ...prev, timeout_seconds: e.target.value }))}
                             />
                             <p className="text-xs text-muted-foreground">Min 60 seconds</p>
                         </div>
