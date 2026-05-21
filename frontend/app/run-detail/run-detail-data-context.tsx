@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, use } from "react";
 import { SessionDataBundle, SessionHistoryData } from "./run-detail-types";
 import { RunMessage, CardData } from "@/lib/run/types";
 import { RunEvent } from "@/lib/kardcraft/types";
@@ -48,7 +48,7 @@ export interface RunDetailDataContextValue {
 const RunDetailDataContext = createContext<RunDetailDataContextValue | null>(null);
 
 export function useRunDetailData(): RunDetailDataContextValue {
-    const ctx = useContext(RunDetailDataContext);
+    const ctx = use(RunDetailDataContext);
     if (!ctx) {
         throw new Error("useRunDetailData must be used within RunDetailProvider");
     }

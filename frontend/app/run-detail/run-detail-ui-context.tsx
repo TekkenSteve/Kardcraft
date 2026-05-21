@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, use } from "react";
 
 export interface RunDetailUiContextValue {
     activeTab: string;
@@ -18,7 +18,7 @@ export interface RunDetailUiContextValue {
 const RunDetailUiContext = createContext<RunDetailUiContextValue | null>(null);
 
 export function useRunDetailUi(): RunDetailUiContextValue {
-    const ctx = useContext(RunDetailUiContext);
+    const ctx = use(RunDetailUiContext);
     if (!ctx) {
         throw new Error("useRunDetailUi must be used within RunDetailProvider");
     }

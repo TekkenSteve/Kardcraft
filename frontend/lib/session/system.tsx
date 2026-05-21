@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useMemo } from "react";
+import React, { createContext, use, useEffect, useMemo } from "react";
 import { useSelector } from "@xstate/react";
 import { createActor } from "xstate";
 import {
@@ -38,7 +38,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
 }
 
 export function useSessionActor(): SessionActorRef {
-    const actor = useContext(SessionActorContext);
+    const actor = use(SessionActorContext);
     if (!actor) {
         throw new Error("useSessionActor must be used within SessionProvider");
     }

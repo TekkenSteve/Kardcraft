@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext } from "react";
+import { createContext, use } from "react";
 
 export interface RunDetailActionsContextValue {
     handleRetryStream: () => void;
@@ -23,7 +23,7 @@ export interface RunDetailActionsContextValue {
 const RunDetailActionsContext = createContext<RunDetailActionsContextValue | null>(null);
 
 export function useRunDetailActions(): RunDetailActionsContextValue {
-    const ctx = useContext(RunDetailActionsContext);
+    const ctx = use(RunDetailActionsContext);
     if (!ctx) {
         throw new Error("useRunDetailActions must be used within RunDetailProvider");
     }

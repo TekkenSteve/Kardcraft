@@ -3,7 +3,7 @@
  */
 
 import { useSelector } from '@xstate/react';
-import React, { createContext, useContext, useMemo } from 'react';
+import React, { createContext, use, useMemo } from 'react';
 import { createActor } from 'xstate';
 import { createSessionRegistryMachine } from './session-registry-machine';
 import type { RunEvent } from '@/lib/kardcraft/types';
@@ -34,7 +34,7 @@ export const RunSystemProvider = ({ children }: { children: React.ReactNode }) =
  * 获取 registry actor
  */
 export const useRegistryActor = () => {
-  const actor = useContext(RegistryActorContext);
+  const actor = use(RegistryActorContext);
   if (!actor) {
     throw new Error('useRegistryActor must be used within RunSystemProvider');
   }
