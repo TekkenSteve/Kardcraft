@@ -320,13 +320,13 @@ export function FileUpload({
 
           <div className="space-y-1">
             <p className="text-sm font-medium">
-              拖放文件到这里，或{" "}
-              <span className="text-primary hover:underline cursor-pointer">点击选择</span>
+              {t("fileUpload.dropFilesHere")}{" "}
+              <span className="text-primary hover:underline cursor-pointer">{t("fileUpload.clickToBrowse")}</span>
             </p>
             <p className="text-xs text-muted-foreground">
-              支持 {uploadConfig.allowedTypes.map((type) => type.split("/")[1]).join(", ")} 等格式
+              {t("fileUpload.supportedFormats", { formats: uploadConfig.allowedTypes.map((type) => type.split("/")[1]).join(", ") })}
               <br />
-              单个文件最大 {validator.formatFileSize(uploadConfig.maxFileSize)}，最多 {uploadConfig.maxFiles} 个文件
+              {t("fileUpload.fileLimits", { maxSize: validator.formatFileSize(uploadConfig.maxFileSize), maxFiles: uploadConfig.maxFiles })}
             </p>
           </div>
         </div>
@@ -337,7 +337,7 @@ export function FileUpload({
         <div className="flex items-start gap-2 p-3 rounded-lg bg-destructive/10 text-destructive">
           <AlertCircle className="size-4 mt-0.5 shrink-0" />
           <div className="flex-1">
-            <p className="text-sm font-medium">上传错误</p>
+            <p className="text-sm font-medium">{t("fileUpload.uploadError")}</p>
             <p className="text-sm whitespace-pre-wrap">{error}</p>
           </div>
           <Button
@@ -358,12 +358,12 @@ export function FileUpload({
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
               <span className="font-medium">
-                已选择 {files.length} 个文件 ({validator.formatFileSize(totalSize)})
+                {t("fileUpload.filesSelected", { count: files.length, size: validator.formatFileSize(totalSize) })}
               </span>
               {isUploading && (
                 <span className="inline-flex items-center gap-1 text-sm text-muted-foreground">
                   <Loader2 className="size-3 animate-spin" />
-                  上传中 ({uploadingCount})
+                  {t("fileUpload.uploading", { count: uploadingCount })}
                 </span>
               )}
             </div>
@@ -379,12 +379,12 @@ export function FileUpload({
                   {isUploading ? (
                     <>
                       <Loader2 className="size-3 animate-spin" />
-                      上传中
+                      {t("fileUpload.uploadingShort")}
                     </>
                   ) : (
                     <>
                       <Upload className="size-3" />
-                      上传所有文件
+                      {t("fileUpload.uploadAll")}
                     </>
                   )}
                 </Button>
@@ -396,7 +396,7 @@ export function FileUpload({
                 onClick={clearAllFiles}
                 disabled={disabled || isUploading}
               >
-                清空
+                {t("fileUpload.clearAll")}
               </Button>
             </div>
           </div>
@@ -441,7 +441,7 @@ export function FileUpload({
                     {file.status === "uploaded" && (
                       <div className="flex items-center gap-1 text-xs text-green-600">
                         <Check className="size-3" />
-                        <span>已上传</span>
+                        <span>{t("fileUpload.uploaded")}</span>
                         {file.previewUrl && (
                           <Button
                             type="button"
@@ -460,7 +460,7 @@ export function FileUpload({
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-1 text-xs text-destructive">
                           <AlertCircle className="size-3" />
-                          <span>{file.error || "上传失败"}</span>
+                          <span>{file.error || t("fileUpload.uploadFailed")}</span>
                         </div>
                         <Button
                           type="button"
@@ -470,14 +470,14 @@ export function FileUpload({
                           onClick={() => retryFile(file.id)}
                           disabled={disabled}
                         >
-                          重试
+                          {t("fileUpload.retry")}
                         </Button>
                       </div>
                     )}
 
                     {file.status === "pending" && (
                       <p className="text-xs text-muted-foreground">
-                        {showManualUploadButton ? "等待上传" : "待发送"}
+                        {showManualUploadButton ? t("fileUpload.waitingUpload") : t("fileUpload.pendingSend")}
                       </p>
                     )}
                   </div>
@@ -500,14 +500,14 @@ export function FileUpload({
           {/* Summary */}
           <div className="flex items-center justify-between text-sm text-muted-foreground">
             <div className="flex items-center gap-4">
-              <span>{showManualUploadButton ? "待上传" : "待发送"}: {pendingFiles.length}</span>
-              <span>上传中: {uploadingFiles.length}</span>
-              <span>已上传: {uploadedFiles.length}</span>
+              <span>{showManualUploadButton ? t("fileUpload.pendingUpload") : t("fileUpload.pendingSend")}: {pendingFiles.length}</span>
+              <span>{t("fileUpload.uploadingLabel")}: {uploadingFiles.length}</span>
+              <span>{t("fileUpload.uploaded")}: {uploadedFiles.length}</span>
               {errorFiles.length > 0 && (
-                <span className="text-destructive">失败: {errorFiles.length}</span>
+                <span className="text-destructive">{t("fileUpload.failed")}: {errorFiles.length}</span>
               )}
             </div>
-            <span>总计: {validator.formatFileSize(totalSize)}</span>
+            <span>{t("fileUpload.totalSize", { size: validator.formatFileSize(totalSize) })}</span>
           </div>
         </div>
       )}

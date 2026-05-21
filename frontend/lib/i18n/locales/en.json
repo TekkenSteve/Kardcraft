@@ -345,6 +345,24 @@
     "contentValidationFailed": "Unable to validate file content",
     "tooManyFiles": "Too many files: {{count}} (max {{max}})",
     "totalSizeTooLarge": "Total file size too large: {{size}} (max {{maxSize}})",
-    "uploadFailed": "Upload failed"
+    "uploadFailed": "Upload failed",
+    "dropFilesHere": "Drag and drop files here, or",
+    "clickToBrowse": "click to browse",
+    "supportedFormats": "Supported: {{formats}}",
+    "fileLimits": "Max {{maxSize}} per file, up to {{maxFiles}} files",
+    "uploadError": "Upload error",
+    "filesSelected": "{{count}} files selected ({{size}})",
+    "uploading": "Uploading ({{count}})",
+    "uploadingLabel": "Uploading",
+    "uploadingShort": "Uploading…",
+    "uploadAll": "Upload all files",
+    "clearAll": "Clear all",
+    "uploaded": "Uploaded",
+    "retry": "Retry",
+    "waitingUpload": "Waiting to upload",
+    "pendingSend": "Pending",
+    "pendingUpload": "Pending upload",
+    "failed": "Failed",
+    "totalSize": "Total: {{size}}"
   }
 }

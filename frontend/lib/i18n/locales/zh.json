@@ -345,6 +345,24 @@
     "contentValidationFailed": "无法验证文件内容",
     "tooManyFiles": "文件数量过多：{{count}}（最多 {{max}} 个）",
     "totalSizeTooLarge": "总文件大小过大：{{size}}（最大 {{maxSize}}）",
-    "uploadFailed": "上传失败"
+    "uploadFailed": "上传失败",
+    "dropFilesHere": "拖放文件到这里，或",
+    "clickToBrowse": "点击选择",
+    "supportedFormats": "支持 {{formats}} 等格式",
+    "fileLimits": "单个文件最大 {{maxSize}}，最多 {{maxFiles}} 个文件",
+    "uploadError": "上传错误",
+    "filesSelected": "已选择 {{count}} 个文件（{{size}}）",
+    "uploading": "上传中（{{count}}）",
+    "uploadingLabel": "上传中",
+    "uploadingShort": "上传中",
+    "uploadAll": "上传所有文件",
+    "clearAll": "清空",
+    "uploaded": "已上传",
+    "retry": "重试",
+    "waitingUpload": "等待上传",
+    "pendingSend": "待发送",
+    "pendingUpload": "待上传",
+    "failed": "失败",
+    "totalSize": "总计：{{size}}"
   }
 }
