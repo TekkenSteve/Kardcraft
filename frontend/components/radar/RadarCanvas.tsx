@@ -387,7 +387,8 @@ export default function RadarCanvas() {
           trail.lastX = trail.lastX + ux * adv;
           trail.lastY = trail.lastY + uy * adv;
           trail.lastEmit = now;
-          if (trail.segs.length > MAX_SEGS) trail.segs.splice(0, trail.segs.length - MAX_SEGS);
+          const segsLength = trail.segs.length;
+          if (segsLength > MAX_SEGS) trail.segs.splice(0, segsLength - MAX_SEGS);
         }
 
         // Draw arrow

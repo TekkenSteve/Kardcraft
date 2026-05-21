@@ -191,7 +191,7 @@ function getNextRuns(cron: string, timezone: string, count: number = 3): Date[] 
     const targetMinute = minuteStr === "*" ? null : parseInt(minuteStr);
     const targetHour = hourStr === "*" ? null : parseInt(hourStr);
     const targetDayOfMonth = dayOfMonthStr === "*" ? null : parseInt(dayOfMonthStr);
-    const allowedDaysOfWeek = parseDayOfWeek(dayOfWeekStr);
+    const allowedDaysOfWeek = useMemo(() => new Set(parseDayOfWeek(dayOfWeekStr)), [dayOfWeekStr]);
 
     const now = new Date();
     // Start from the next minute to avoid duplicates
@@ -213,7 +213,7 @@ function getNextRuns(cron: string, timezone: string, count: number = 3): Date[] 
         const minuteMatch = targetMinute === null || m === targetMinute;
         const hourMatch = targetHour === null || h === targetHour;
         const dayOfMonthMatch = targetDayOfMonth === null || dom === targetDayOfMonth;
-        const dayOfWeekMatch = allowedDaysOfWeek.includes(dow);
+        const dayOfWeekMatch = allowedDaysOfWeek.has(dow);
 
         if (minuteMatch && hourMatch && dayOfMonthMatch && dayOfWeekMatch) {
             runs.push(new Date(current));
@@ -293,7 +293,7 @@ export function ScheduleBuilder({ value, onChange, timezone = "UTC" }: ScheduleB
                 return `Runs daily at ${formatTime(config.hour, config.minute)}`;
             case "weekly": {
                 const dayNames = config.daysOfWeek
-                    .sort()
+                    .toSorted()
                     .map((d) => DAYS_OF_WEEK.find((day) => day.value === d)?.label)
                     .join(", ");
                 return `Runs ${dayNames} at ${formatTime(config.hour, config.minute)}`;
@@ -323,7 +323,7 @@ export function ScheduleBuilder({ value, onChange, timezone = "UTC" }: ScheduleB
                         }}
                         className="text-xs h-7"
                     >
-                        <Calendar className="h-3 w-3 mr-1" />
+                        <Calendar className="size-3 mr-1" />
                         Simple Mode
                     </Button>
                 </div>
@@ -357,7 +357,7 @@ export function ScheduleBuilder({ value, onChange, timezone = "UTC" }: ScheduleB
                     onClick={() => setIsAdvanced(true)}
                     className="text-xs h-7"
                 >
-                    <Code className="h-3 w-3 mr-1" />
+                    <Code className="size-3 mr-1" />
                     Advanced
                 </Button>
             </div>
@@ -404,7 +404,7 @@ export function ScheduleBuilder({ value, onChange, timezone = "UTC" }: ScheduleB
 
                 {(config.frequency === "daily" || config.frequency === "weekly" || config.frequency === "monthly") && (
                     <div className="flex items-center gap-3">
-                        <Clock className="h-4 w-4 text-muted-foreground" />
+                        <Clock className="size-4 text-muted-foreground" />
                         <span className="text-sm text-muted-foreground">At</span>
                         <Select
                             value={config.hour.toString()}
@@ -449,7 +449,7 @@ export function ScheduleBuilder({ value, onChange, timezone = "UTC" }: ScheduleB
                                     key={day.value}
                                     type="button"
                                     onClick={() => toggleDayOfWeek(day.value)}
-                                    className={`w-9 h-9 rounded-full text-sm font-medium transition-colors ${
+                                    className={`size-9 rounded-full text-sm font-medium transition-colors ${
                                         config.daysOfWeek.includes(day.value)
                                             ? "bg-primary text-primary-foreground"
                                             : "bg-muted hover:bg-muted/80 text-muted-foreground"
@@ -494,7 +494,7 @@ export function ScheduleBuilder({ value, onChange, timezone = "UTC" }: ScheduleB
 
                 {config.frequency === "monthly" && (
                     <div className="flex items-center gap-3">
-                        <Calendar className="h-4 w-4 text-muted-foreground" />
+                        <Calendar className="size-4 text-muted-foreground" />
                         <span className="text-sm text-muted-foreground">On day</span>
                         <Select
                             value={config.dayOfMonth.toString()}
@@ -527,7 +527,7 @@ export function ScheduleBuilder({ value, onChange, timezone = "UTC" }: ScheduleB
                 <div className="text-xs text-muted-foreground border-t pt-3">
                     <span className="font-medium">Next runs (preview): </span>
                     {nextRuns.map((d, i) => (
-                        <span key={i}>
+                        <span key={d.toISOString()}>
                             {i > 0 && " → "}
                             {d.toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" })}{" "}
                             {d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })}
