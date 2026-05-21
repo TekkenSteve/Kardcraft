@@ -36,13 +36,16 @@ function Alert({
 
 function AlertTitle({
   className,
+  children,
   ...props
 }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
     <h5
       className={cn("mb-1 font-medium leading-none tracking-tight", className)}
       {...props}
-    />
+    >
+      {children || <span className="sr-only">Alert</span>}
+    </h5>
   )
 }
 
