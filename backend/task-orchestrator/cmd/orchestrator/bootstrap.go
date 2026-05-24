@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -11,6 +12,9 @@ import (
 
 	goredis "github.com/redis/go-redis/v9"
 	tclient "go.temporal.io/sdk/client"
+
+	goagentredis "github.com/TekkenSteve/GoAgent/pkg/redis"
+	goagentstream "github.com/TekkenSteve/GoAgent/repo/stream"
 
 	httpserver "task-orchestrator/internal/controller/http/v1"
 	v1adapters "task-orchestrator/internal/controller/http/v1/adapters"
@@ -45,6 +49,8 @@ func buildServerFromEnv() *httpserver.Server {
 
 	var redisClient *goredis.Client
 	var streamClient *v1adapters.RedisStreamClient
+	var goagentSubscriber *goagentstream.RedisSubscriber
+	var goagentGateway *goagentstream.SSEGateway
 	if storeCfg.RedisAddr != "" {
 		rdb, err := redissvc.NewStreamClient(context.Background(), storeCfg.RedisAddr, storeCfg.RedisPassword, storeCfg.RedisDB)
 		if err != nil {
@@ -52,6 +58,19 @@ func buildServerFromEnv() *httpserver.Server {
 		} else {
 			redisClient = rdb
 			streamClient = v1adapters.NewRedisStreamClient(redissvc.NewService(redisClient))
+		}
+
+		// Create GoAgent stream infrastructure
+		redisURL := fmt.Sprintf("redis://%s/%d", storeCfg.RedisAddr, storeCfg.RedisDB)
+		if storeCfg.RedisPassword != "" {
+			redisURL = fmt.Sprintf("redis://:%s@%s/%d", storeCfg.RedisPassword, storeCfg.RedisAddr, storeCfg.RedisDB)
+		}
+		goagentRDB, err := goagentredis.New(context.Background(), redisURL)
+		if err != nil {
+			log.Printf("warning: goagent redis client creation failed: %v", err)
+		} else {
+			goagentSubscriber = goagentstream.NewRedisSubscriber(goagentRDB.Hub())
+			goagentGateway = goagentstream.NewSSEGateway()
 		}
 	}
 
@@ -87,8 +106,10 @@ func buildServerFromEnv() *httpserver.Server {
 		ReadModel:      readModel,
 		WorkflowSvc:    workflowSvc,
 		SessionStore:   sessionStore,
-		RedisSvc:       streamClient,
-		CloseFuncs:     closeFuncs,
+		RedisSvc:         streamClient,
+		StreamSubscriber: goagentSubscriber,
+		StreamGateway:    goagentGateway,
+		CloseFuncs:       closeFuncs,
 	})
 	publisher.AddHook(srv.ProjectDomainEvents)
 	return srv

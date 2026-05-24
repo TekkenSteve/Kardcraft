@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	goagentstream "github.com/TekkenSteve/GoAgent/repo/stream"
+
 	v1middleware "task-orchestrator/internal/controller/http/v1/middleware"
 	v1stream "task-orchestrator/internal/controller/http/v1/stream"
 	v1support "task-orchestrator/internal/controller/http/v1/support"
@@ -102,7 +104,9 @@ type Server struct {
 	ankiRuntimeURL string
 	bgCancel       context.CancelFunc
 	closeFuncs     []func()
-	redisSvc       redisStreamClient
+	redisSvc          redisStreamClient
+	streamSubscriber  *goagentstream.RedisSubscriber
+	streamGateway     *goagentstream.SSEGateway
 
 	taskService    *usecase.TaskService
 	commandService *usecase.CommandService
@@ -137,8 +141,10 @@ type ServerDependencies struct {
 	CommandService *usecase.CommandService
 	ReadModel      *usecase.ReadModelService
 	WorkflowSvc    *usecase.WorkflowService
-	SessionStore   sessionLifecycleStore
-	RedisSvc       redisStreamClient
+	SessionStore      sessionLifecycleStore
+	RedisSvc          redisStreamClient
+	StreamSubscriber  *goagentstream.RedisSubscriber
+	StreamGateway     *goagentstream.SSEGateway
 
 	CloseFuncs []func()
 }
@@ -162,6 +168,8 @@ func NewServer(port int, deps ServerDependencies) *Server {
 		ankiRuntimeURL:          ankiRuntimeURL,
 		closeFuncs:              deps.CloseFuncs,
 		redisSvc:                deps.RedisSvc,
+		streamSubscriber:        deps.StreamSubscriber,
+		streamGateway:           deps.StreamGateway,
 		taskService:             deps.TaskService,
 		commandService:          deps.CommandService,
 		readModel:               deps.ReadModel,

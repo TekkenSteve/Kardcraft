@@ -13,8 +13,6 @@ import (
 	"task-orchestrator/internal/usecase"
 )
 
-var timelineBroadcaster = v1stream.NewBroadcaster()
-
 func (s *Server) appendTimeline(workflowID, sessionID, eventType, message string, payload any) {
 	s.appendTimelineWithStreamID(workflowID, sessionID, eventType, message, "", payload)
 }
@@ -141,18 +139,19 @@ func (s *Server) appendTimelineWithStreamID(workflowID, sessionID, eventType, me
 	}
 	s.mu.Unlock()
 
-	buf, _ := timelineBroadcaster.BuildEventPayload(
-		1,
-		correlationID,
-		fmt.Sprintf("%d", eventID),
-		workflowID,
-		runID,
-		sessionID,
-		occurredAt,
-		eventType,
-		ev.StreamID,
-		payloadMap,
-	)
+	sseBody := map[string]any{
+		"schema_version": 1,
+		"correlation_id": correlationID,
+		"event_id":       fmt.Sprintf("%d", eventID),
+		"event_type":     eventType,
+		"workflow_id":    workflowID,
+		"run_id":         runID,
+		"session_id":     sessionID,
+		"occurred_at":    occurredAt,
+		"stream_id":      ev.StreamID,
+		"payload":        payloadMap,
+	}
+	buf, _ := json.Marshal(sseBody)
 	for _, ch := range subs {
 		select {
 		case ch <- v1stream.OutboundEvent{ID: ev.ID, Event: eventType, Payload: buf}:
@@ -326,6 +325,97 @@ func (s *Server) stopWorkflowStreamReader(workflowID string) {
 }
 
 func (s *Server) subscribeRedisStream(ctx context.Context, workflowID string) {
+	if s.streamSubscriber != nil {
+		s.subscribeGoAgentStream(ctx, workflowID)
+		return
+	}
+	s.subscribeLegacyRedisStream(ctx, workflowID)
+}
+
+func (s *Server) subscribeGoAgentStream(ctx context.Context, workflowID string) {
+	sessionID := workflowID
+	if s.readModel != nil {
+		if sid, err := s.readModel.GetTaskSession(ctx, workflowID); err == nil && sid != "" {
+			sessionID = strings.TrimSpace(sid)
+		}
+	}
+
+	sub, err := s.streamSubscriber.Subscribe(ctx, sessionID, 0)
+	if err != nil {
+		log.Printf("goagent stream subscribe failed workflow_id=%s session_id=%s err=%v", workflowID, sessionID, err)
+		return
+	}
+	defer sub.Close()
+
+	usageProjector := v1stream.NewUsageProjector(
+		func(ctx context.Context, row usecase.UsageLedgerRow) (bool, error) {
+			if s.readModel == nil {
+				return false, nil
+			}
+			return s.readModel.InsertLLMUsage(ctx, row)
+		},
+		log.Printf,
+		func() { atomic.AddInt64(&s.llmUsageIngested, 1) },
+		func() { atomic.AddInt64(&s.llmUsageDeduped, 1) },
+		func() { atomic.AddInt64(&s.llmUsageFailed, 1) },
+		func() { atomic.AddInt64(&s.llmUsageInvalid, 1) },
+	)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case stored, ok := <-sub.C:
+			if !ok {
+				return
+			}
+			base := stored.Event.Base()
+			runID := strings.TrimSpace(base.RunID)
+			evSessionID := strings.TrimSpace(base.SessionID)
+			eventType := base.EventType
+			if eventType == "" {
+				eventType = "WORKFLOW_PROGRESS"
+			}
+			if evSessionID == "" {
+				evSessionID = sessionID
+			}
+			if runID != "" {
+				s.bindWorkflowRunID(workflowID, runID)
+			}
+
+			payload := map[string]any{
+				"event_type":  eventType,
+				"workflow_id": workflowID,
+				"run_id":      runID,
+				"session_id":  evSessionID,
+				"event_id":    strings.TrimSpace(base.EventID),
+				"timestamp":   base.Timestamp,
+				"sequence":    stored.Sequence,
+			}
+
+			normalized := v1stream.NormalizedEvent{
+				WorkflowID: workflowID,
+				SessionID:  evSessionID,
+				TaskID:     workflowID,
+				EventType:  eventType,
+				StreamID:   fmt.Sprintf("%d", stored.Sequence),
+				Payload:    payload,
+			}
+			usageProjector.Project(ctx, normalized)
+
+			s.appendTimelineWithStreamID(
+				workflowID,
+				evSessionID,
+				eventType,
+				"",
+				normalized.StreamID,
+				payload,
+			)
+		}
+	}
+}
+
+func (s *Server) subscribeLegacyRedisStream(ctx context.Context, workflowID string) {
 	reader := v1stream.NewReader(s.redisSvc, 32, 5*time.Second, log.Printf)
 	if !reader.Enabled() {
 		return

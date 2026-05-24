@@ -10,6 +10,7 @@ import (
 
 	gosdk "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	"github.com/TekkenSteve/GoAgent/agentfw/orchestration"
 	"task-orchestrator/internal/repo/persistence"
@@ -45,6 +46,20 @@ func main() {
 	sessionStore := persistence.NewSessionStore(context.Background(), persistence.SessionStoreConfigFromEnv())
 	workflows.ConfigureTaskPersistenceStore(sessionStore)
 	w.RegisterActivity(workflows.PersistTaskOutcomeActivity)
+
+	// Register GoAgent workflows
+	w.RegisterWorkflowWithOptions(orchestration.AgentWorkflow, workflow.RegisterOptions{
+		Name: orchestration.AgentWorkflowName,
+	})
+	w.RegisterWorkflowWithOptions(orchestration.StreamAgentWorkflow, workflow.RegisterOptions{
+		Name: orchestration.StreamWorkflowName,
+	})
+	w.RegisterWorkflowWithOptions(orchestration.Workflow, workflow.RegisterOptions{
+		Name: orchestration.OrchestrationWorkflowName,
+	})
+	w.RegisterWorkflowWithOptions(orchestration.TriggerFireWorkflow, workflow.RegisterOptions{
+		Name: orchestration.TriggerFireWorkflowName,
+	})
 
 	go func() {
 		if err := w.Run(worker.InterruptCh()); err != nil {
