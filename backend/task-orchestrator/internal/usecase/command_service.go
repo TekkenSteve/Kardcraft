@@ -118,19 +118,19 @@ func (s *CommandService) ControlSession(ctx context.Context, cmd SessionControlC
 	}
 	switch action {
 	case "pause":
-		if err := s.runtime.SignalWorkflow(ctx, taskID, "pause-workflow", signalPayload); err != nil {
+		if err := s.runtime.SignalWorkflow(ctx, taskID, "pause", signalPayload); err != nil {
 			return nil, err
 		}
 		_ = s.store.UpdateTaskStatus(ctx, taskID, "paused", "")
 		state = "PAUSED"
 	case "resume":
-		if err := s.runtime.SignalWorkflow(ctx, taskID, "resume-workflow", signalPayload); err != nil {
+		if err := s.runtime.SignalWorkflow(ctx, taskID, "resume", signalPayload); err != nil {
 			return nil, err
 		}
 		_ = s.store.UpdateTaskStatus(ctx, taskID, "running", "")
 		state = "RUNNING"
 	case "cancel":
-		if err := s.runtime.SignalWorkflow(ctx, taskID, "cancel-workflow", signalPayload); err != nil {
+		if err := s.runtime.SignalWorkflow(ctx, taskID, "cancel", signalPayload); err != nil {
 			return nil, err
 		}
 		if err := s.runtime.CancelWorkflow(ctx, taskID); err != nil {

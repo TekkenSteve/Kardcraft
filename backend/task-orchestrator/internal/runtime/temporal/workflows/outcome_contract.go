@@ -3,6 +3,8 @@ package workflows
 import (
 	"fmt"
 	"strings"
+
+	"github.com/TekkenSteve/GoAgent/entity"
 )
 
 const TaskOutcomeSchema = "task-outcome"
@@ -18,6 +20,7 @@ type TaskOutcomeCard struct {
 }
 
 type TaskOutcome struct {
+	entity.BaseEvent
 	SchemaVersion string            `json:"schema_version"`
 	TaskID        string            `json:"task_id"`
 	WorkflowID    string            `json:"workflow_id"`

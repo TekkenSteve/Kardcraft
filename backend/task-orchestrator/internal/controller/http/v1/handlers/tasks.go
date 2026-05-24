@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TekkenSteve/GoAgent/entity"
+
 	httpdto "task-orchestrator/internal/controller/http/v1/dto"
 	v1support "task-orchestrator/internal/controller/http/v1/support"
 	"task-orchestrator/internal/usecase"
@@ -497,7 +499,7 @@ func buildContextEnvelope(
 	query string,
 	filePolicy string,
 	base map[string]any,
-	conversationHistory []ucdto.ConversationMessage,
+	conversationHistory []entity.Message,
 	sessionFileArtifacts []map[string]any,
 	explicitFileIDs []string,
 	inheritedFileIDs []string,
@@ -528,10 +530,8 @@ func buildContextEnvelope(
 	}
 	for _, msg := range conversationHistory[start:] {
 		recentMessages = append(recentMessages, map[string]any{
-			"role":      msg.Role,
-			"content":   msg.Content,
-			"timestamp": msg.Timestamp,
-			"task_id":   msg.TaskID,
+			"role":    msg.Role,
+			"content": msg.Content,
 		})
 	}
 	envelope["history"] = map[string]any{
@@ -1036,13 +1036,13 @@ func extractFileArtifactsFromEventPayload(record map[string]any) []map[string]an
 	return deduped
 }
 
-func normalizeConversationHistoryFromRequest(messages []httpdto.ConversationMessage, maxMessages int) []ucdto.ConversationMessage {
+func normalizeConversationHistoryFromRequest(messages []entity.Message, maxMessages int) []entity.Message {
 	if maxMessages <= 0 {
 		maxMessages = 24
 	}
-	normalized := make([]ucdto.ConversationMessage, 0, len(messages))
+	normalized := make([]entity.Message, 0, len(messages))
 	for _, msg := range messages {
-		role := strings.ToLower(strings.TrimSpace(msg.Role))
+		role := strings.ToLower(strings.TrimSpace(string(msg.Role)))
 		if role != "user" && role != "assistant" && role != "system" {
 			continue
 		}
@@ -1050,12 +1050,10 @@ func normalizeConversationHistoryFromRequest(messages []httpdto.ConversationMess
 		if content == "" {
 			continue
 		}
-		normalized = append(normalized, ucdto.ConversationMessage{
-			Role:      role,
-			Content:   content,
-			Timestamp: strings.TrimSpace(msg.Timestamp),
-			TaskID:    strings.TrimSpace(msg.TaskID),
-		})
+			normalized = append(normalized, entity.Message{
+				Role:    entity.MessageRole(role),
+				Content: content,
+			})
 	}
 	if len(normalized) > maxMessages {
 		normalized = normalized[len(normalized)-maxMessages:]
@@ -1063,7 +1061,7 @@ func normalizeConversationHistoryFromRequest(messages []httpdto.ConversationMess
 	return normalized
 }
 
-func buildConversationHistoryFromSession(ctx context.Context, deps TasksDeps, sessionID, userID string, maxMessages int) ([]ucdto.ConversationMessage, error) {
+func buildConversationHistoryFromSession(ctx context.Context, deps TasksDeps, sessionID, userID string, maxMessages int) ([]entity.Message, error) {
 	if maxMessages <= 0 {
 		maxMessages = 24
 	}
@@ -1087,44 +1085,34 @@ func buildConversationHistoryFromSession(ctx context.Context, deps TasksDeps, se
 		eventsByTask[taskID] = append(eventsByTask[taskID], ev)
 	}
 
-	messages := make([]ucdto.ConversationMessage, 0, len(tasks)*2)
+	messages := make([]entity.Message, 0, len(tasks)*2)
 	for _, t := range tasks {
 		taskID := strings.TrimSpace(t.TaskID)
 		query := strings.TrimSpace(valueFromPtr(t.Query))
-		timestamp := taskTimestampRFC3339(t.StartedAt, t.CompletedAt)
 		if query != "" {
-			messages = append(messages, ucdto.ConversationMessage{
-				Role:      "user",
-				Content:   query,
-				Timestamp: timestamp,
-				TaskID:    taskID,
+			messages = append(messages, entity.Message{
+				Role:    entity.RoleUser,
+				Content: query,
 			})
 		}
 
 		assistantContent := strings.TrimSpace(ExtractResultMessage(t.Result))
 		if assistantContent == "" {
-			if text, ts := extractAssistantContentFromEvents(eventsByTask[taskID]); strings.TrimSpace(text) != "" {
+			if text, _ := extractAssistantContentFromEvents(eventsByTask[taskID]); strings.TrimSpace(text) != "" {
 				assistantContent = strings.TrimSpace(text)
-				if !ts.IsZero() {
-					timestamp = ts.UTC().Format(time.RFC3339)
 				}
 			}
-		}
 		if assistantContent != "" {
-			messages = append(messages, ucdto.ConversationMessage{
-				Role:      "assistant",
-				Content:   assistantContent,
-				Timestamp: timestamp,
-				TaskID:    taskID,
+			messages = append(messages, entity.Message{
+				Role:    entity.RoleAssistant,
+				Content: assistantContent,
 			})
 			continue
 		}
 		if strings.EqualFold(valueFromPtr(t.Status), "cancelled") {
-			messages = append(messages, ucdto.ConversationMessage{
-				Role:      "assistant",
-				Content:   "This task was cancelled.",
-				Timestamp: timestamp,
-				TaskID:    taskID,
+			messages = append(messages, entity.Message{
+				Role:    entity.RoleAssistant,
+				Content: "This task was cancelled.",
 			})
 		}
 	}

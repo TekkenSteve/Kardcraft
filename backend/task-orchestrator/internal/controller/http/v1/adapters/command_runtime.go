@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TekkenSteve/GoAgent/agentfw/orchestration"
 	tclient "go.temporal.io/sdk/client"
 
 	"task-orchestrator/internal/repo/persistence"
@@ -65,15 +66,6 @@ func NewTemporalCommandRuntime(client tclient.Client, taskQueue string) port.Com
 }
 
 func (r temporalCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd dto.CreateTaskCommand) (string, error) {
-	history := make([]workflows.ConversationMessage, 0, len(cmd.Input.ConversationHistory))
-	for _, item := range cmd.Input.ConversationHistory {
-		history = append(history, workflows.ConversationMessage{
-			Role:      item.Role,
-			Content:   item.Content,
-			Timestamp: item.Timestamp,
-			TaskID:    item.TaskID,
-		})
-	}
 	payload := workflows.TaskInput{
 		TaskID:   cmd.TaskID,
 		UserID:   cmd.UserID,
@@ -81,7 +73,7 @@ func (r temporalCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd dto.C
 		Input: workflows.TaskInputPayload{
 			SessionID:           cmd.Input.SessionID,
 			Query:               cmd.Input.Query,
-			ConversationHistory: history,
+			ConversationHistory: cmd.Input.ConversationHistory,
 			Context:             workflows.TaskInputContext{TemplateID: cmd.Input.Context.TemplateID, TemplateVersion: cmd.Input.Context.TemplateVersion, TemplateProfile: cmd.Input.Context.TemplateProfile},
 			FilePolicy:          cmd.Input.FilePolicy,
 			ContextEnvelope:     cmd.Input.ContextEnvelope,
@@ -113,13 +105,14 @@ func (r temporalCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd dto.C
 	return wr.GetRunID(), nil
 }
 
-func (r temporalCommandRuntime) SignalWorkflow(ctx context.Context, taskID, signalName string, signal dto.ControlSignal) error {
+func (r temporalCommandRuntime) SignalWorkflow(ctx context.Context, taskID, command string, signal dto.ControlSignal) error {
 	payload := map[string]any{
+		"command":    command,
 		"reason":     signal.Reason,
 		"request_by": signal.RequestBy,
 		"timestamp":  signal.Timestamp,
 	}
-	return r.client.SignalWorkflow(ctx, taskID, "", signalName, payload)
+	return r.client.SignalWorkflow(ctx, taskID, "", orchestration.AgentCommandSignal, payload)
 }
 
 func (r temporalCommandRuntime) CancelWorkflow(ctx context.Context, taskID string) error {

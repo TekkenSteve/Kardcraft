@@ -61,17 +61,17 @@ func (s *WorkflowService) ApplyTaskAction(ctx context.Context, taskID, action, r
 	var status string
 	switch action {
 	case "pause":
-		if err := s.runtime.SignalWorkflow(ctx, taskID, "pause-workflow", signal); err != nil {
+		if err := s.runtime.SignalWorkflow(ctx, taskID, "pause", signal); err != nil {
 			return err
 		}
 		status = "paused"
 	case "resume":
-		if err := s.runtime.SignalWorkflow(ctx, taskID, "resume-workflow", signal); err != nil {
+		if err := s.runtime.SignalWorkflow(ctx, taskID, "resume", signal); err != nil {
 			return err
 		}
 		status = "running"
 	case "cancel":
-		if err := s.runtime.SignalWorkflow(ctx, taskID, "cancel-workflow", signal); err != nil {
+		if err := s.runtime.SignalWorkflow(ctx, taskID, "cancel", signal); err != nil {
 			return err
 		}
 		if err := s.runtime.CancelWorkflow(ctx, taskID); err != nil {

@@ -11,6 +11,7 @@ import (
 	gosdk "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
+	"github.com/TekkenSteve/GoAgent/agentfw/orchestration"
 	"task-orchestrator/internal/repo/persistence"
 	"task-orchestrator/internal/runtime/temporal/workflows"
 )
@@ -52,6 +53,8 @@ func main() {
 	}()
 
 	log.Printf("temporal worker started, endpoint=%s queue=%s", endpoint, taskQueue)
+	log.Printf("goagent workflows: agent=%s, stream=%s",
+		orchestration.AgentWorkflowName, orchestration.StreamWorkflowName)
 	for {
 		select {
 		case <-ctx.Done():

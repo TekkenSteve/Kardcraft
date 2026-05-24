@@ -1,6 +1,10 @@
 package dto
 
-import "time"
+import (
+	"time"
+
+	"github.com/TekkenSteve/GoAgent/entity"
+)
 
 const (
 	TaskTypeMain         = "main"
@@ -13,17 +17,10 @@ type TemplateContext struct {
 	TemplateProfile string
 }
 
-type ConversationMessage struct {
-	Role      string
-	Content   string
-	Timestamp string
-	TaskID    string
-}
-
 type CreateTaskInput struct {
 	SessionID           string
 	Query               string
-	ConversationHistory []ConversationMessage
+	ConversationHistory []entity.Message
 	Context             TemplateContext
 	FilePolicy          string
 	ContextEnvelope     map[string]any

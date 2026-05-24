@@ -213,7 +213,9 @@ func (s *Server) resolveRunID(ctx context.Context, workflowID string, payload an
 	if s.workflowSvc == nil || !s.workflowSvc.Enabled() {
 		return ""
 	}
-	desc, err := s.workflowSvc.DescribeWorkflow(ctx, workflowID, "")
+	descCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	desc, err := s.workflowSvc.DescribeWorkflow(descCtx, workflowID, "")
 	if err != nil || desc == nil {
 		return ""
 	}

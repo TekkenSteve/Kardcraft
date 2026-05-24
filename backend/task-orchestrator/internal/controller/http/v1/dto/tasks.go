@@ -1,16 +1,11 @@
 package dto
 
+import "github.com/TekkenSteve/GoAgent/entity"
+
 type CreateTaskContext struct {
 	TemplateID      string `json:"template_id"`
 	TemplateVersion int    `json:"template_version,omitempty"`
 	TemplateProfile string `json:"template_profile,omitempty"`
-}
-
-type ConversationMessage struct {
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	Timestamp string `json:"timestamp,omitempty"`
-	TaskID    string `json:"task_id,omitempty"`
 }
 
 type Attachment struct {
@@ -23,7 +18,7 @@ type Attachment struct {
 type CreateTaskInput struct {
 	SessionID           string                `json:"session_id"`
 	Query               string                `json:"query,omitempty"`
-	ConversationHistory []ConversationMessage `json:"conversation_history,omitempty"`
+	ConversationHistory []entity.Message `json:"conversation_history,omitempty"`
 	Context             CreateTaskContext     `json:"context,omitempty"`
 	FilePolicy          string                `json:"file_policy,omitempty"`
 	ContextEnvelope     map[string]any        `json:"context_envelope,omitempty"`

@@ -5,29 +5,16 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TekkenSteve/GoAgent/agentfw/orchestration"
+	"github.com/TekkenSteve/GoAgent/entity"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 )
 
-const (
-	PauseWorkflowSignal  = "pause-workflow"
-	ResumeWorkflowSignal = "resume-workflow"
-	CancelWorkflowSignal = "cancel-workflow"
-)
-
-type PauseSignal struct {
-	Reason    string    `json:"reason"`
-	RequestBy string    `json:"request_by"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-type ResumeSignal struct {
-	Reason    string    `json:"reason"`
-	RequestBy string    `json:"request_by"`
-	Timestamp time.Time `json:"timestamp"`
-}
-
-type CancelSignal struct {
+// CommandSignal is the unified signal payload received on the AgentCommandSignal channel.
+// Command must be one of "pause", "resume", or "cancel".
+type CommandSignal struct {
+	Command   string    `json:"command"`
 	Reason    string    `json:"reason"`
 	RequestBy string    `json:"request_by"`
 	Timestamp time.Time `json:"timestamp"`
@@ -57,26 +44,19 @@ type TaskInputContext struct {
 	TemplateProfile string `json:"template_profile,omitempty"`
 }
 
-type ConversationMessage struct {
-	Role      string `json:"role"`
-	Content   string `json:"content"`
-	Timestamp string `json:"timestamp,omitempty"`
-	TaskID    string `json:"task_id,omitempty"`
-}
-
 type TaskInputPayload struct {
-	SessionID           string                `json:"session_id"`
-	Query               string                `json:"query,omitempty"`
-	ConversationHistory []ConversationMessage `json:"conversation_history,omitempty"`
-	Context             TaskInputContext      `json:"context,omitempty"`
-	FilePolicy          string                `json:"file_policy,omitempty"`
-	ContextEnvelope     map[string]any        `json:"context_envelope,omitempty"`
-	FileIDs             []string              `json:"file_ids,omitempty"`
-	EffectiveFileIDs    []string              `json:"effective_file_ids,omitempty"`
-	TargetCount         int                   `json:"target_count,omitempty"`
-	DifficultyLevel     string                `json:"difficulty_level,omitempty"`
-	TemplateID          string                `json:"template_id,omitempty"`
-	Variables           map[string]any        `json:"variables,omitempty"`
+	SessionID           string          `json:"session_id"`
+	Query               string          `json:"query,omitempty"`
+	ConversationHistory []entity.Message `json:"conversation_history,omitempty"`
+	Context             TaskInputContext `json:"context,omitempty"`
+	FilePolicy          string           `json:"file_policy,omitempty"`
+	ContextEnvelope     map[string]any   `json:"context_envelope,omitempty"`
+	FileIDs             []string         `json:"file_ids,omitempty"`
+	EffectiveFileIDs    []string         `json:"effective_file_ids,omitempty"`
+	TargetCount         int              `json:"target_count,omitempty"`
+	DifficultyLevel     string           `json:"difficulty_level,omitempty"`
+	TemplateID          string           `json:"template_id,omitempty"`
+	Variables           map[string]any   `json:"variables,omitempty"`
 }
 
 type TaskConfig struct {
@@ -112,11 +92,11 @@ type TaskOutput struct {
 func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 	logger := workflow.GetLogger(ctx)
 	state := WorkflowState{}
-	_ = workflow.SetQueryHandler(ctx, "get-workflow-state", func() (WorkflowState, error) { return state, nil })
+	_ = workflow.SetQueryHandler(ctx, orchestration.QueryRunStatus, func() (orchestration.RunStatus, error) {
+		return workflowStateToRunStatus(state, workflow.GetInfo(ctx).WorkflowExecution.RunID), nil
+	})
 
-	pauseSignalChan := workflow.GetSignalChannel(ctx, PauseWorkflowSignal)
-	resumeSignalChan := workflow.GetSignalChannel(ctx, ResumeWorkflowSignal)
-	cancelSignalChan := workflow.GetSignalChannel(ctx, CancelWorkflowSignal)
+	commandSignalChan := workflow.GetSignalChannel(ctx, orchestration.AgentCommandSignal)
 
 	activityQueue := "agent-activities-queue"
 	if strings.TrimSpace(input.Config.ActivityTaskQueue) != "" {
@@ -216,21 +196,24 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 		}
 		return false
 	}
+
+	// drainSignals reads all queued command signals from the unified channel.
 	drainSignals := func() {
 		for {
-			var pause PauseSignal
-			if pauseSignalChan.ReceiveAsync(&pause) {
+			var cmd CommandSignal
+			if !commandSignalChan.ReceiveAsync(&cmd) {
+				break
+			}
+			switch cmd.Command {
+			case orchestration.AgentCmdPause:
 				state.IsPaused = true
-				state.PauseReason = pause.Reason
-				state.PausedBy = pause.RequestBy
-				state.PausedAt = pause.Timestamp
+				state.PauseReason = cmd.Reason
+				state.PausedBy = cmd.RequestBy
+				state.PausedAt = cmd.Timestamp
 				if cancelActivity != nil && !activityDone {
 					cancelActivity()
 				}
-				continue
-			}
-			var resume ResumeSignal
-			if resumeSignalChan.ReceiveAsync(&resume) {
+			case orchestration.AgentCmdResume:
 				state.PauseReason = ""
 				state.PausedBy = ""
 				state.PausedAt = time.Time{}
@@ -239,17 +222,12 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 				} else {
 					state.IsPaused = false
 				}
-				continue
-			}
-			var cancel CancelSignal
-			if cancelSignalChan.ReceiveAsync(&cancel) {
+			case orchestration.AgentCmdCancel:
 				state.IsCancelled = true
-				state.CancelReason = cancel.Reason
-				state.CancelledBy = cancel.RequestBy
-				state.CancelledAt = cancel.Timestamp
-				continue
+				state.CancelReason = cmd.Reason
+				state.CancelledBy = cmd.RequestBy
+				state.CancelledAt = cmd.Timestamp
 			}
-			break
 		}
 	}
 	startActivity("execute_agent_workflow", payload)
@@ -274,23 +252,21 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 				continue
 			}
 			selector := workflow.NewSelector(ctx)
-			if !resumeRequested {
-				selector.AddReceive(resumeSignalChan, func(c workflow.ReceiveChannel, more bool) {
-					var sig ResumeSignal
-					c.Receive(ctx, &sig)
+			selector.AddReceive(commandSignalChan, func(c workflow.ReceiveChannel, more bool) {
+				var cmd CommandSignal
+				c.Receive(ctx, &cmd)
+				switch cmd.Command {
+				case orchestration.AgentCmdResume:
 					state.PauseReason = ""
 					state.PausedBy = ""
 					state.PausedAt = time.Time{}
 					resumeRequested = true
-				})
-			}
-			selector.AddReceive(cancelSignalChan, func(c workflow.ReceiveChannel, more bool) {
-				var sig CancelSignal
-				c.Receive(ctx, &sig)
-				state.IsCancelled = true
-				state.CancelReason = sig.Reason
-				state.CancelledBy = sig.RequestBy
-				state.CancelledAt = sig.Timestamp
+				case orchestration.AgentCmdCancel:
+					state.IsCancelled = true
+					state.CancelReason = cmd.Reason
+					state.CancelledBy = cmd.RequestBy
+					state.CancelledAt = cmd.Timestamp
+				}
 			})
 			if activityFuture != nil && !activityDone {
 				selector.AddFuture(activityFuture, func(f workflow.Future) {
@@ -298,9 +274,6 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 					activityErr = f.Get(activityCtx, &result)
 				})
 			}
-			// Paused means user explicitly wants execution to stop progressing.
-			// The current agent activity was cancellation-requested on pause. If it
-			// returns normally first, hold that result until resume keeps UI paused.
 			selector.Select(ctx)
 			if applyQueuedResume() {
 				continue
@@ -309,24 +282,24 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 		}
 
 		selector := workflow.NewSelector(ctx)
-		selector.AddReceive(pauseSignalChan, func(c workflow.ReceiveChannel, more bool) {
-			var sig PauseSignal
-			c.Receive(ctx, &sig)
-			state.IsPaused = true
-			state.PauseReason = sig.Reason
-			state.PausedBy = sig.RequestBy
-			state.PausedAt = sig.Timestamp
-			if cancelActivity != nil && !activityDone {
-				cancelActivity()
+		selector.AddReceive(commandSignalChan, func(c workflow.ReceiveChannel, more bool) {
+			var cmd CommandSignal
+			c.Receive(ctx, &cmd)
+			switch cmd.Command {
+			case orchestration.AgentCmdPause:
+				state.IsPaused = true
+				state.PauseReason = cmd.Reason
+				state.PausedBy = cmd.RequestBy
+				state.PausedAt = cmd.Timestamp
+				if cancelActivity != nil && !activityDone {
+					cancelActivity()
+				}
+			case orchestration.AgentCmdCancel:
+				state.IsCancelled = true
+				state.CancelReason = cmd.Reason
+				state.CancelledBy = cmd.RequestBy
+				state.CancelledAt = cmd.Timestamp
 			}
-		})
-		selector.AddReceive(cancelSignalChan, func(c workflow.ReceiveChannel, more bool) {
-			var sig CancelSignal
-			c.Receive(ctx, &sig)
-			state.IsCancelled = true
-			state.CancelReason = sig.Reason
-			state.CancelledBy = sig.RequestBy
-			state.CancelledAt = sig.Timestamp
 		})
 		selector.AddFuture(activityFuture, func(f workflow.Future) {
 			activityDone = true
@@ -470,4 +443,26 @@ func validateTaskActivityPayload(input TaskInput) error {
 	}
 
 	return nil
+}
+
+func workflowStateToRunStatus(state WorkflowState, runID string) orchestration.RunStatus {
+	lifecycle := "running"
+	reason := ""
+	var updatedAt time.Time
+	switch {
+	case state.IsCancelled:
+		lifecycle = orchestration.LifecycleStateCanceled
+		reason = state.CancelReason
+		updatedAt = state.CancelledAt
+	case state.IsPaused:
+		lifecycle = "paused"
+		reason = state.PauseReason
+		updatedAt = state.PausedAt
+	}
+	return orchestration.RunStatus{
+		RunID:          runID,
+		LifecycleState: lifecycle,
+		Reason:         reason,
+		UpdatedAt:      updatedAt,
+	}
 }
