@@ -138,9 +138,9 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 	})
 
 	t.Run("controller does not import runtime dto", func(t *testing.T) {
-		data, err := os.ReadFile("handler_tasks.go")
+		data, err := os.ReadFile("tasks_handler.go")
 		if err != nil {
-			t.Fatalf("read handler_tasks.go: %v", err)
+			t.Fatalf("read tasks_handler.go: %v", err)
 		}
 		if strings.Contains(string(data), "internal/controller/temporal") {
 			t.Fatalf("tasks handler leaks runtime DTO import")
