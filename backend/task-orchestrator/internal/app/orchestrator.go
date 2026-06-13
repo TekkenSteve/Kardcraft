@@ -19,8 +19,7 @@ import (
 	goagentstream "github.com/TekkenSteve/GoAgent/repo/stream"
 	"github.com/TekkenSteve/GoAgent/usecase/executor"
 
-	restapi "task-orchestrator/internal/controller/restapi/v1"
-	v1adapters "task-orchestrator/internal/controller/restapi/v1/adapters"
+	"task-orchestrator/internal/controller/restapi"
 	"task-orchestrator/internal/repo/persistent"
 	redissvc "task-orchestrator/internal/repo/redis"
 	"task-orchestrator/internal/usecase"
@@ -51,7 +50,7 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	}
 
 	var redisClient *goredis.Client
-	var streamClient *v1adapters.RedisStreamClient
+	var streamClient *restapi.RedisStreamClient
 	var goagentSubscriber *goagentstream.RedisSubscriber
 	var goagentGateway *goagentstream.SSEGateway
 	if storeCfg.RedisAddr != "" {
@@ -60,7 +59,7 @@ func NewOrchestratorFromEnv() *restapi.Server {
 			log.Printf("warning: redis stream client ping failed: %v", err)
 		} else {
 			redisClient = rdb
-			streamClient = v1adapters.NewRedisStreamClient(redissvc.NewService(redisClient))
+			streamClient = restapi.NewRedisStreamClient(redissvc.NewService(redisClient))
 		}
 
 		redisURL := fmt.Sprintf("redis://%s/%d", storeCfg.RedisAddr, storeCfg.RedisDB)
@@ -81,7 +80,7 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	taskService := usecase.NewTaskService(repo, publisher, nil)
 
 	readModel := usecase.NewReadModelService(readModelStore)
-	workflowSvc := usecase.NewWorkflowService(v1adapters.NewTemporalWorkflowRuntime(temporalClient), readModelStore)
+	workflowSvc := usecase.NewWorkflowService(restapi.NewTemporalWorkflowRuntime(temporalClient), readModelStore)
 
 	var commandSvc *usecase.CommandService
 	if temporalClient != nil {
@@ -91,9 +90,9 @@ func NewOrchestratorFromEnv() *restapi.Server {
 		agentExecutor := executor.New(executorTemporal)
 		commandSvc = usecase.NewCommandService(
 			taskService,
-			v1adapters.NewCommandSessionStore(sessionStore),
+			restapi.NewCommandSessionStore(sessionStore),
 			agentExecutor,
-			v1adapters.NewTemporalCommandRuntime(temporalClient, taskQueue),
+			restapi.NewTemporalCommandRuntime(temporalClient, taskQueue),
 		)
 	}
 

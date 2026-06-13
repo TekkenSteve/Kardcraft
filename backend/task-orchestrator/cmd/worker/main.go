@@ -28,7 +28,7 @@ import (
 	"github.com/TekkenSteve/GoAgent/repo/webapi"
 	agentuc "github.com/TekkenSteve/GoAgent/usecase/agent"
 
-	"task-orchestrator/internal/controller/temporal/workflows"
+	"task-orchestrator/internal/controller/temporal"
 	"task-orchestrator/internal/repo/persistent"
 )
 
@@ -57,10 +57,10 @@ func main() {
 	defer c.Close()
 
 	w := worker.New(c, taskQueue, worker.Options{})
-	w.RegisterWorkflow(workflows.TaskWorkflow)
+	w.RegisterWorkflow(temporal.TaskWorkflow)
 	sessionStore := persistent.NewSessionStore(context.Background(), persistent.SessionStoreConfigFromEnv())
-	workflows.ConfigureTaskPersistenceStore(sessionStore)
-	w.RegisterActivity(workflows.PersistTaskOutcomeActivity)
+	temporal.ConfigureTaskPersistenceStore(sessionStore)
+	w.RegisterActivity(temporal.PersistTaskOutcomeActivity)
 
 	activities, closeActivities := buildAgentActivities()
 	defer closeActivities()
