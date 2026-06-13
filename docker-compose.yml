@@ -418,6 +418,8 @@ services:
     container_name: kardcraft-task-orchestrator
     restart: always
     command: [ /app/task-orchestrator ]
+    env_file:
+      - ${PWD}/.env.llm
     ports:
       - "${TASK_ORCHESTRATOR_HOST_PORT:-50050}:50050" # HTTP port for orchestrator (used by frontend/APISIX)
     environment:
@@ -467,6 +469,8 @@ services:
     container_name: kardcraft-go-worker
     restart: always
     command: [ "/app/task-worker" ]
+    env_file:
+      - ${PWD}/.env.llm
     environment:
       - TEMPORAL_ENDPOINT=temporal:7233
       - TASK_QUEUE=task-workflow-queue # Go Worker Handle only Workflows

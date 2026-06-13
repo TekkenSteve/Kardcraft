@@ -106,6 +106,8 @@ backend/*.log
 # Go
 backend/**/bin/
 backend/*/vendor/
+backend/task-orchestrator/orchestrator
+backend/task-orchestrator/worker
 *.test
 *.out
 

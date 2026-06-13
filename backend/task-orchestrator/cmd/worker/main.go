@@ -2,17 +2,32 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	schemas "github.com/maximhq/bifrost/core/schemas"
+	goredis "github.com/redis/go-redis/v9"
 	gosdk "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
-	"go.temporal.io/sdk/workflow"
 
 	"github.com/TekkenSteve/GoAgent/agentfw/orchestration"
+	agentruntime "github.com/TekkenSteve/GoAgent/agentfw/runtime"
+	agenttool "github.com/TekkenSteve/GoAgent/agentfw/tool"
+	"github.com/TekkenSteve/GoAgent/pkg/logger"
+	goagentredis "github.com/TekkenSteve/GoAgent/pkg/redis"
+	"github.com/TekkenSteve/GoAgent/repo/compressor"
+	"github.com/TekkenSteve/GoAgent/repo/framework"
+	"github.com/TekkenSteve/GoAgent/repo/pipeline"
+	goagentstream "github.com/TekkenSteve/GoAgent/repo/stream"
+	"github.com/TekkenSteve/GoAgent/repo/toolkit"
+	"github.com/TekkenSteve/GoAgent/repo/webapi"
+	agentuc "github.com/TekkenSteve/GoAgent/usecase/agent"
+
 	"task-orchestrator/internal/repo/persistence"
 	"task-orchestrator/internal/runtime/temporal/workflows"
 )
@@ -47,19 +62,11 @@ func main() {
 	workflows.ConfigureTaskPersistenceStore(sessionStore)
 	w.RegisterActivity(workflows.PersistTaskOutcomeActivity)
 
-	// Register GoAgent workflows
-	w.RegisterWorkflowWithOptions(orchestration.AgentWorkflow, workflow.RegisterOptions{
-		Name: orchestration.AgentWorkflowName,
-	})
-	w.RegisterWorkflowWithOptions(orchestration.StreamAgentWorkflow, workflow.RegisterOptions{
-		Name: orchestration.StreamWorkflowName,
-	})
-	w.RegisterWorkflowWithOptions(orchestration.Workflow, workflow.RegisterOptions{
-		Name: orchestration.OrchestrationWorkflowName,
-	})
-	w.RegisterWorkflowWithOptions(orchestration.TriggerFireWorkflow, workflow.RegisterOptions{
-		Name: orchestration.TriggerFireWorkflowName,
-	})
+	activities, closeActivities := buildAgentActivities()
+	defer closeActivities()
+	registrar := agentruntime.NewDefaultRegistrar(activities)
+	registrar.RegisterWorkflows(&agentruntime.TemporalRuntime{Worker: w})
+	registrar.RegisterActivities(&agentruntime.TemporalRuntime{Worker: w})
 
 	go func() {
 		if err := w.Run(worker.InterruptCh()); err != nil {
@@ -76,6 +83,100 @@ func main() {
 			log.Println("task worker shutting down")
 			return
 		}
+	}
+}
+
+func buildAgentActivities() (*orchestration.AgentActivities, func()) {
+	l := logger.New("info")
+
+	redisURL := buildRedisURLFromEnv()
+	if redisURL == "" {
+		log.Fatal("REDIS_HOST is required for GoAgent activities")
+	}
+	rdb, err := goagentredis.New(context.Background(), redisURL)
+	if err != nil {
+		log.Fatalf("failed to create GoAgent Redis client: %v", err)
+	}
+	sequencer := goagentstream.NewRedisSequencer(rdb)
+	eventStore := goagentstream.NewRedisEventStore(rdb, sequencer)
+
+	llmCfg := buildLLMConfigFromEnv()
+	provider, err := webapi.NewBifrost(llmCfg)
+	if err != nil {
+		log.Fatalf("failed to create LLM provider: %v", err)
+	}
+	log.Printf("LLM provider configured with %d provider(s)", len(llmCfg.Providers))
+
+	toolRegistry := toolkit.NewRegistry()
+	toolPipeline := &agenttool.Pipeline{Executor: toolRegistry}
+	toolExecutor := framework.NewToolPipeline(toolPipeline)
+
+	walClient, err := newRedisClientFromEnv()
+	if err != nil {
+		log.Fatalf("failed to create WAL Redis client: %v", err)
+	}
+	wal := pipeline.NewWriteAheadLog(walClient)
+
+	comp := compressor.New(compressor.Config{LLM: provider})
+
+	agentUC := agentuc.New(provider, toolExecutor, wal, comp, toolRegistry, nil)
+
+	return orchestration.NewAgentActivities(agentUC, eventStore, l), provider.Close
+}
+
+func buildRedisURLFromEnv() string {
+	host := getenv("REDIS_HOST", "")
+	port := getenv("REDIS_PORT", "6379")
+	password := strings.TrimSpace(os.Getenv("REDIS_PASSWORD"))
+	db := getenv("REDIS_DB", "0")
+	if host == "" {
+		return ""
+	}
+	if password != "" {
+		return fmt.Sprintf("redis://:%s@%s:%s/%s", password, host, port, db)
+	}
+	return fmt.Sprintf("redis://%s:%s/%s", host, port, db)
+}
+
+func newRedisClientFromEnv() (goredis.Cmdable, error) {
+	host := getenv("REDIS_HOST", "")
+	if host == "" {
+		return nil, fmt.Errorf("REDIS_HOST is required")
+	}
+	port := getenv("REDIS_PORT", "6379")
+	password := strings.TrimSpace(os.Getenv("REDIS_PASSWORD"))
+	dbStr := getenv("REDIS_DB", "0")
+	db := 0
+	fmt.Sscanf(dbStr, "%d", &db)
+
+	client := goredis.NewClient(&goredis.Options{
+		Addr:     host + ":" + port,
+		Password: password,
+		DB:       db,
+	})
+	if err := client.Ping(context.Background()).Err(); err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
+func buildLLMConfigFromEnv() *webapi.BifrostConfig {
+	provider := strings.TrimSpace(os.Getenv("LLM_PROVIDER"))
+	apiKey := strings.TrimSpace(os.Getenv("LLM_API_KEY"))
+	baseURL := strings.TrimSpace(os.Getenv("LLM_BASE_URL"))
+
+	if provider == "" || apiKey == "" {
+		log.Fatal("LLM_PROVIDER and LLM_API_KEY are required for GoAgent activities")
+	}
+
+	return &webapi.BifrostConfig{
+		Providers: []webapi.ProviderEntry{
+			{
+				Provider: schemas.ModelProvider(provider),
+				APIKey:   apiKey,
+				BaseURL:  baseURL,
+			},
+		},
 	}
 }
 
