@@ -11,7 +11,9 @@ import (
 	"testing"
 	"time"
 
-	v1stream "task-orchestrator/internal/controller/http/v1/stream"
+	"github.com/TekkenSteve/GoAgent/entity"
+
+	v1dto "task-orchestrator/internal/controller/http/v1/dto"
 	"task-orchestrator/internal/repo/persistence"
 	"task-orchestrator/internal/usecase"
 	ucdto "task-orchestrator/internal/usecase/dto"
@@ -95,7 +97,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 			},
 		}
 		runtime := &fakeCommandRuntime{runID: "run-with-default"}
-		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{"query":"hello"}
@@ -107,11 +109,16 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
 		}
-		if got := runtime.lastCmd.Input.Context.TemplateID; got != "tpl-default" {
+		agentInput := decodeAgentTaskInput(t, executor)
+		contextPayload, ok := agentInput["context"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected context payload, got %#v", agentInput["context"])
+		}
+		if got := contextPayload["template_id"]; got != "tpl-default" {
 			t.Fatalf("expected template_id resolved to tpl-default, got %q", got)
 		}
-		if got := runtime.lastCmd.Input.Context.TemplateVersion; got != 7 {
-			t.Fatalf("expected template_version resolved to 7, got %d", got)
+		if got := contextPayload["template_version"]; got != float64(7) {
+			t.Fatalf("expected template_version resolved to 7, got %#v", got)
 		}
 	})
 
@@ -155,7 +162,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 			},
 		}
 		runtime := &fakeCommandRuntime{runID: "run-2"}
-		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{"query":"hello","context":{"template_id":"tpl-1"}}
@@ -167,11 +174,14 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
 		}
-		if len(runtime.lastCmd.Input.FileIDs) != 1 || runtime.lastCmd.Input.FileIDs[0] != "file_hist_1" {
-			t.Fatalf("expected inherited file_ids to include file_hist_1, got %#v", runtime.lastCmd.Input.FileIDs)
+		agentInput := decodeAgentTaskInput(t, executor)
+		fileIDs, ok := agentInput["file_ids"].([]any)
+		if !ok || len(fileIDs) != 1 || fileIDs[0] != "file_hist_1" {
+			t.Fatalf("expected inherited file_ids to include file_hist_1, got %#v", agentInput["file_ids"])
 		}
-		if len(runtime.lastCmd.Input.EffectiveFileIDs) != 1 || runtime.lastCmd.Input.EffectiveFileIDs[0] != "file_hist_1" {
-			t.Fatalf("expected effective_file_ids to include file_hist_1, got %#v", runtime.lastCmd.Input.EffectiveFileIDs)
+		effectiveFileIDs, ok := agentInput["effective_file_ids"].([]any)
+		if !ok || len(effectiveFileIDs) != 1 || effectiveFileIDs[0] != "file_hist_1" {
+			t.Fatalf("expected effective_file_ids to include file_hist_1, got %#v", agentInput["effective_file_ids"])
 		}
 	})
 
@@ -188,7 +198,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 			},
 		}
 		runtime := &fakeCommandRuntime{runID: "run-explicit"}
-		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{
@@ -205,12 +215,18 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
 		}
-		if len(runtime.lastCmd.Input.EffectiveFileIDs) != 1 || runtime.lastCmd.Input.EffectiveFileIDs[0] != "file_explicit_1" {
-			t.Fatalf("expected explicit-only effective_file_ids, got %#v", runtime.lastCmd.Input.EffectiveFileIDs)
+		agentInput := decodeAgentTaskInput(t, executor)
+		effectiveFileIDs, ok := agentInput["effective_file_ids"].([]any)
+		if !ok || len(effectiveFileIDs) != 1 || effectiveFileIDs[0] != "file_explicit_1" {
+			t.Fatalf("expected explicit-only effective_file_ids, got %#v", agentInput["effective_file_ids"])
 		}
-		fileResolution, ok := runtime.lastCmd.Input.ContextEnvelope["file_resolution"].(map[string]any)
+		contextEnvelope, ok := agentInput["context_envelope"].(map[string]any)
 		if !ok {
-			t.Fatalf("expected file_resolution in context_envelope, got %#v", runtime.lastCmd.Input.ContextEnvelope)
+			t.Fatalf("expected context_envelope, got %#v", agentInput["context_envelope"])
+		}
+		fileResolution, ok := contextEnvelope["file_resolution"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected file_resolution in context_envelope, got %#v", contextEnvelope)
 		}
 		if fileResolution["policy"] != "explicit_only" {
 			t.Fatalf("expected policy explicit_only, got %#v", fileResolution["policy"])
@@ -230,7 +246,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 			},
 		}
 		runtime := &fakeCommandRuntime{runID: "run-exclude"}
-		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{
@@ -247,8 +263,10 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
 		}
-		if len(runtime.lastCmd.Input.EffectiveFileIDs) != 1 || runtime.lastCmd.Input.EffectiveFileIDs[0] != "file_hist_2" {
-			t.Fatalf("expected exclude result [file_hist_2], got %#v", runtime.lastCmd.Input.EffectiveFileIDs)
+		agentInput := decodeAgentTaskInput(t, executor)
+		effectiveFileIDs, ok := agentInput["effective_file_ids"].([]any)
+		if !ok || len(effectiveFileIDs) != 1 || effectiveFileIDs[0] != "file_hist_2" {
+			t.Fatalf("expected exclude result [file_hist_2], got %#v", agentInput["effective_file_ids"])
 		}
 	})
 
@@ -272,7 +290,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 			},
 		}
 		runtime := &fakeCommandRuntime{runID: "run-envelope"}
-		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{
@@ -288,18 +306,27 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
 		}
-		if runtime.lastCmd.Input.ContextEnvelope["schema_version"] != "context-envelope.v1" {
-			t.Fatalf("expected schema_version context-envelope.v1, got %#v", runtime.lastCmd.Input.ContextEnvelope["schema_version"])
-		}
-		artifacts, ok := runtime.lastCmd.Input.ContextEnvelope["artifacts"].(map[string]any)
+		agentInput := decodeAgentTaskInput(t, executor)
+		contextEnvelope, ok := agentInput["context_envelope"].(map[string]any)
 		if !ok {
-			t.Fatalf("expected artifacts section, got %#v", runtime.lastCmd.Input.ContextEnvelope["artifacts"])
+			t.Fatalf("expected context_envelope, got %#v", agentInput["context_envelope"])
 		}
-		files, ok := artifacts["files"].([]map[string]any)
+		if contextEnvelope["schema_version"] != "context-envelope.v1" {
+			t.Fatalf("expected schema_version context-envelope.v1, got %#v", contextEnvelope["schema_version"])
+		}
+		artifacts, ok := contextEnvelope["artifacts"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected artifacts section, got %#v", contextEnvelope["artifacts"])
+		}
+		files, ok := artifacts["files"].([]any)
 		if !ok {
 			t.Fatalf("expected artifacts.files []map[string]any, got %#v", artifacts["files"])
 		}
-		if len(files) != 1 || files[0]["file_id"] != "file_hist_9" {
+		if len(files) != 1 {
+			t.Fatalf("expected one artifact file, got %#v", files)
+		}
+		firstFile, ok := files[0].(map[string]any)
+		if !ok || firstFile["file_id"] != "file_hist_9" {
 			t.Fatalf("expected file_hist_9 in artifacts.files, got %#v", files)
 		}
 		response := map[string]any{}
@@ -315,7 +342,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 	t.Run("context_envelope compatibility normalizes malformed sections and preserves extensions", func(t *testing.T) {
 		readStore := &fakeReadModelStore{ready: true}
 		runtime := &fakeCommandRuntime{runID: "run-compat"}
-		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{
@@ -336,17 +363,22 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
 		}
-		if runtime.lastCmd.Input.ContextEnvelope["schema_version"] != "context-envelope.v1" {
-			t.Fatalf("expected normalized schema_version, got %#v", runtime.lastCmd.Input.ContextEnvelope["schema_version"])
+		agentInput := decodeAgentTaskInput(t, executor)
+		contextEnvelope, ok := agentInput["context_envelope"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected context_envelope, got %#v", agentInput["context_envelope"])
 		}
-		if _, ok := runtime.lastCmd.Input.ContextEnvelope["history"].(map[string]any); !ok {
-			t.Fatalf("expected normalized history map, got %#v", runtime.lastCmd.Input.ContextEnvelope["history"])
+		if contextEnvelope["schema_version"] != "context-envelope.v1" {
+			t.Fatalf("expected normalized schema_version, got %#v", contextEnvelope["schema_version"])
 		}
-		if _, ok := runtime.lastCmd.Input.ContextEnvelope["compatibility"].(map[string]any); !ok {
-			t.Fatalf("expected compatibility section, got %#v", runtime.lastCmd.Input.ContextEnvelope["compatibility"])
+		if _, ok := contextEnvelope["history"].(map[string]any); !ok {
+			t.Fatalf("expected normalized history map, got %#v", contextEnvelope["history"])
 		}
-		if _, ok := runtime.lastCmd.Input.ContextEnvelope["ext_hint"].(map[string]any); !ok {
-			t.Fatalf("expected ext_hint to be preserved, got %#v", runtime.lastCmd.Input.ContextEnvelope["ext_hint"])
+		if _, ok := contextEnvelope["compatibility"].(map[string]any); !ok {
+			t.Fatalf("expected compatibility section, got %#v", contextEnvelope["compatibility"])
+		}
+		if _, ok := contextEnvelope["ext_hint"].(map[string]any); !ok {
+			t.Fatalf("expected ext_hint to be preserved, got %#v", contextEnvelope["ext_hint"])
 		}
 	})
 
@@ -362,7 +394,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 			},
 		}
 		runtime := &fakeCommandRuntime{runID: "run-lifecycle"}
-		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{"query":"hello","context":{"template_id":"tpl-1"}}
@@ -374,9 +406,14 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if rr.Code != http.StatusCreated {
 			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
 		}
-		artifacts, ok := runtime.lastCmd.Input.ContextEnvelope["artifacts"].(map[string]any)
+		agentInput := decodeAgentTaskInput(t, executor)
+		contextEnvelope, ok := agentInput["context_envelope"].(map[string]any)
 		if !ok {
-			t.Fatalf("expected artifacts section, got %#v", runtime.lastCmd.Input.ContextEnvelope["artifacts"])
+			t.Fatalf("expected context_envelope, got %#v", agentInput["context_envelope"])
+		}
+		artifacts, ok := contextEnvelope["artifacts"].(map[string]any)
+		if !ok {
+			t.Fatalf("expected artifacts section, got %#v", contextEnvelope["artifacts"])
 		}
 		workspace, ok := artifacts["workspace"].(map[string]any)
 		if !ok {
@@ -537,17 +574,24 @@ func TestHandleTaskPlannerTrace(t *testing.T) {
 }
 
 func newCommandTestServer(store *fakeCommandStore, runtime *fakeCommandRuntime, temporalEnabled bool) *Server {
-	return newCommandTestServerWithReadStore(store, runtime, temporalEnabled, nil)
+	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, runtime, temporalEnabled, nil)
+	return s
 }
 
 func newCommandTestServerWithReadStore(store *fakeCommandStore, runtime *fakeCommandRuntime, temporalEnabled bool, readStore *fakeReadModelStore) *Server {
+	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, runtime, temporalEnabled, readStore)
+	return s
+}
+
+func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, runtime *fakeCommandRuntime, temporalEnabled bool, readStore *fakeReadModelStore) (*Server, *fakeAgentExecutor) {
 	if readStore == nil {
 		readStore = &fakeReadModelStore{ready: true}
 	}
 	repo := persistence.NewInMemoryTaskRepository()
 	publisher := persistence.NewInMemoryEventPublisher()
 	taskService := usecase.NewTaskService(repo, publisher, nil)
-	commandService := usecase.NewCommandService(taskService, store, runtime)
+	agentExecutor := &fakeAgentExecutor{runID: "agent-run-1"}
+	commandService := usecase.NewCommandService(taskService, store, agentExecutor, runtime)
 
 	enabled := &fakeWorkflowRuntime{enabled: temporalEnabled}
 	readModel := usecase.NewReadModelService(readStore)
@@ -557,23 +601,36 @@ func newCommandTestServerWithReadStore(store *fakeCommandStore, runtime *fakeCom
 		commandService:          commandService,
 		readModel:               readModel,
 		workflowSvc:             usecase.NewWorkflowService(enabled, &fakeReadModelStore{ready: true}),
+		defaultModelRef:         "test-model",
 		redisSvc:                &fakeRedisStreamClient{enabled: false},
 		timelineByWorkflow:      make(map[string][]TimelineEvent),
 		uploads:                 make(map[string]*uploadState),
-		subscribers:             make(map[string]map[int]chan v1stream.OutboundEvent),
+		subscribers:             make(map[string]map[int]chan v1dto.OutboundEvent),
 		streamReaders:           make(map[string]context.CancelFunc),
 		seenStreamIDs:           make(map[string]map[string]struct{}),
 		runSeqByRunID:           make(map[string]int64),
 		workflowRunByWorkflowID: make(map[string]string),
 	}
 	s.registerRoutes()
-	return s
+	return s, agentExecutor
 }
 
 func newJSONRequest(method, path, body string) *http.Request {
 	req := httptest.NewRequest(method, path, strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	return req
+}
+
+func decodeAgentTaskInput(t *testing.T, executor *fakeAgentExecutor) map[string]any {
+	t.Helper()
+	if executor.lastReq == nil {
+		t.Fatalf("expected agent executor request")
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(executor.lastReq.UserMessage), &payload); err != nil {
+		t.Fatalf("decode agent user message: %v; body=%s", err, executor.lastReq.UserMessage)
+	}
+	return payload
 }
 
 type fakeCommandStore struct {
@@ -598,6 +655,9 @@ func (f *fakeCommandStore) UpdateTaskStatus(ctx context.Context, taskID, status,
 	return nil
 }
 func (f *fakeCommandStore) ListSessionTasks(ctx context.Context, sessionID, userID string) ([]port.SessionTask, error) {
+	if len(f.sessionTasks) == 0 {
+		return []port.SessionTask{{TaskID: "task-1", Status: "running", TaskType: ucdto.TaskTypeMain}}, nil
+	}
 	return f.sessionTasks, nil
 }
 func (f *fakeCommandStore) EnsureSessionAccess(ctx context.Context, sessionID, userID string) error {
@@ -610,6 +670,26 @@ type fakeCommandRuntime struct {
 	signalErr error
 	cancelErr error
 	lastCmd   ucdto.CreateTaskCommand
+}
+
+type fakeAgentExecutor struct {
+	runID   string
+	lastReq *entity.ExecuteRequest
+	lastOp  entity.ControlOperation
+}
+
+func (f *fakeAgentExecutor) Execute(ctx context.Context, req *entity.ExecuteRequest) (entity.RunStatus, error) {
+	f.lastReq = req
+	runID := f.runID
+	if runID == "" {
+		runID = req.RunID
+	}
+	return entity.RunStatus{RunID: runID, LifecycleState: "created", UpdatedAt: time.Now().UTC()}, nil
+}
+
+func (f *fakeAgentExecutor) Control(ctx context.Context, runID string, op entity.ControlOperation) error {
+	f.lastOp = op
+	return nil
 }
 
 func (f *fakeCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd ucdto.CreateTaskCommand) (string, error) {

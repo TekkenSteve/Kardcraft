@@ -3,8 +3,6 @@ package usecase
 import (
 	"context"
 	"fmt"
-	"strings"
-	"time"
 
 	"task-orchestrator/internal/usecase/dto"
 	"task-orchestrator/internal/usecase/port"
@@ -46,45 +44,6 @@ func (s *WorkflowService) ResolveTaskSession(ctx context.Context, taskID string)
 		return "", fmt.Errorf("read model unavailable")
 	}
 	return s.store.GetTaskSession(ctx, taskID)
-}
-
-func (s *WorkflowService) ApplyTaskAction(ctx context.Context, taskID, action, reason, requestBy string) error {
-	if !s.Enabled() {
-		return fmt.Errorf("runtime unavailable")
-	}
-	action = strings.ToLower(strings.TrimSpace(action))
-	signal := dto.ControlSignal{
-		Reason:    reason,
-		RequestBy: requestBy,
-		Timestamp: time.Now().UTC(),
-	}
-	var status string
-	switch action {
-	case "pause":
-		if err := s.runtime.SignalWorkflow(ctx, taskID, "pause", signal); err != nil {
-			return err
-		}
-		status = "paused"
-	case "resume":
-		if err := s.runtime.SignalWorkflow(ctx, taskID, "resume", signal); err != nil {
-			return err
-		}
-		status = "running"
-	case "cancel":
-		if err := s.runtime.SignalWorkflow(ctx, taskID, "cancel", signal); err != nil {
-			return err
-		}
-		if err := s.runtime.CancelWorkflow(ctx, taskID); err != nil {
-			return err
-		}
-		status = "cancelled"
-	default:
-		return fmt.Errorf("unsupported action")
-	}
-	if s.store != nil {
-		_ = s.store.UpdateTaskStatus(ctx, taskID, status, "")
-	}
-	return nil
 }
 
 func (s *WorkflowService) QueryControlState(ctx context.Context, taskID string) (*WorkflowState, error) {

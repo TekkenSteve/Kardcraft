@@ -33,10 +33,11 @@ type TasksDeps struct {
 	NowRFC3339    func() string
 	UserID        func(r *http.Request) string
 
-	TaskService    *usecase.TaskService
-	CommandService *usecase.CommandService
-	ReadModel      *usecase.ReadModelService
-	WorkflowSvc    *usecase.WorkflowService
+	TaskService     *usecase.TaskService
+	CommandService  *usecase.CommandService
+	ReadModel       *usecase.ReadModelService
+	WorkflowSvc     *usecase.WorkflowService
+	DefaultModelRef string
 
 	IsTemporalEnabled          func() bool
 	NextWorkflowID             func(taskType string) string
@@ -125,9 +126,10 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 			return
 		}
 		var req struct {
-			TemplateID string         `json:"template_id"`
-			Variables  map[string]any `json:"variables"`
-			SessionID  string         `json:"session_id"`
+			TemplateID string                   `json:"template_id"`
+			Variables  map[string]any           `json:"variables"`
+			SessionID  string                   `json:"session_id"`
+			Config     httpdto.CreateTaskConfig `json:"config"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			http.Error(w, "invalid request body", http.StatusBadRequest)
@@ -171,7 +173,7 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 					"correlation_id": correlationID,
 				},
 			},
-			Config: ucdto.CreateTaskConfig{},
+			Config: ucdto.CreateTaskConfig{ModelRef: strings.TrimSpace(firstNonEmptyStringAny(req.Config.ModelRef, deps.DefaultModelRef))},
 			Metadata: ucdto.CreateTaskMetadata{
 				RequestID: correlationID,
 				Source:    "tasks/template",
@@ -337,7 +339,10 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 			TemplateID:          req.Input.TemplateID,
 			Variables:           req.Input.Variables,
 		},
-		Config: ucdto.CreateTaskConfig{ActivityTaskQueue: req.Config.ActivityTaskQueue},
+		Config: ucdto.CreateTaskConfig{
+			ActivityTaskQueue: req.Config.ActivityTaskQueue,
+			ModelRef:          strings.TrimSpace(firstNonEmptyStringAny(req.Config.ModelRef, deps.DefaultModelRef)),
+		},
 		Metadata: ucdto.CreateTaskMetadata{
 			RequestID: correlationID,
 			Source:    req.Metadata.Source,
@@ -401,15 +406,15 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 	}
 	deps.EnsureWorkflowStreamReader(workflowID)
 	deps.WriteJSON(w, http.StatusCreated, map[string]any{
-		"workflow_id": createResult.WorkflowID,
-		"run_id":      createResult.RunID,
-		"status":      createResult.Status,
-		"message":     "Task created and workflow started successfully",
-		"created_at":  deps.NowRFC3339(),
-		"stream_url":  fmt.Sprintf("/api/v1/stream/sse?workflow_id=%s", createResult.WorkflowID),
-		"session_id":  createResult.SessionID,
+		"workflow_id":    createResult.WorkflowID,
+		"run_id":         createResult.RunID,
+		"status":         createResult.Status,
+		"message":        "Task created and workflow started successfully",
+		"created_at":     deps.NowRFC3339(),
+		"stream_url":     fmt.Sprintf("/api/v1/stream/sse?workflow_id=%s", createResult.WorkflowID),
+		"session_id":     createResult.SessionID,
 		"correlation_id": correlationID,
-		"file_ids":    effectiveFileIDs,
+		"file_ids":       effectiveFileIDs,
 	})
 }
 
@@ -1050,10 +1055,10 @@ func normalizeConversationHistoryFromRequest(messages []entity.Message, maxMessa
 		if content == "" {
 			continue
 		}
-			normalized = append(normalized, entity.Message{
-				Role:    entity.MessageRole(role),
-				Content: content,
-			})
+		normalized = append(normalized, entity.Message{
+			Role:    entity.MessageRole(role),
+			Content: content,
+		})
 	}
 	if len(normalized) > maxMessages {
 		normalized = normalized[len(normalized)-maxMessages:]
@@ -1100,8 +1105,8 @@ func buildConversationHistoryFromSession(ctx context.Context, deps TasksDeps, se
 		if assistantContent == "" {
 			if text, _ := extractAssistantContentFromEvents(eventsByTask[taskID]); strings.TrimSpace(text) != "" {
 				assistantContent = strings.TrimSpace(text)
-				}
 			}
+		}
 		if assistantContent != "" {
 			messages = append(messages, entity.Message{
 				Role:    entity.RoleAssistant,
@@ -1266,11 +1271,26 @@ func handleTaskControl(w http.ResponseWriter, r *http.Request, taskID string, ac
 		Reason string `json:"reason"`
 	}
 	_ = json.NewDecoder(r.Body).Decode(&req)
+	if deps.CommandService == nil {
+		http.Error(w, "command service unavailable", http.StatusServiceUnavailable)
+		return
+	}
 	if deps.WorkflowSvc == nil || !deps.WorkflowSvc.Enabled() {
 		http.Error(w, "temporal not enabled", http.StatusServiceUnavailable)
 		return
 	}
-	err := deps.WorkflowSvc.ApplyTaskAction(r.Context(), taskID, action, req.Reason, userID)
+	sessionID, err := deps.WorkflowSvc.ResolveTaskSession(r.Context(), taskID)
+	if err != nil {
+		deps.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error(), "workflow_id": taskID})
+		return
+	}
+	_, err = deps.CommandService.ControlSession(r.Context(), usecase.SessionControlCommand{
+		SessionID: sessionID,
+		TaskID:    taskID,
+		UserID:    userID,
+		Action:    action,
+		Reason:    req.Reason,
+	})
 	if errors.Is(err, usecase.ErrInvalidTransition) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

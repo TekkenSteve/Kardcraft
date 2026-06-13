@@ -34,6 +34,7 @@ type CreateTaskInput struct {
 
 type CreateTaskConfig struct {
 	ActivityTaskQueue string
+	ModelRef          string
 }
 
 type CreateTaskMetadata struct {

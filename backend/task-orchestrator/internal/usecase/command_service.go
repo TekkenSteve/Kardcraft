@@ -2,10 +2,13 @@ package usecase
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/TekkenSteve/GoAgent/entity"
 
 	"task-orchestrator/internal/usecase/dto"
 	"task-orchestrator/internal/usecase/port"
@@ -26,6 +29,7 @@ type CreateTaskResult struct {
 
 type SessionControlCommand struct {
 	SessionID string
+	TaskID    string
 	UserID    string
 	Action    string
 	Reason    string
@@ -40,14 +44,15 @@ type SessionControlResult struct {
 }
 
 type CommandService struct {
-	tasks   *TaskService
-	store   port.CommandSessionStore
-	runtime port.CommandRuntime
-	now     func() time.Time
+	tasks    *TaskService
+	store    port.CommandSessionStore
+	executor port.AgentExecutor
+	runtime  port.CommandRuntime
+	now      func() time.Time
 }
 
-func NewCommandService(tasks *TaskService, store port.CommandSessionStore, runtime port.CommandRuntime) *CommandService {
-	return &CommandService{tasks: tasks, store: store, runtime: runtime, now: time.Now}
+func NewCommandService(tasks *TaskService, store port.CommandSessionStore, agentExecutor port.AgentExecutor, runtime port.CommandRuntime) *CommandService {
+	return &CommandService{tasks: tasks, store: store, executor: agentExecutor, runtime: runtime, now: time.Now}
 }
 
 func (s *CommandService) CreateTaskInSession(ctx context.Context, cmd dto.CreateTaskCommand) (*CreateTaskResult, string, error) {
@@ -81,7 +86,7 @@ func (s *CommandService) CreateTaskInSession(ctx context.Context, cmd dto.Create
 		return nil, "", err
 	}
 
-	runID, err := s.runtime.StartTaskWorkflow(ctx, cmd)
+	runID, err := s.startWorkflow(ctx, cmd)
 	if err != nil {
 		_ = s.store.UpdateTaskStatus(ctx, cmd.TaskID, "failed", err.Error())
 		return nil, "", err
@@ -95,6 +100,75 @@ func (s *CommandService) CreateTaskInSession(ctx context.Context, cmd dto.Create
 	}, "", nil
 }
 
+func (s *CommandService) startWorkflow(ctx context.Context, cmd dto.CreateTaskCommand) (string, error) {
+	taskType := strings.ToLower(strings.TrimSpace(cmd.TaskType))
+	if taskType == "card_template" {
+		return s.runtime.StartTaskWorkflow(ctx, cmd)
+	}
+	if s.executor == nil {
+		return "", fmt.Errorf("goagent executor is required for main task execution")
+	}
+	modelRef := strings.TrimSpace(cmd.Config.ModelRef)
+	if modelRef == "" {
+		return "", fmt.Errorf("model_ref is required for main task execution")
+	}
+	userMessage, err := buildAgentUserMessage(cmd)
+	if err != nil {
+		return "", err
+	}
+	status, err := s.executor.Execute(ctx, &entity.ExecuteRequest{
+		RunID:          cmd.TaskID,
+		ThreadID:       cmd.SessionID,
+		AccountID:      cmd.UserID,
+		ModelRef:       modelRef,
+		SystemPrompt:   systemPromptFromCommand(cmd),
+		UserMessage:    userMessage,
+		IdempotencyKey: strings.TrimSpace(cmd.Metadata.RequestID),
+		RequestedAt:    s.now().UTC(),
+	})
+	if err != nil {
+		return "", err
+	}
+	return status.RunID, nil
+}
+
+func buildAgentUserMessage(cmd dto.CreateTaskCommand) (string, error) {
+	payload := map[string]any{
+		"schema_version":       "kardcraft.task.input.v1",
+		"task_id":              strings.TrimSpace(cmd.TaskID),
+		"task_type":            strings.TrimSpace(cmd.TaskType),
+		"session_id":           strings.TrimSpace(cmd.SessionID),
+		"query":                strings.TrimSpace(cmd.Input.Query),
+		"conversation_history": cmd.Input.ConversationHistory,
+		"context": map[string]any{
+			"template_id":      strings.TrimSpace(cmd.Input.Context.TemplateID),
+			"template_version": cmd.Input.Context.TemplateVersion,
+			"template_profile": strings.TrimSpace(cmd.Input.Context.TemplateProfile),
+		},
+		"file_policy":        strings.TrimSpace(cmd.Input.FilePolicy),
+		"file_ids":           cmd.Input.FileIDs,
+		"effective_file_ids": cmd.Input.EffectiveFileIDs,
+		"context_envelope":   cmd.Input.ContextEnvelope,
+		"target_count":       cmd.Input.TargetCount,
+		"difficulty_level":   strings.TrimSpace(cmd.Input.DifficultyLevel),
+		"template_id":        strings.TrimSpace(cmd.Input.TemplateID),
+		"variables":          cmd.Input.Variables,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("marshal agent task input: %w", err)
+	}
+	return string(body), nil
+}
+
+func systemPromptFromCommand(cmd dto.CreateTaskCommand) string {
+	templateID := strings.TrimSpace(cmd.Input.Context.TemplateID)
+	if templateID == "" {
+		return ""
+	}
+	return fmt.Sprintf("Use Kardcraft template %s to help the user produce study-card content.", templateID)
+}
+
 func (s *CommandService) ControlSession(ctx context.Context, cmd SessionControlCommand) (*SessionControlResult, error) {
 	if err := s.store.EnsureSessionAccess(ctx, cmd.SessionID, cmd.UserID); err != nil {
 		return nil, err
@@ -103,10 +177,11 @@ func (s *CommandService) ControlSession(ctx context.Context, cmd SessionControlC
 	if err != nil {
 		return nil, err
 	}
-	taskID, state, ok := resolveActiveTask(tasks)
+	taskID, state, ok := resolveControlTask(tasks, cmd.TaskID)
 	if !ok {
 		return nil, ErrNoActiveTask
 	}
+	taskType := resolveTaskType(tasks, taskID)
 	action := strings.ToLower(strings.TrimSpace(cmd.Action))
 	if err := validateTransition(action, state); err != nil {
 		return nil, err
@@ -118,23 +193,25 @@ func (s *CommandService) ControlSession(ctx context.Context, cmd SessionControlC
 	}
 	switch action {
 	case "pause":
-		if err := s.runtime.SignalWorkflow(ctx, taskID, "pause", signalPayload); err != nil {
+		if err := s.controlWorkflow(ctx, taskID, taskType, entity.ControlPause, signalPayload); err != nil {
 			return nil, err
 		}
 		_ = s.store.UpdateTaskStatus(ctx, taskID, "paused", "")
 		state = "PAUSED"
 	case "resume":
-		if err := s.runtime.SignalWorkflow(ctx, taskID, "resume", signalPayload); err != nil {
+		if err := s.controlWorkflow(ctx, taskID, taskType, entity.ControlResume, signalPayload); err != nil {
 			return nil, err
 		}
 		_ = s.store.UpdateTaskStatus(ctx, taskID, "running", "")
 		state = "RUNNING"
 	case "cancel":
-		if err := s.runtime.SignalWorkflow(ctx, taskID, "cancel", signalPayload); err != nil {
+		if err := s.controlWorkflow(ctx, taskID, taskType, entity.ControlCancel, signalPayload); err != nil {
 			return nil, err
 		}
-		if err := s.runtime.CancelWorkflow(ctx, taskID); err != nil {
-			return nil, err
+		if strings.EqualFold(taskType, dto.TaskTypeCardTemplate) {
+			if err := s.runtime.CancelWorkflow(ctx, taskID); err != nil {
+				return nil, err
+			}
 		}
 		state = "TERMINATING"
 	default:
@@ -148,6 +225,16 @@ func (s *CommandService) ControlSession(ctx context.Context, cmd SessionControlC
 		SessionControlState: controlStateFromTaskState(state),
 		Accepted:            action == "cancel",
 	}, nil
+}
+
+func (s *CommandService) controlWorkflow(ctx context.Context, taskID, taskType string, op entity.ControlOperation, signal dto.ControlSignal) error {
+	if !strings.EqualFold(taskType, dto.TaskTypeCardTemplate) {
+		if s.executor == nil {
+			return fmt.Errorf("goagent executor is required for main task control")
+		}
+		return s.executor.Control(ctx, taskID, op)
+	}
+	return s.runtime.SignalWorkflow(ctx, taskID, string(op), signal)
 }
 
 func validateTransition(action, state string) error {
@@ -181,6 +268,19 @@ func resolveActiveTask(tasks []port.SessionTask) (string, string, bool) {
 	return "", "", false
 }
 
+func resolveControlTask(tasks []port.SessionTask, requestedTaskID string) (string, string, bool) {
+	taskID := strings.TrimSpace(requestedTaskID)
+	if taskID == "" {
+		return resolveActiveTask(tasks)
+	}
+	for _, t := range tasks {
+		if t.TaskID == taskID {
+			return taskID, normalizeTaskStateForControl(t.Status), true
+		}
+	}
+	return "", "", false
+}
+
 func resolveActiveTaskID(tasks []port.SessionTask) (string, bool) {
 	for i := len(tasks) - 1; i >= 0; i-- {
 		st := strings.ToLower(strings.TrimSpace(tasks[i].Status))
@@ -189,6 +289,15 @@ func resolveActiveTaskID(tasks []port.SessionTask) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func resolveTaskType(tasks []port.SessionTask, taskID string) string {
+	for _, t := range tasks {
+		if t.TaskID == taskID {
+			return strings.TrimSpace(t.TaskType)
+		}
+	}
+	return ""
 }
 
 func normalizeTaskStateForControl(status string) string {

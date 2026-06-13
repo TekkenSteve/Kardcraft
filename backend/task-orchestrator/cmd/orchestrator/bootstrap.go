@@ -13,8 +13,11 @@ import (
 	goredis "github.com/redis/go-redis/v9"
 	tclient "go.temporal.io/sdk/client"
 
+	"github.com/TekkenSteve/GoAgent/agentfw/config"
 	goagentredis "github.com/TekkenSteve/GoAgent/pkg/redis"
+	"github.com/TekkenSteve/GoAgent/repo/persistent"
 	goagentstream "github.com/TekkenSteve/GoAgent/repo/stream"
+	"github.com/TekkenSteve/GoAgent/usecase/executor"
 
 	httpserver "task-orchestrator/internal/controller/http/v1"
 	v1adapters "task-orchestrator/internal/controller/http/v1/adapters"
@@ -83,9 +86,14 @@ func buildServerFromEnv() *httpserver.Server {
 
 	var commandSvc *usecase.CommandService
 	if temporalClient != nil {
+		executorTemporal := persistent.NewExecutorTemporal(temporalClient, config.Temporal{
+			TaskQueue: taskQueue,
+		})
+		agentExecutor := executor.New(executorTemporal)
 		commandSvc = usecase.NewCommandService(
 			taskService,
 			v1adapters.NewCommandSessionStore(sessionStore),
+			agentExecutor,
 			v1adapters.NewTemporalCommandRuntime(temporalClient, taskQueue),
 		)
 	}
@@ -99,13 +107,14 @@ func buildServerFromEnv() *httpserver.Server {
 	}
 
 	srv := httpserver.NewServer(defaultPortFromEnv(), httpserver.ServerDependencies{
-		HTTPClient:     &http.Client{Timeout: 5 * time.Second},
-		AnkiRuntimeURL: strings.TrimSpace(os.Getenv("ANKI_RUNTIME_URL")),
-		TaskService:    taskService,
-		CommandService: commandSvc,
-		ReadModel:      readModel,
-		WorkflowSvc:    workflowSvc,
-		SessionStore:   sessionStore,
+		HTTPClient:       &http.Client{Timeout: 5 * time.Second},
+		AnkiRuntimeURL:   strings.TrimSpace(os.Getenv("ANKI_RUNTIME_URL")),
+		TaskService:      taskService,
+		CommandService:   commandSvc,
+		ReadModel:        readModel,
+		WorkflowSvc:      workflowSvc,
+		SessionStore:     sessionStore,
+		DefaultModelRef:  strings.TrimSpace(os.Getenv("GOAGENT_MODEL_REF")),
 		RedisSvc:         streamClient,
 		StreamSubscriber: goagentSubscriber,
 		StreamGateway:    goagentGateway,

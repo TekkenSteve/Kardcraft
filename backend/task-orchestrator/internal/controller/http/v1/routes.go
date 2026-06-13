@@ -22,6 +22,7 @@ func (s *Server) registerTaskRoutes() {
 		CommandService:             s.commandService,
 		ReadModel:                  s.readModel,
 		WorkflowSvc:                s.workflowSvc,
+		DefaultModelRef:            s.defaultModelRef,
 		IsTemporalEnabled:          s.isTemporalEnabled,
 		NextWorkflowID:             s.nextWorkflowID,
 		EnsureWorkflowStreamReader: s.ensureWorkflowStreamReader,
@@ -85,15 +86,15 @@ func (s *Server) registerTaskRoutes() {
 				payload := map[string]any{
 					"schema_version": 1,
 					"correlation_id": correlationID,
-					"event_id":    fmt.Sprintf("%d", ev.ID),
-					"event_type":  ev.Type,
-					"workflow_id": ev.WorkflowID,
-					"run_id":      ev.RunID,
-					"session_id":  ev.SessionID,
-					"seq":         ev.Seq,
-					"occurred_at": ev.Timestamp,
-					"stream_id":   ev.StreamID,
-					"payload":     ev.Payload,
+					"event_id":       fmt.Sprintf("%d", ev.ID),
+					"event_type":     ev.Type,
+					"workflow_id":    ev.WorkflowID,
+					"run_id":         ev.RunID,
+					"session_id":     ev.SessionID,
+					"seq":            ev.Seq,
+					"occurred_at":    ev.Timestamp,
+					"stream_id":      ev.StreamID,
+					"payload":        ev.Payload,
 				}
 				out = append(out, payload)
 			}

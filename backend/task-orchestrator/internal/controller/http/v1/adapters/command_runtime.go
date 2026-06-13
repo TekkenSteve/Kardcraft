@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/TekkenSteve/GoAgent/agentfw/orchestration"
-	"github.com/TekkenSteve/GoAgent/entity"
 	tclient "go.temporal.io/sdk/client"
 
 	"task-orchestrator/internal/repo/persistence"
@@ -43,7 +42,11 @@ func (s commandSessionStore) ListSessionTasks(ctx context.Context, sessionID, us
 		if row.Status != nil {
 			status = strings.TrimSpace(*row.Status)
 		}
-		out = append(out, port.SessionTask{TaskID: row.TaskID, Status: status})
+		taskType := ""
+		if row.TaskType != nil {
+			taskType = strings.TrimSpace(*row.TaskType)
+		}
+		out = append(out, port.SessionTask{TaskID: row.TaskID, Status: status, TaskType: taskType})
 	}
 	return out, nil
 }
@@ -78,7 +81,7 @@ func (r temporalCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd dto.C
 	if strings.EqualFold(taskType, string(workflows.TaskTypeCardTemplate)) {
 		return r.startCardTemplateWorkflow(ctx, cmd, opts)
 	}
-	return r.startOrchestrationWorkflow(ctx, cmd, opts)
+	return "", fmt.Errorf("unsupported task_type for temporal command runtime: %s", taskType)
 }
 
 func (r temporalCommandRuntime) startCardTemplateWorkflow(ctx context.Context, cmd dto.CreateTaskCommand, opts tclient.StartWorkflowOptions) (string, error) {
@@ -112,25 +115,6 @@ func (r temporalCommandRuntime) startCardTemplateWorkflow(ctx context.Context, c
 	wr, err := r.client.ExecuteWorkflow(ctx, opts, workflows.TaskWorkflow, payload)
 	if err != nil {
 		return "", fmt.Errorf("failed to start card template workflow: %w", err)
-	}
-	return wr.GetRunID(), nil
-}
-
-func (r temporalCommandRuntime) startOrchestrationWorkflow(ctx context.Context, cmd dto.CreateTaskCommand, opts tclient.StartWorkflowOptions) (string, error) {
-	input := &entity.OrchestrationInput{
-		RunID:   cmd.TaskID,
-		Message: cmd.Input.Query,
-		Steps: []entity.Step{{
-			ID:     "main",
-			Type:   entity.StepAgent,
-			Name:   "main",
-			Input:  map[string]any{"message": cmd.Input.Query},
-			Status: entity.StepPending,
-		}},
-	}
-	wr, err := r.client.ExecuteWorkflow(ctx, opts, orchestration.OrchestrationWorkflowName, input)
-	if err != nil {
-		return "", fmt.Errorf("failed to start orchestration workflow: %w", err)
 	}
 	return wr.GetRunID(), nil
 }

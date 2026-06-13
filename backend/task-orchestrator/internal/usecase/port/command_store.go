@@ -1,10 +1,15 @@
 package port
 
-import "context"
+import (
+	"context"
+
+	"github.com/TekkenSteve/GoAgent/entity"
+)
 
 type SessionTask struct {
-	TaskID string
-	Status string
+	TaskID   string
+	Status   string
+	TaskType string
 }
 
 type CommandSessionStore interface {
@@ -13,4 +18,9 @@ type CommandSessionStore interface {
 	ListSessionTasks(ctx context.Context, sessionID, userID string) ([]SessionTask, error)
 	UpdateTaskStatus(ctx context.Context, taskID, status, errMsg string) error
 	EnsureSessionAccess(ctx context.Context, sessionID, userID string) error
+}
+
+type AgentExecutor interface {
+	Execute(ctx context.Context, req *entity.ExecuteRequest) (entity.RunStatus, error)
+	Control(ctx context.Context, runID string, op entity.ControlOperation) error
 }
