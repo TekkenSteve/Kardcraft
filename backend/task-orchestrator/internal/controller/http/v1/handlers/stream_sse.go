@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	v1stream "task-orchestrator/internal/controller/http/v1/stream"
+	v1dto "task-orchestrator/internal/controller/http/v1/dto"
 )
 
 type SSEDeps struct {
@@ -20,7 +20,7 @@ type SSEDeps struct {
 	Authorize     func(r *http.Request, userID, workflowID string) bool
 	NowRFC3339    func() string
 
-	Subscribe                  func(workflowID string) (int, chan v1stream.OutboundEvent)
+	Subscribe                  func(workflowID string) (int, chan v1dto.OutboundEvent)
 	Unsubscribe                func(workflowID string, subscriberID int)
 	EnsureWorkflowStreamReader func(workflowID string)
 	Backlog                    func(workflowID string, afterEventID int64) []map[string]any
@@ -65,7 +65,7 @@ func NewSSEHandler(deps SSEDeps) http.HandlerFunc {
 		type subscription struct {
 			workflowID string
 			id         int
-			events     chan v1stream.OutboundEvent
+			events     chan v1dto.OutboundEvent
 		}
 		subscriptions := make([]subscription, 0, len(workflowIDs))
 		for _, workflowID := range workflowIDs {
@@ -127,12 +127,12 @@ func NewSSEHandler(deps SSEDeps) http.HandlerFunc {
 		flusher.Flush()
 
 		ctx := r.Context()
-		merged := make(chan v1stream.OutboundEvent, 256)
+		merged := make(chan v1dto.OutboundEvent, 256)
 		mergeCtx, mergeCancel := context.WithCancel(ctx)
 		var wg sync.WaitGroup
 		for _, sub := range subscriptions {
 			wg.Add(1)
-			go func(ch chan v1stream.OutboundEvent) {
+			go func(ch chan v1dto.OutboundEvent) {
 				defer wg.Done()
 				for {
 					select {

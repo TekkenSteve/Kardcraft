@@ -1,10 +1,6 @@
 package adapters
 
 import (
-	"context"
-	"time"
-
-	v1stream "task-orchestrator/internal/controller/http/v1/stream"
 	redissvc "task-orchestrator/internal/repo/redis"
 )
 
@@ -18,35 +14,6 @@ func NewRedisStreamClient(svc *redissvc.Service) *RedisStreamClient {
 
 func (c *RedisStreamClient) Enabled() bool {
 	return c != nil && c.svc != nil && c.svc.Enabled()
-}
-
-func (c *RedisStreamClient) StreamRead(
-	ctx context.Context,
-	workflowID,
-	fromID string,
-	count int64,
-	block time.Duration,
-) ([]v1stream.Entry, string, error) {
-	rows, nextID, err := c.svc.StreamRead(ctx, workflowID, fromID, count, block)
-	if err != nil {
-		return nil, nextID, err
-	}
-	out := make([]v1stream.Entry, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, v1stream.Entry{
-			ID:     row.ID,
-			Values: row.Values,
-		})
-	}
-	return out, nextID, nil
-}
-
-func (c *RedisStreamClient) GetCheckpoint(ctx context.Context, workflowID string) (string, error) {
-	return c.svc.GetCheckpoint(ctx, workflowID)
-}
-
-func (c *RedisStreamClient) SetCheckpoint(ctx context.Context, workflowID, streamID string) error {
-	return c.svc.SetCheckpoint(ctx, workflowID, streamID)
 }
 
 func (c *RedisStreamClient) Stats() map[string]any {

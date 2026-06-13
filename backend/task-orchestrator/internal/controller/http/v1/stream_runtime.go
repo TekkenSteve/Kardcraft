@@ -9,7 +9,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	v1stream "task-orchestrator/internal/controller/http/v1/stream"
+	v1dto "task-orchestrator/internal/controller/http/v1/dto"
 	"task-orchestrator/internal/usecase"
 )
 
@@ -34,7 +34,6 @@ func (s *Server) appendTimelineWithStreamID(workflowID, sessionID, eventType, me
 	}
 	streamSet[streamID] = struct{}{}
 	if len(streamSet) > 4000 {
-		// Keep memory bounded; stale ids are acceptable to evict.
 		s.seenStreamIDs[workflowID] = map[string]struct{}{streamID: {}}
 	}
 	s.mu.Unlock()
@@ -99,14 +98,14 @@ func (s *Server) appendTimelineWithStreamID(workflowID, sessionID, eventType, me
 		"schema_version": 1,
 		"correlation_id": correlationID,
 		"event_id":       fmt.Sprintf("%d", eventID),
-		"run_id":      runID,
-		"workflow_id": workflowID,
-		"session_id":  sessionID,
-		"seq":         seq,
-		"occurred_at": occurredAt,
-		"event_type":  eventType,
-		"stream_id":   streamID,
-		"payload":     payloadMap,
+		"run_id":         runID,
+		"workflow_id":    workflowID,
+		"session_id":     sessionID,
+		"seq":            seq,
+		"occurred_at":    occurredAt,
+		"event_type":     eventType,
+		"stream_id":      streamID,
+		"payload":        payloadMap,
 	}
 	payloadText := ""
 	if b, err := json.Marshal(envelope); err == nil {
@@ -131,7 +130,7 @@ func (s *Server) appendTimelineWithStreamID(workflowID, sessionID, eventType, me
 	if len(s.timelineByWorkflow[workflowID]) > maxTimelineEventsInMemory {
 		s.timelineByWorkflow[workflowID] = append([]TimelineEvent(nil), s.timelineByWorkflow[workflowID][len(s.timelineByWorkflow[workflowID])-maxTimelineEventsInMemory:]...)
 	}
-	subs := make([]chan v1stream.OutboundEvent, 0)
+	subs := make([]chan v1dto.OutboundEvent, 0)
 	if byWorkflow, ok := s.subscribers[workflowID]; ok {
 		for _, ch := range byWorkflow {
 			subs = append(subs, ch)
@@ -147,6 +146,7 @@ func (s *Server) appendTimelineWithStreamID(workflowID, sessionID, eventType, me
 		"workflow_id":    workflowID,
 		"run_id":         runID,
 		"session_id":     sessionID,
+		"seq":            seq,
 		"occurred_at":    occurredAt,
 		"stream_id":      ev.StreamID,
 		"payload":        payloadMap,
@@ -154,7 +154,7 @@ func (s *Server) appendTimelineWithStreamID(workflowID, sessionID, eventType, me
 	buf, _ := json.Marshal(sseBody)
 	for _, ch := range subs {
 		select {
-		case ch <- v1stream.OutboundEvent{ID: ev.ID, Event: eventType, Payload: buf}:
+		case ch <- v1dto.OutboundEvent{ID: ev.ID, Event: eventType, Payload: buf}:
 		default:
 		}
 	}
@@ -259,15 +259,15 @@ func runIDFromPayload(payload any) string {
 	return ""
 }
 
-func (s *Server) subscribe(workflowID string) (int, chan v1stream.OutboundEvent) {
+func (s *Server) subscribe(workflowID string) (int, chan v1dto.OutboundEvent) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.subscriberSeq++
 	id := s.subscriberSeq
 	if _, ok := s.subscribers[workflowID]; !ok {
-		s.subscribers[workflowID] = make(map[int]chan v1stream.OutboundEvent)
+		s.subscribers[workflowID] = make(map[int]chan v1dto.OutboundEvent)
 	}
-	ch := make(chan v1stream.OutboundEvent, 128)
+	ch := make(chan v1dto.OutboundEvent, 128)
 	s.subscribers[workflowID][id] = ch
 	return id, ch
 }
@@ -287,7 +287,7 @@ func (s *Server) unsubscribe(workflowID string, subscriberID int) {
 }
 
 func (s *Server) ensureWorkflowStreamReader(workflowID string) {
-	if s.redisSvc == nil || !s.redisSvc.Enabled() {
+	if s.streamSubscriber == nil {
 		return
 	}
 	s.mu.Lock()
@@ -307,7 +307,7 @@ func (s *Server) ensureWorkflowStreamReader(workflowID string) {
 			}
 			s.mu.Unlock()
 		}()
-		s.subscribeRedisStream(ctx, workflowID)
+		s.subscribeGoAgentStream(ctx, workflowID)
 	}()
 }
 
@@ -322,14 +322,6 @@ func (s *Server) stopWorkflowStreamReader(workflowID string) {
 	if ok {
 		cancel()
 	}
-}
-
-func (s *Server) subscribeRedisStream(ctx context.Context, workflowID string) {
-	if s.streamSubscriber != nil {
-		s.subscribeGoAgentStream(ctx, workflowID)
-		return
-	}
-	s.subscribeLegacyRedisStream(ctx, workflowID)
 }
 
 func (s *Server) subscribeGoAgentStream(ctx context.Context, workflowID string) {
@@ -347,7 +339,7 @@ func (s *Server) subscribeGoAgentStream(ctx context.Context, workflowID string) 
 	}
 	defer sub.Close()
 
-	usageProjector := v1stream.NewUsageProjector(
+	usageProjector := NewUsageProjector(
 		func(ctx context.Context, row usecase.UsageLedgerRow) (bool, error) {
 			if s.readModel == nil {
 				return false, nil
@@ -393,7 +385,7 @@ func (s *Server) subscribeGoAgentStream(ctx context.Context, workflowID string) 
 				"sequence":    stored.Sequence,
 			}
 
-			normalized := v1stream.NormalizedEvent{
+			normalized := v1dto.NormalizedEvent{
 				WorkflowID: workflowID,
 				SessionID:  evSessionID,
 				TaskID:     workflowID,
@@ -412,62 +404,5 @@ func (s *Server) subscribeGoAgentStream(ctx context.Context, workflowID string) 
 				payload,
 			)
 		}
-	}
-}
-
-func (s *Server) subscribeLegacyRedisStream(ctx context.Context, workflowID string) {
-	reader := v1stream.NewReader(s.redisSvc, 32, 5*time.Second, log.Printf)
-	if !reader.Enabled() {
-		return
-	}
-
-	normalizer := v1stream.NewNormalizer(func(ctx context.Context, taskID string) (string, error) {
-		if s.readModel == nil {
-			return "", nil
-		}
-		return s.readModel.GetTaskSession(ctx, taskID)
-	})
-	usageProjector := v1stream.NewUsageProjector(
-		func(ctx context.Context, row usecase.UsageLedgerRow) (bool, error) {
-			if s.readModel == nil {
-				return false, nil
-			}
-			return s.readModel.InsertLLMUsage(ctx, row)
-		},
-		log.Printf,
-		func() { atomic.AddInt64(&s.llmUsageIngested, 1) },
-		func() { atomic.AddInt64(&s.llmUsageDeduped, 1) },
-		func() { atomic.AddInt64(&s.llmUsageFailed, 1) },
-		func() { atomic.AddInt64(&s.llmUsageInvalid, 1) },
-	)
-
-	lastID := reader.StartFrom(ctx, workflowID)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-		entries, nextID, err := reader.Read(ctx, workflowID, lastID)
-		if err != nil {
-			return
-		}
-		lastID = nextID
-		for _, msg := range entries {
-			normalized := normalizer.Normalize(ctx, workflowID, msg)
-			if runID := runIDFromPayload(normalized.Payload); runID != "" {
-				s.bindWorkflowRunID(normalized.WorkflowID, runID)
-			}
-			usageProjector.Project(ctx, normalized)
-			s.appendTimelineWithStreamID(
-				normalized.WorkflowID,
-				normalized.SessionID,
-				normalized.EventType,
-				normalized.Message,
-				normalized.StreamID,
-				normalized.Payload,
-			)
-		}
-		reader.SaveCheckpoint(ctx, workflowID, strings.TrimSpace(lastID))
 	}
 }

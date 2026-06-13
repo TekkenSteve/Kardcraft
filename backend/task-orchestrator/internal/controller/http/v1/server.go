@@ -13,8 +13,8 @@ import (
 
 	goagentstream "github.com/TekkenSteve/GoAgent/repo/stream"
 
+	v1dto "task-orchestrator/internal/controller/http/v1/dto"
 	v1middleware "task-orchestrator/internal/controller/http/v1/middleware"
-	v1stream "task-orchestrator/internal/controller/http/v1/stream"
 	v1support "task-orchestrator/internal/controller/http/v1/support"
 	"task-orchestrator/internal/entity/task"
 	"task-orchestrator/internal/usecase"
@@ -24,9 +24,6 @@ const maxTimelineEventsInMemory = 500
 
 type redisStreamClient interface {
 	Enabled() bool
-	StreamRead(ctx context.Context, workflowID, fromID string, count int64, block time.Duration) ([]v1stream.Entry, string, error)
-	GetCheckpoint(ctx context.Context, workflowID string) (string, error)
-	SetCheckpoint(ctx context.Context, workflowID, streamID string) error
 	Stats() map[string]any
 }
 
@@ -97,28 +94,29 @@ type uploadState struct {
 }
 
 type Server struct {
-	port           int
-	httpServer     *http.Server
-	mux            *http.ServeMux
-	httpClient     *http.Client
-	ankiRuntimeURL string
-	bgCancel       context.CancelFunc
-	closeFuncs     []func()
-	redisSvc          redisStreamClient
-	streamSubscriber  *goagentstream.RedisSubscriber
-	streamGateway     *goagentstream.SSEGateway
+	port             int
+	httpServer       *http.Server
+	mux              *http.ServeMux
+	httpClient       *http.Client
+	ankiRuntimeURL   string
+	bgCancel         context.CancelFunc
+	closeFuncs       []func()
+	redisSvc         redisStreamClient
+	streamSubscriber *goagentstream.RedisSubscriber
+	streamGateway    *goagentstream.SSEGateway
 
-	taskService    *usecase.TaskService
-	commandService *usecase.CommandService
-	readModel      *usecase.ReadModelService
-	workflowSvc    *usecase.WorkflowService
-	sessionStore   sessionLifecycleStore
+	taskService     *usecase.TaskService
+	commandService  *usecase.CommandService
+	readModel       *usecase.ReadModelService
+	workflowSvc     *usecase.WorkflowService
+	sessionStore    sessionLifecycleStore
+	defaultModelRef string
 
 	mu                 sync.RWMutex
 	timelineByWorkflow map[string][]TimelineEvent
 	uploads            map[string]*uploadState
 
-	subscribers             map[string]map[int]chan v1stream.OutboundEvent
+	subscribers             map[string]map[int]chan v1dto.OutboundEvent
 	streamReaders           map[string]context.CancelFunc
 	subscriberSeq           int
 	eventSeq                int64
@@ -137,14 +135,15 @@ type ServerDependencies struct {
 	HTTPClient     *http.Client
 	AnkiRuntimeURL string
 
-	TaskService    *usecase.TaskService
-	CommandService *usecase.CommandService
-	ReadModel      *usecase.ReadModelService
-	WorkflowSvc    *usecase.WorkflowService
-	SessionStore      sessionLifecycleStore
-	RedisSvc          redisStreamClient
-	StreamSubscriber  *goagentstream.RedisSubscriber
-	StreamGateway     *goagentstream.SSEGateway
+	TaskService      *usecase.TaskService
+	CommandService   *usecase.CommandService
+	ReadModel        *usecase.ReadModelService
+	WorkflowSvc      *usecase.WorkflowService
+	SessionStore     sessionLifecycleStore
+	DefaultModelRef  string
+	RedisSvc         redisStreamClient
+	StreamSubscriber *goagentstream.RedisSubscriber
+	StreamGateway    *goagentstream.SSEGateway
 
 	CloseFuncs []func()
 }
@@ -175,9 +174,10 @@ func NewServer(port int, deps ServerDependencies) *Server {
 		readModel:               deps.ReadModel,
 		workflowSvc:             deps.WorkflowSvc,
 		sessionStore:            deps.SessionStore,
+		defaultModelRef:         strings.TrimSpace(deps.DefaultModelRef),
 		timelineByWorkflow:      make(map[string][]TimelineEvent),
 		uploads:                 make(map[string]*uploadState),
-		subscribers:             make(map[string]map[int]chan v1stream.OutboundEvent),
+		subscribers:             make(map[string]map[int]chan v1dto.OutboundEvent),
 		streamReaders:           make(map[string]context.CancelFunc),
 		seenStreamIDs:           make(map[string]map[string]struct{}),
 		runSeqByRunID:           make(map[string]int64),

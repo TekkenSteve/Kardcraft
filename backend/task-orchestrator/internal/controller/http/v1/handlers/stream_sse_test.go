@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	v1stream "task-orchestrator/internal/controller/http/v1/stream"
+	v1dto "task-orchestrator/internal/controller/http/v1/dto"
 )
 
 func TestParseLastEventID(t *testing.T) {
@@ -78,8 +78,8 @@ func TestSSEHandlerPassesCursorToBacklog(t *testing.T) {
 		UserID:     func(r *http.Request) string { return "u1" },
 		Authorize:  func(r *http.Request, userID, workflowID string) bool { return true },
 		NowRFC3339: func() string { return "2026-04-24T00:00:00Z" },
-		Subscribe: func(workflowID string) (int, chan v1stream.OutboundEvent) {
-			ch := make(chan v1stream.OutboundEvent)
+		Subscribe: func(workflowID string) (int, chan v1dto.OutboundEvent) {
+			ch := make(chan v1dto.OutboundEvent)
 			close(ch)
 			return 1, ch
 		},
@@ -115,8 +115,8 @@ func TestSSEHandlerPassesZeroCursorToBacklog(t *testing.T) {
 		UserID:     func(r *http.Request) string { return "u1" },
 		Authorize:  func(r *http.Request, userID, workflowID string) bool { return true },
 		NowRFC3339: func() string { return "2026-04-24T00:00:00Z" },
-		Subscribe: func(workflowID string) (int, chan v1stream.OutboundEvent) {
-			ch := make(chan v1stream.OutboundEvent)
+		Subscribe: func(workflowID string) (int, chan v1dto.OutboundEvent) {
+			ch := make(chan v1dto.OutboundEvent)
 			close(ch)
 			return 1, ch
 		},
@@ -151,8 +151,8 @@ func TestSSEHandlerSkipsBacklogWithoutCursor(t *testing.T) {
 		UserID:     func(r *http.Request) string { return "u1" },
 		Authorize:  func(r *http.Request, userID, workflowID string) bool { return true },
 		NowRFC3339: func() string { return "2026-04-24T00:00:00Z" },
-		Subscribe: func(workflowID string) (int, chan v1stream.OutboundEvent) {
-			ch := make(chan v1stream.OutboundEvent)
+		Subscribe: func(workflowID string) (int, chan v1dto.OutboundEvent) {
+			ch := make(chan v1dto.OutboundEvent)
 			close(ch)
 			return 1, ch
 		},
@@ -181,8 +181,8 @@ func TestSSEHandlerWritesBacklogEventID(t *testing.T) {
 		UserID:     func(r *http.Request) string { return "u1" },
 		Authorize:  func(r *http.Request, userID, workflowID string) bool { return true },
 		NowRFC3339: func() string { return "2026-04-24T00:00:00Z" },
-		Subscribe: func(workflowID string) (int, chan v1stream.OutboundEvent) {
-			ch := make(chan v1stream.OutboundEvent)
+		Subscribe: func(workflowID string) (int, chan v1dto.OutboundEvent) {
+			ch := make(chan v1dto.OutboundEvent)
 			close(ch)
 			return 1, ch
 		},

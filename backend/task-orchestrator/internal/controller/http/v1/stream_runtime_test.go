@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	v1stream "task-orchestrator/internal/controller/http/v1/stream"
+	v1dto "task-orchestrator/internal/controller/http/v1/dto"
 )
 
 func TestBuildUsageLedgerRowRejectsLegacyFlatPayload(t *testing.T) {
@@ -17,7 +17,7 @@ func TestBuildUsageLedgerRowRejectsLegacyFlatPayload(t *testing.T) {
 		"provider":        "openai",
 		"model":           "gpt-4o-mini",
 	}
-	_, ok, reason := v1stream.BuildUsageLedgerRow(payload, "wf-1", "task-1", "sess-1")
+	_, ok, reason := BuildUsageLedgerRow(payload, "wf-1", "task-1", "sess-1")
 	if ok {
 		t.Fatalf("expected legacy payload to be rejected")
 	}
@@ -37,7 +37,7 @@ func TestBuildUsageLedgerRowRejectsMalformedPayload(t *testing.T) {
 			// model and idempotency_key intentionally missing
 		},
 	}
-	_, ok, reason := v1stream.BuildUsageLedgerRow(payload, "wf-1", "task-1", "sess-1")
+	_, ok, reason := BuildUsageLedgerRow(payload, "wf-1", "task-1", "sess-1")
 	if ok {
 		t.Fatalf("expected malformed payload to be rejected")
 	}
@@ -75,7 +75,7 @@ func TestBuildUsageLedgerRowAcceptsUsageEnvelope(t *testing.T) {
 			"created_at":          "2026-04-16T08:00:00Z",
 		},
 	}
-	row, ok, reason := v1stream.BuildUsageLedgerRow(payload, "wf-1", "task-1", "sess-1")
+	row, ok, reason := BuildUsageLedgerRow(payload, "wf-1", "task-1", "sess-1")
 	if !ok {
 		t.Fatalf("expected envelope payload to be accepted, got reason=%s", reason)
 	}
@@ -116,7 +116,7 @@ func TestBuildUsageLedgerRowRejectsMissingAuthoritativeCost(t *testing.T) {
 			"created_at":          "2026-04-16T08:00:00Z",
 		},
 	}
-	_, ok, reason := v1stream.BuildUsageLedgerRow(payload, "wf-2", "task-2", "sess-2")
+	_, ok, reason := BuildUsageLedgerRow(payload, "wf-2", "task-2", "sess-2")
 	if ok {
 		t.Fatalf("expected payload without authoritative cost to be rejected")
 	}
@@ -156,7 +156,7 @@ func TestBuildUsageLedgerRowAcceptsUnknownFieldsForForwardCompatibility(t *testi
 			"future_usage_field":  "compatible",
 		},
 	}
-	row, ok, reason := v1stream.BuildUsageLedgerRow(payload, "wf-3", "task-3", "sess-3")
+	row, ok, reason := BuildUsageLedgerRow(payload, "wf-3", "task-3", "sess-3")
 	if !ok {
 		t.Fatalf("expected payload with unknown fields to be accepted, got reason=%s", reason)
 	}
@@ -172,20 +172,6 @@ type fakeRedisStreamClient struct {
 
 func (f *fakeRedisStreamClient) Enabled() bool { return f.enabled }
 
-func (f *fakeRedisStreamClient) StreamRead(ctx context.Context, workflowID, fromID string, count int64, block time.Duration) ([]v1stream.Entry, string, error) {
-	f.readCalls.Add(1)
-	<-ctx.Done()
-	return nil, fromID, ctx.Err()
-}
-
-func (f *fakeRedisStreamClient) GetCheckpoint(ctx context.Context, workflowID string) (string, error) {
-	return "", nil
-}
-
-func (f *fakeRedisStreamClient) SetCheckpoint(ctx context.Context, workflowID, streamID string) error {
-	return nil
-}
-
 func (f *fakeRedisStreamClient) Stats() map[string]any { return map[string]any{} }
 
 func newTestServer(redisClient redisStreamClient) *Server {
@@ -193,7 +179,7 @@ func newTestServer(redisClient redisStreamClient) *Server {
 		redisSvc:                redisClient,
 		timelineByWorkflow:      make(map[string][]TimelineEvent),
 		uploads:                 make(map[string]*uploadState),
-		subscribers:             make(map[string]map[int]chan v1stream.OutboundEvent),
+		subscribers:             make(map[string]map[int]chan v1dto.OutboundEvent),
 		streamReaders:           make(map[string]context.CancelFunc),
 		seenStreamIDs:           make(map[string]map[string]struct{}),
 		runSeqByRunID:           make(map[string]int64),
@@ -288,33 +274,16 @@ func TestAppendTimelineRunSeqMonotonic(t *testing.T) {
 	}
 }
 
-func TestWorkflowStreamReaderLifecycle(t *testing.T) {
-	fake := &fakeRedisStreamClient{enabled: true}
-	s := newTestServer(fake)
-	wf := "wf-reader"
+func TestWorkflowStreamReaderSkipsWhenNoSubscriber(t *testing.T) {
+	s := newTestServer(nil)
+	wf := "wf-nosub"
 
 	s.ensureWorkflowStreamReader(wf)
-	waitFor(t, 2*time.Second, func() bool {
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-		_, ok := s.streamReaders[wf]
-		return ok
-	})
-	waitFor(t, 2*time.Second, func() bool {
-		return fake.readCalls.Load() > 0
-	})
 
-	s.stopWorkflowStreamReader(wf)
-	waitFor(t, 2*time.Second, func() bool {
-		s.mu.RLock()
-		defer s.mu.RUnlock()
-		_, ok := s.streamReaders[wf]
-		return !ok
-	})
 	s.mu.RLock()
-	_, seen := s.seenStreamIDs[wf]
+	_, ok := s.streamReaders[wf]
 	s.mu.RUnlock()
-	if seen {
-		t.Fatalf("expected seenStreamIDs[%s] removed", wf)
+	if ok {
+		t.Fatalf("expected no stream reader when streamSubscriber is nil")
 	}
 }
