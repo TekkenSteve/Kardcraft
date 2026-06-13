@@ -65,8 +65,8 @@ This file tracks interface coverage for the DDD refactor of `backend/task-orches
 
 ## Notes
 
-- Task entity logic is implemented with aggregate methods in `internal/entity/task`.
+- Task entity logic is implemented with aggregate methods in `internal/entity`.
 - Usecase layer remains orchestration-only (`internal/usecase/service.go`, `internal/usecase/command_service.go`).
-- Controller HTTP layer adapts interface shapes and delegates command orchestration (`internal/controller/http/v1/*`).
-- Repo/runtime concrete implementations live under `internal/repo/*` and `internal/runtime/*`.
+- Controller HTTP layer adapts interface shapes and delegates command orchestration (`internal/controller/restapi/v1/*`).
+- Repo/controller concrete adapters live under `internal/repo/*` and `internal/controller/*`.
 - Legacy implementation remains at `backend/task-orchestrator-bak` for rollback/reference.

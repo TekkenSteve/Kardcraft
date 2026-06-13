@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	"task-orchestrator/internal/entity/task"
+	"task-orchestrator/internal/entity"
 )
 
 var ErrTaskNotFound = errors.New("task not found")
@@ -15,8 +15,8 @@ var ErrTaskNotFound = errors.New("task not found")
 type Clock func() time.Time
 
 type TaskService struct {
-	repo      task.Repository
-	publisher task.EventPublisher
+	repo      entity.Repository
+	publisher entity.EventPublisher
 	clock     Clock
 }
 
@@ -34,15 +34,15 @@ type ListTasksInput struct {
 	Offset int
 }
 
-func NewTaskService(repo task.Repository, publisher task.EventPublisher, clock Clock) *TaskService {
+func NewTaskService(repo entity.Repository, publisher entity.EventPublisher, clock Clock) *TaskService {
 	if clock == nil {
 		clock = time.Now
 	}
 	return &TaskService{repo: repo, publisher: publisher, clock: clock}
 }
 
-func (s *TaskService) CreateTask(ctx context.Context, in CreateTaskInput) (*task.Task, error) {
-	taskID, err := task.NewTaskID(in.TaskID)
+func (s *TaskService) CreateTask(ctx context.Context, in CreateTaskInput) (*entity.Task, error) {
+	taskID, err := entity.NewTaskID(in.TaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +51,7 @@ func (s *TaskService) CreateTask(ctx context.Context, in CreateTaskInput) (*task
 	} else if existing != nil {
 		return nil, fmt.Errorf("task already exists: %s", in.TaskID)
 	}
-	agg := task.NewTask(taskID, in.TaskType, in.UserID, in.Query, in.SessionID, nil, s.clock())
+	agg := entity.NewTask(taskID, in.TaskType, in.UserID, in.Query, in.SessionID, nil, s.clock())
 	if err := s.repo.Save(ctx, agg); err != nil {
 		return nil, err
 	}
@@ -65,43 +65,43 @@ func (s *TaskService) CreateTask(ctx context.Context, in CreateTaskInput) (*task
 }
 
 func (s *TaskService) StartTask(ctx context.Context, rawTaskID string) error {
-	return s.transition(ctx, rawTaskID, func(t *task.Task, now time.Time) error {
+	return s.transition(ctx, rawTaskID, func(t *entity.Task, now time.Time) error {
 		return t.Start(now)
 	})
 }
 
 func (s *TaskService) CompleteTask(ctx context.Context, rawTaskID string) error {
-	return s.transition(ctx, rawTaskID, func(t *task.Task, now time.Time) error {
+	return s.transition(ctx, rawTaskID, func(t *entity.Task, now time.Time) error {
 		return t.Complete(now)
 	})
 }
 
 func (s *TaskService) FailTask(ctx context.Context, rawTaskID string, reason string) error {
-	return s.transition(ctx, rawTaskID, func(t *task.Task, now time.Time) error {
+	return s.transition(ctx, rawTaskID, func(t *entity.Task, now time.Time) error {
 		return t.Fail(now, reason)
 	})
 }
 
 func (s *TaskService) PauseTask(ctx context.Context, rawTaskID string, reason string) error {
-	return s.transition(ctx, rawTaskID, func(t *task.Task, now time.Time) error {
+	return s.transition(ctx, rawTaskID, func(t *entity.Task, now time.Time) error {
 		return t.Pause(now, reason)
 	})
 }
 
 func (s *TaskService) ResumeTask(ctx context.Context, rawTaskID string, reason string) error {
-	return s.transition(ctx, rawTaskID, func(t *task.Task, now time.Time) error {
+	return s.transition(ctx, rawTaskID, func(t *entity.Task, now time.Time) error {
 		return t.Resume(now, reason)
 	})
 }
 
 func (s *TaskService) CancelTask(ctx context.Context, rawTaskID string, reason string) error {
-	return s.transition(ctx, rawTaskID, func(t *task.Task, now time.Time) error {
+	return s.transition(ctx, rawTaskID, func(t *entity.Task, now time.Time) error {
 		return t.Cancel(now, reason)
 	})
 }
 
-func (s *TaskService) GetTask(ctx context.Context, rawTaskID string) (*task.Task, error) {
-	taskID, err := task.NewTaskID(rawTaskID)
+func (s *TaskService) GetTask(ctx context.Context, rawTaskID string) (*entity.Task, error) {
+	taskID, err := entity.NewTaskID(rawTaskID)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func (s *TaskService) GetTask(ctx context.Context, rawTaskID string) (*task.Task
 	return agg, nil
 }
 
-func (s *TaskService) ListTasks(ctx context.Context, in ListTasksInput) ([]*task.Task, int, error) {
+func (s *TaskService) ListTasks(ctx context.Context, in ListTasksInput) ([]*entity.Task, int, error) {
 	limit := in.Limit
 	offset := in.Offset
 	if limit <= 0 {
@@ -124,11 +124,11 @@ func (s *TaskService) ListTasks(ctx context.Context, in ListTasksInput) ([]*task
 	if offset < 0 {
 		offset = 0
 	}
-	return s.repo.List(ctx, task.ListFilter{UserID: strings.TrimSpace(in.UserID), Limit: limit, Offset: offset})
+	return s.repo.List(ctx, entity.ListFilter{UserID: strings.TrimSpace(in.UserID), Limit: limit, Offset: offset})
 }
 
-func (s *TaskService) transition(ctx context.Context, rawTaskID string, fn func(t *task.Task, now time.Time) error) error {
-	taskID, err := task.NewTaskID(rawTaskID)
+func (s *TaskService) transition(ctx context.Context, rawTaskID string, fn func(t *entity.Task, now time.Time) error) error {
+	taskID, err := entity.NewTaskID(rawTaskID)
 	if err != nil {
 		return err
 	}

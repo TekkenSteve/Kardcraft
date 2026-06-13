@@ -16,7 +16,9 @@ Any new feature must follow this document to avoid architecture drift.
 
 ```text
 internal/
-  entity/task/
+  app/
+    orchestrator.go   # Orchestrator composition root / wiring
+  entity/
     aggregate.go      # Task aggregate root (Start/Complete/Fail and invariants)
     entity.go         # Child entities (e.g. Step)
     valueobject.go    # Immutable value objects (TaskID, StepID, Status)
@@ -25,21 +27,23 @@ internal/
   usecase/
     service.go        # Task usecase orchestration
     command_service.go # Session/task command orchestration
-  controller/http/v1/
+  controller/restapi/v1/
     server.go         # HTTP transport adapter and route wiring
+  controller/temporal/workflows/
+    task_workflow.go  # Temporal workflow adapter for card_template tasks
   repo/
-    persistence/      # Persistence adapters (in-memory/DB)
+    persistent/       # Persistence adapters (in-memory/DB)
     redis/            # Redis adapters
-  runtime/
-    temporal/workflows/ # Temporal workflow adapters
 cmd/
   orchestrator/
-    main.go           # Composition root / wiring
+    main.go           # Process lifecycle
+  worker/
+    main.go           # Temporal worker lifecycle
 ```
 
 ## Layer Responsibilities
 
-### 1) Entity Layer (`internal/entity/task`)
+### 1) Entity Layer (`internal/entity`)
 - Owns all business invariants and state transition rules.
 - Exposes aggregate methods such as `Task.Start()`, `Task.Complete()`, `Task.Fail()`.
 - Stores and exposes uncommitted domain events (`PullEvents()`).
@@ -68,7 +72,7 @@ Constraints:
 - No duplicate business validation that already exists in entity.
 - Do not import concrete repo/runtime/controller packages.
 
-### 3) Outer Layer (`internal/controller`, `internal/repo`, `internal/runtime`)
+### 3) Outer Layer (`internal/controller`, `internal/repo`)
 - Implements technical adapters for HTTP, SQL, Redis, Temporal.
 - Can depend on external libraries and frameworks.
 
@@ -99,14 +103,14 @@ Mandatory rules:
 2. Add/adjust domain events for new state changes.
 3. Update usecase interfaces only if persistence/event/runtime contracts change.
 4. Update usecase orchestration.
-5. Implement controller/repo/runtime adapters.
+5. Implement controller/repo adapters.
 6. Add tests:
    - Entity unit tests for business rules.
    - Usecase tests for orchestration.
-   - Adapter tests for controller/repo/runtime behavior.
+   - Adapter tests for controller/repo behavior.
 
 ## Anti-Patterns (Do Not Merge)
-- Putting business conditions inside controller/repository/runtime.
+- Putting business conditions inside controller/repository adapters.
 - Entity/usecase importing `database/sql`, `net/http`, Redis/Temporal SDK, logger packages.
 - Mutable value objects (public fields/setters).
 - Updating state without generating corresponding domain event.

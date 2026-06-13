@@ -28,8 +28,8 @@ import (
 	"github.com/TekkenSteve/GoAgent/repo/webapi"
 	agentuc "github.com/TekkenSteve/GoAgent/usecase/agent"
 
-	"task-orchestrator/internal/repo/persistence"
-	"task-orchestrator/internal/runtime/temporal/workflows"
+	"task-orchestrator/internal/controller/temporal/workflows"
+	"task-orchestrator/internal/repo/persistent"
 )
 
 func main() {
@@ -58,7 +58,7 @@ func main() {
 
 	w := worker.New(c, taskQueue, worker.Options{})
 	w.RegisterWorkflow(workflows.TaskWorkflow)
-	sessionStore := persistence.NewSessionStore(context.Background(), persistence.SessionStoreConfigFromEnv())
+	sessionStore := persistent.NewSessionStore(context.Background(), persistent.SessionStoreConfigFromEnv())
 	workflows.ConfigureTaskPersistenceStore(sessionStore)
 	w.RegisterActivity(workflows.PersistTaskOutcomeActivity)
 

@@ -6,13 +6,15 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"task-orchestrator/internal/app"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	srv := buildServerFromEnv()
+	srv := app.NewOrchestratorFromEnv()
 	if err := srv.Start(ctx); err != nil {
 		log.Fatalf("failed to start orchestrator: %v", err)
 	}
