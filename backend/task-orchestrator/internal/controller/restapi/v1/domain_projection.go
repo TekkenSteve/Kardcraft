@@ -8,8 +8,8 @@ import (
 )
 
 type DomainProjectionDeps struct {
-	TaskService                *usecase.TaskService
-	ReadModel                  *usecase.ReadModelService
+	TaskService                usecase.Task
+	ReadModel                  usecase.ReadModel
 	EnsureWorkflowStreamReader func(workflowID string)
 	StopWorkflowStreamReader   func(workflowID string)
 	AppendTimeline             func(workflowID, sessionID, eventType, message string, payload any)

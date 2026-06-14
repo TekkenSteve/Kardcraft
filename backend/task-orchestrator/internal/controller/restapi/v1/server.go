@@ -96,10 +96,10 @@ type Server struct {
 	streamSubscriber *goagentstream.RedisSubscriber
 	streamGateway    *goagentstream.SSEGateway
 
-	taskService     *usecase.TaskService
-	commandService  *usecase.CommandService
-	readModel       *usecase.ReadModelService
-	workflowSvc     *usecase.WorkflowService
+	taskService     usecase.Task
+	commandService  usecase.Command
+	readModel       usecase.ReadModel
+	workflowSvc     usecase.Workflow
 	sessionStore    SessionLifecycleStore
 	defaultModelRef string
 
@@ -126,10 +126,10 @@ type ServerDependencies struct {
 	HTTPClient     *http.Client
 	AnkiRuntimeURL string
 
-	TaskService      *usecase.TaskService
-	CommandService   *usecase.CommandService
-	ReadModel        *usecase.ReadModelService
-	WorkflowSvc      *usecase.WorkflowService
+	TaskService      usecase.Task
+	CommandService   usecase.Command
+	ReadModel        usecase.ReadModel
+	WorkflowSvc      usecase.Workflow
 	SessionStore     SessionLifecycleStore
 	DefaultModelRef  string
 	StreamSubscriber *goagentstream.RedisSubscriber

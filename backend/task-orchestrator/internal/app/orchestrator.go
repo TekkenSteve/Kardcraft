@@ -20,6 +20,10 @@ import (
 	"task-orchestrator/internal/controller/restapi"
 	"task-orchestrator/internal/repo/persistent"
 	"task-orchestrator/internal/usecase"
+	"task-orchestrator/internal/usecase/command"
+	"task-orchestrator/internal/usecase/readmodel"
+	"task-orchestrator/internal/usecase/task"
+	"task-orchestrator/internal/usecase/workflow"
 )
 
 func NewOrchestratorFromEnv() *restapi.Server {
@@ -65,18 +69,18 @@ func NewOrchestratorFromEnv() *restapi.Server {
 
 	repo := persistent.NewInMemoryTaskRepository()
 	publisher := persistent.NewInMemoryEventPublisher()
-	taskService := usecase.NewTaskService(repo, publisher, nil)
+	taskService := task.New(repo, publisher, nil)
 
-	readModel := usecase.NewReadModelService(readModelStore)
-	workflowSvc := usecase.NewWorkflowService(restapi.NewTemporalWorkflowRuntime(temporalClient), readModelStore)
+	readModel := readmodel.New(readModelStore)
+	workflowSvc := workflow.New(restapi.NewTemporalWorkflowRuntime(temporalClient), readModelStore)
 
-	var commandSvc *usecase.CommandService
+	var commandSvc usecase.Command
 	if temporalClient != nil {
 		executorTemporal := goagentpersistent.NewExecutorTemporal(temporalClient, config.Temporal{
 			TaskQueue: taskQueue,
 		})
 		agentExecutor := executor.New(executorTemporal)
-		commandSvc = usecase.NewCommandService(
+		commandSvc = command.New(
 			taskService,
 			restapi.NewCommandSessionStore(sessionStore),
 			agentExecutor,

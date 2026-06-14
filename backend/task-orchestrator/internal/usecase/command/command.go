@@ -1,61 +1,30 @@
-package usecase
+package command
 
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
-	"github.com/TekkenSteve/GoAgent/entity"
+	goagententity "github.com/TekkenSteve/GoAgent/entity"
 
-	"task-orchestrator/internal/usecase/dto"
-	"task-orchestrator/internal/usecase/port"
+	"task-orchestrator/internal/usecase"
 )
 
-var (
-	ErrActiveTaskExists  = errors.New("session already has an active task")
-	ErrNoActiveTask      = errors.New("session has no active task")
-	ErrInvalidTransition = errors.New("invalid task state transition")
-)
-
-type CreateTaskResult struct {
-	WorkflowID string
-	RunID      string
-	Status     string
-	SessionID  string
-}
-
-type SessionControlCommand struct {
-	SessionID string
-	TaskID    string
-	UserID    string
-	Action    string
-	Reason    string
-}
-
-type SessionControlResult struct {
-	SessionID           string
-	ActiveTaskID        string
-	TaskState           string
-	SessionControlState string
-	Accepted            bool
-}
-
-type CommandService struct {
-	tasks    *TaskService
-	store    port.CommandSessionStore
-	executor port.AgentExecutor
-	runtime  port.CommandRuntime
+type UseCase struct {
+	tasks    usecase.Task
+	store    usecase.CommandSessionStore
+	executor usecase.AgentExecutor
+	runtime  usecase.CommandRuntime
 	now      func() time.Time
 }
 
-func NewCommandService(tasks *TaskService, store port.CommandSessionStore, agentExecutor port.AgentExecutor, runtime port.CommandRuntime) *CommandService {
-	return &CommandService{tasks: tasks, store: store, executor: agentExecutor, runtime: runtime, now: time.Now}
+func New(tasks usecase.Task, store usecase.CommandSessionStore, agentExecutor usecase.AgentExecutor, runtime usecase.CommandRuntime) *UseCase {
+	return &UseCase{tasks: tasks, store: store, executor: agentExecutor, runtime: runtime, now: time.Now}
 }
 
-func (s *CommandService) CreateTaskInSession(ctx context.Context, cmd dto.CreateTaskCommand) (*CreateTaskResult, string, error) {
+func (s *UseCase) CreateTaskInSession(ctx context.Context, cmd usecase.CreateTaskCommand) (*usecase.CreateTaskResult, string, error) {
 	if err := s.store.UpsertSession(ctx, cmd.SessionID, cmd.UserID, cmd.Query, "pending"); err != nil {
 		return nil, "", err
 	}
@@ -71,10 +40,10 @@ func (s *CommandService) CreateTaskInSession(ctx context.Context, cmd dto.Create
 				activeTaskID = taskID
 			}
 		}
-		return nil, activeTaskID, ErrActiveTaskExists
+		return nil, activeTaskID, usecase.ErrActiveTaskExists
 	}
 
-	_, err = s.tasks.CreateTask(ctx, CreateTaskInput{
+	_, err = s.tasks.CreateTask(ctx, usecase.CreateTaskInput{
 		TaskID:    cmd.TaskID,
 		TaskType:  cmd.TaskType,
 		UserID:    cmd.UserID,
@@ -92,7 +61,7 @@ func (s *CommandService) CreateTaskInSession(ctx context.Context, cmd dto.Create
 		return nil, "", err
 	}
 
-	return &CreateTaskResult{
+	return &usecase.CreateTaskResult{
 		WorkflowID: cmd.TaskID,
 		RunID:      runID,
 		Status:     "pending",
@@ -100,7 +69,7 @@ func (s *CommandService) CreateTaskInSession(ctx context.Context, cmd dto.Create
 	}, "", nil
 }
 
-func (s *CommandService) startWorkflow(ctx context.Context, cmd dto.CreateTaskCommand) (string, error) {
+func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskCommand) (string, error) {
 	taskType := strings.ToLower(strings.TrimSpace(cmd.TaskType))
 	if taskType == "card_template" {
 		return s.runtime.StartTaskWorkflow(ctx, cmd)
@@ -116,7 +85,7 @@ func (s *CommandService) startWorkflow(ctx context.Context, cmd dto.CreateTaskCo
 	if err != nil {
 		return "", err
 	}
-	status, err := s.executor.Execute(ctx, &entity.ExecuteRequest{
+	status, err := s.executor.Execute(ctx, &goagententity.ExecuteRequest{
 		RunID:          cmd.TaskID,
 		ThreadID:       cmd.SessionID,
 		AccountID:      cmd.UserID,
@@ -132,7 +101,7 @@ func (s *CommandService) startWorkflow(ctx context.Context, cmd dto.CreateTaskCo
 	return status.RunID, nil
 }
 
-func buildAgentUserMessage(cmd dto.CreateTaskCommand) (string, error) {
+func buildAgentUserMessage(cmd usecase.CreateTaskCommand) (string, error) {
 	payload := map[string]any{
 		"schema_version":       "kardcraft.task.input.v1",
 		"task_id":              strings.TrimSpace(cmd.TaskID),
@@ -161,7 +130,7 @@ func buildAgentUserMessage(cmd dto.CreateTaskCommand) (string, error) {
 	return string(body), nil
 }
 
-func systemPromptFromCommand(cmd dto.CreateTaskCommand) string {
+func systemPromptFromCommand(cmd usecase.CreateTaskCommand) string {
 	templateID := strings.TrimSpace(cmd.Input.Context.TemplateID)
 	if templateID == "" {
 		return ""
@@ -169,7 +138,7 @@ func systemPromptFromCommand(cmd dto.CreateTaskCommand) string {
 	return fmt.Sprintf("Use Kardcraft template %s to help the user produce study-card content.", templateID)
 }
 
-func (s *CommandService) ControlSession(ctx context.Context, cmd SessionControlCommand) (*SessionControlResult, error) {
+func (s *UseCase) ControlSession(ctx context.Context, cmd usecase.SessionControlCommand) (*usecase.SessionControlResult, error) {
 	if err := s.store.EnsureSessionAccess(ctx, cmd.SessionID, cmd.UserID); err != nil {
 		return nil, err
 	}
@@ -179,36 +148,36 @@ func (s *CommandService) ControlSession(ctx context.Context, cmd SessionControlC
 	}
 	taskID, state, ok := resolveControlTask(tasks, cmd.TaskID)
 	if !ok {
-		return nil, ErrNoActiveTask
+		return nil, usecase.ErrNoActiveTask
 	}
 	taskType := resolveTaskType(tasks, taskID)
 	action := strings.ToLower(strings.TrimSpace(cmd.Action))
 	if err := validateTransition(action, state); err != nil {
 		return nil, err
 	}
-	signalPayload := dto.ControlSignal{
+	signalPayload := usecase.ControlSignal{
 		Reason:    cmd.Reason,
 		RequestBy: cmd.UserID,
 		Timestamp: s.now().UTC(),
 	}
 	switch action {
 	case "pause":
-		if err := s.controlWorkflow(ctx, taskID, taskType, entity.ControlPause, signalPayload); err != nil {
+		if err := s.controlWorkflow(ctx, taskID, taskType, goagententity.ControlPause, signalPayload); err != nil {
 			return nil, err
 		}
 		_ = s.store.UpdateTaskStatus(ctx, taskID, "paused", "")
 		state = "PAUSED"
 	case "resume":
-		if err := s.controlWorkflow(ctx, taskID, taskType, entity.ControlResume, signalPayload); err != nil {
+		if err := s.controlWorkflow(ctx, taskID, taskType, goagententity.ControlResume, signalPayload); err != nil {
 			return nil, err
 		}
 		_ = s.store.UpdateTaskStatus(ctx, taskID, "running", "")
 		state = "RUNNING"
 	case "cancel":
-		if err := s.controlWorkflow(ctx, taskID, taskType, entity.ControlCancel, signalPayload); err != nil {
+		if err := s.controlWorkflow(ctx, taskID, taskType, goagententity.ControlCancel, signalPayload); err != nil {
 			return nil, err
 		}
-		if strings.EqualFold(taskType, dto.TaskTypeCardTemplate) {
+		if strings.EqualFold(taskType, usecase.TaskTypeCardTemplate) {
 			if err := s.runtime.CancelWorkflow(ctx, taskID); err != nil {
 				return nil, err
 			}
@@ -218,7 +187,7 @@ func (s *CommandService) ControlSession(ctx context.Context, cmd SessionControlC
 		return nil, fmt.Errorf("unsupported action: %s", cmd.Action)
 	}
 
-	return &SessionControlResult{
+	return &usecase.SessionControlResult{
 		SessionID:           cmd.SessionID,
 		ActiveTaskID:        taskID,
 		TaskState:           state,
@@ -227,8 +196,8 @@ func (s *CommandService) ControlSession(ctx context.Context, cmd SessionControlC
 	}, nil
 }
 
-func (s *CommandService) controlWorkflow(ctx context.Context, taskID, taskType string, op entity.ControlOperation, signal dto.ControlSignal) error {
-	if !strings.EqualFold(taskType, dto.TaskTypeCardTemplate) {
+func (s *UseCase) controlWorkflow(ctx context.Context, taskID, taskType string, op goagententity.ControlOperation, signal usecase.ControlSignal) error {
+	if !strings.EqualFold(taskType, usecase.TaskTypeCardTemplate) {
 		if s.executor == nil {
 			return fmt.Errorf("goagent executor is required for main task control")
 		}
@@ -241,15 +210,15 @@ func validateTransition(action, state string) error {
 	switch action {
 	case "pause":
 		if state != "RUNNING" {
-			return fmt.Errorf("%w: active task is not running", ErrInvalidTransition)
+			return fmt.Errorf("%w: active task is not running", usecase.ErrInvalidTransition)
 		}
 	case "resume":
 		if state != "PAUSED" {
-			return fmt.Errorf("%w: active task is not paused", ErrInvalidTransition)
+			return fmt.Errorf("%w: active task is not paused", usecase.ErrInvalidTransition)
 		}
 	case "cancel":
 		if state != "RUNNING" && state != "PAUSED" {
-			return fmt.Errorf("%w: active task is not cancellable", ErrInvalidTransition)
+			return fmt.Errorf("%w: active task is not cancellable", usecase.ErrInvalidTransition)
 		}
 	default:
 		return fmt.Errorf("unsupported action: %s", action)
@@ -257,7 +226,7 @@ func validateTransition(action, state string) error {
 	return nil
 }
 
-func resolveActiveTask(tasks []port.SessionTask) (string, string, bool) {
+func resolveActiveTask(tasks []usecase.SessionTask) (string, string, bool) {
 	if taskID, ok := resolveActiveTaskID(tasks); ok {
 		for _, t := range tasks {
 			if t.TaskID == taskID {
@@ -268,7 +237,7 @@ func resolveActiveTask(tasks []port.SessionTask) (string, string, bool) {
 	return "", "", false
 }
 
-func resolveControlTask(tasks []port.SessionTask, requestedTaskID string) (string, string, bool) {
+func resolveControlTask(tasks []usecase.SessionTask, requestedTaskID string) (string, string, bool) {
 	taskID := strings.TrimSpace(requestedTaskID)
 	if taskID == "" {
 		return resolveActiveTask(tasks)
@@ -281,7 +250,7 @@ func resolveControlTask(tasks []port.SessionTask, requestedTaskID string) (strin
 	return "", "", false
 }
 
-func resolveActiveTaskID(tasks []port.SessionTask) (string, bool) {
+func resolveActiveTaskID(tasks []usecase.SessionTask) (string, bool) {
 	for i := len(tasks) - 1; i >= 0; i-- {
 		st := strings.ToLower(strings.TrimSpace(tasks[i].Status))
 		if st == "pending" || st == "queued" || st == "running" || st == "paused" {
@@ -291,7 +260,7 @@ func resolveActiveTaskID(tasks []port.SessionTask) (string, bool) {
 	return "", false
 }
 
-func resolveTaskType(tasks []port.SessionTask, taskID string) string {
+func resolveTaskType(tasks []usecase.SessionTask, taskID string) string {
 	for _, t := range tasks {
 		if t.TaskID == taskID {
 			return strings.TrimSpace(t.TaskType)

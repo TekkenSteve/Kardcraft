@@ -1,47 +1,29 @@
-package usecase
+package task
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"task-orchestrator/internal/entity"
+	"task-orchestrator/internal/usecase"
 )
 
-var ErrTaskNotFound = errors.New("task not found")
-
-type Clock func() time.Time
-
-type TaskService struct {
+type UseCase struct {
 	repo      entity.Repository
 	publisher entity.EventPublisher
-	clock     Clock
+	clock     usecase.Clock
 }
 
-type CreateTaskInput struct {
-	TaskID    string
-	TaskType  string
-	UserID    string
-	Query     string
-	SessionID string
-}
-
-type ListTasksInput struct {
-	UserID string
-	Limit  int
-	Offset int
-}
-
-func NewTaskService(repo entity.Repository, publisher entity.EventPublisher, clock Clock) *TaskService {
+func New(repo entity.Repository, publisher entity.EventPublisher, clock usecase.Clock) *UseCase {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &TaskService{repo: repo, publisher: publisher, clock: clock}
+	return &UseCase{repo: repo, publisher: publisher, clock: clock}
 }
 
-func (s *TaskService) CreateTask(ctx context.Context, in CreateTaskInput) (*entity.Task, error) {
+func (s *UseCase) CreateTask(ctx context.Context, in usecase.CreateTaskInput) (*entity.Task, error) {
 	taskID, err := entity.NewTaskID(in.TaskID)
 	if err != nil {
 		return nil, err
@@ -64,43 +46,43 @@ func (s *TaskService) CreateTask(ctx context.Context, in CreateTaskInput) (*enti
 	return agg, nil
 }
 
-func (s *TaskService) StartTask(ctx context.Context, rawTaskID string) error {
+func (s *UseCase) StartTask(ctx context.Context, rawTaskID string) error {
 	return s.transition(ctx, rawTaskID, func(t *entity.Task, now time.Time) error {
 		return t.Start(now)
 	})
 }
 
-func (s *TaskService) CompleteTask(ctx context.Context, rawTaskID string) error {
+func (s *UseCase) CompleteTask(ctx context.Context, rawTaskID string) error {
 	return s.transition(ctx, rawTaskID, func(t *entity.Task, now time.Time) error {
 		return t.Complete(now)
 	})
 }
 
-func (s *TaskService) FailTask(ctx context.Context, rawTaskID string, reason string) error {
+func (s *UseCase) FailTask(ctx context.Context, rawTaskID string, reason string) error {
 	return s.transition(ctx, rawTaskID, func(t *entity.Task, now time.Time) error {
 		return t.Fail(now, reason)
 	})
 }
 
-func (s *TaskService) PauseTask(ctx context.Context, rawTaskID string, reason string) error {
+func (s *UseCase) PauseTask(ctx context.Context, rawTaskID string, reason string) error {
 	return s.transition(ctx, rawTaskID, func(t *entity.Task, now time.Time) error {
 		return t.Pause(now, reason)
 	})
 }
 
-func (s *TaskService) ResumeTask(ctx context.Context, rawTaskID string, reason string) error {
+func (s *UseCase) ResumeTask(ctx context.Context, rawTaskID string, reason string) error {
 	return s.transition(ctx, rawTaskID, func(t *entity.Task, now time.Time) error {
 		return t.Resume(now, reason)
 	})
 }
 
-func (s *TaskService) CancelTask(ctx context.Context, rawTaskID string, reason string) error {
+func (s *UseCase) CancelTask(ctx context.Context, rawTaskID string, reason string) error {
 	return s.transition(ctx, rawTaskID, func(t *entity.Task, now time.Time) error {
 		return t.Cancel(now, reason)
 	})
 }
 
-func (s *TaskService) GetTask(ctx context.Context, rawTaskID string) (*entity.Task, error) {
+func (s *UseCase) GetTask(ctx context.Context, rawTaskID string) (*entity.Task, error) {
 	taskID, err := entity.NewTaskID(rawTaskID)
 	if err != nil {
 		return nil, err
@@ -110,12 +92,12 @@ func (s *TaskService) GetTask(ctx context.Context, rawTaskID string) (*entity.Ta
 		return nil, err
 	}
 	if agg == nil {
-		return nil, ErrTaskNotFound
+		return nil, usecase.ErrTaskNotFound
 	}
 	return agg, nil
 }
 
-func (s *TaskService) ListTasks(ctx context.Context, in ListTasksInput) ([]*entity.Task, int, error) {
+func (s *UseCase) ListTasks(ctx context.Context, in usecase.ListTasksInput) ([]*entity.Task, int, error) {
 	limit := in.Limit
 	offset := in.Offset
 	if limit <= 0 {
@@ -127,7 +109,7 @@ func (s *TaskService) ListTasks(ctx context.Context, in ListTasksInput) ([]*enti
 	return s.repo.List(ctx, entity.ListFilter{UserID: strings.TrimSpace(in.UserID), Limit: limit, Offset: offset})
 }
 
-func (s *TaskService) transition(ctx context.Context, rawTaskID string, fn func(t *entity.Task, now time.Time) error) error {
+func (s *UseCase) transition(ctx context.Context, rawTaskID string, fn func(t *entity.Task, now time.Time) error) error {
 	taskID, err := entity.NewTaskID(rawTaskID)
 	if err != nil {
 		return err
@@ -137,7 +119,7 @@ func (s *TaskService) transition(ctx context.Context, rawTaskID string, fn func(
 		return err
 	}
 	if agg == nil {
-		return ErrTaskNotFound
+		return usecase.ErrTaskNotFound
 	}
 	if err := fn(agg, s.clock()); err != nil {
 		return err

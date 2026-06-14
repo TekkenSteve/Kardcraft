@@ -19,7 +19,7 @@ type TemplatesDeps struct {
 
 	HTTPClient     *http.Client
 	AnkiRuntimeURL string
-	ReadModel      *usecase.ReadModelService
+	ReadModel      usecase.ReadModel
 }
 
 func NewCardTemplatesHandler(deps TemplatesDeps) http.HandlerFunc {

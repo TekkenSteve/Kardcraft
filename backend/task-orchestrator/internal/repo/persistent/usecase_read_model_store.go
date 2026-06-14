@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"task-orchestrator/internal/usecase/dto"
+	"task-orchestrator/internal/usecase"
 )
 
 type UsecaseReadModelStore struct {
@@ -19,19 +19,19 @@ func (s *UsecaseReadModelStore) Ready() bool {
 	return s != nil && s.store != nil && s.store.Ready()
 }
 
-func (s *UsecaseReadModelStore) ListSessions(ctx context.Context, userID string, limit, offset int) ([]dto.SessionRow, int, error) {
+func (s *UsecaseReadModelStore) ListSessions(ctx context.Context, userID string, limit, offset int) ([]usecase.SessionRow, int, error) {
 	rows, total, err := s.store.ListSessions(ctx, userID, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
-	out := make([]dto.SessionRow, 0, len(rows))
+	out := make([]usecase.SessionRow, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, convertSessionRow(row))
 	}
 	return out, total, nil
 }
 
-func (s *UsecaseReadModelStore) GetSession(ctx context.Context, sessionID, userID string) (*dto.SessionRow, error) {
+func (s *UsecaseReadModelStore) GetSession(ctx context.Context, sessionID, userID string) (*usecase.SessionRow, error) {
 	row, err := s.store.GetSession(ctx, sessionID, userID)
 	if err != nil || row == nil {
 		return nil, err
@@ -48,36 +48,36 @@ func (s *UsecaseReadModelStore) DeleteSession(ctx context.Context, sessionID, us
 	return s.store.DeleteSession(ctx, sessionID, userID)
 }
 
-func (s *UsecaseReadModelStore) ListSessionTasks(ctx context.Context, sessionID, userID string) ([]dto.TaskRow, error) {
+func (s *UsecaseReadModelStore) ListSessionTasks(ctx context.Context, sessionID, userID string) ([]usecase.TaskRow, error) {
 	rows, err := s.store.ListSessionTasks(ctx, sessionID, userID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]dto.TaskRow, 0, len(rows))
+	out := make([]usecase.TaskRow, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, convertTaskRow(row))
 	}
 	return out, nil
 }
 
-func (s *UsecaseReadModelStore) ListSessionEvents(ctx context.Context, sessionID string, limit, offset int) ([]dto.EventRow, error) {
+func (s *UsecaseReadModelStore) ListSessionEvents(ctx context.Context, sessionID string, limit, offset int) ([]usecase.EventRow, error) {
 	rows, err := s.store.ListSessionEvents(ctx, sessionID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]dto.EventRow, 0, len(rows))
+	out := make([]usecase.EventRow, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, convertEventRow(row))
 	}
 	return out, nil
 }
 
-func (s *UsecaseReadModelStore) ListWorkflowEvents(ctx context.Context, workflowID string, limit, offset int) ([]dto.EventRow, error) {
+func (s *UsecaseReadModelStore) ListWorkflowEvents(ctx context.Context, workflowID string, limit, offset int) ([]usecase.EventRow, error) {
 	rows, err := s.store.ListWorkflowEvents(ctx, workflowID, limit, offset)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]dto.EventRow, 0, len(rows))
+	out := make([]usecase.EventRow, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, convertEventRow(row))
 	}
@@ -104,7 +104,7 @@ func (s *UsecaseReadModelStore) UpdateTaskStatus(ctx context.Context, taskID, st
 	return s.store.UpdateTaskStatus(ctx, taskID, status, errMsg)
 }
 
-func (s *UsecaseReadModelStore) GetTaskUsageSummaryMapBySession(ctx context.Context, sessionID, userID string) (map[string]dto.TaskUsageSummary, error) {
+func (s *UsecaseReadModelStore) GetTaskUsageSummaryMapBySession(ctx context.Context, sessionID, userID string) (map[string]usecase.TaskUsageSummary, error) {
 	rows, err := s.store.GetTaskUsageSummaryMapBySession(ctx, sessionID, userID)
 	if err != nil {
 		return nil, err
@@ -112,7 +112,7 @@ func (s *UsecaseReadModelStore) GetTaskUsageSummaryMapBySession(ctx context.Cont
 	return convertUsageSummaryMap(rows), nil
 }
 
-func (s *UsecaseReadModelStore) GetTaskUsageSummaryMapByTaskIDs(ctx context.Context, userID string, taskIDs []string) (map[string]dto.TaskUsageSummary, error) {
+func (s *UsecaseReadModelStore) GetTaskUsageSummaryMapByTaskIDs(ctx context.Context, userID string, taskIDs []string) (map[string]usecase.TaskUsageSummary, error) {
 	rows, err := s.store.GetTaskUsageSummaryMapByTaskIDs(ctx, userID, taskIDs)
 	if err != nil {
 		return nil, err
@@ -120,19 +120,19 @@ func (s *UsecaseReadModelStore) GetTaskUsageSummaryMapByTaskIDs(ctx context.Cont
 	return convertUsageSummaryMap(rows), nil
 }
 
-func (s *UsecaseReadModelStore) ListAccessibleTemplates(ctx context.Context, userID string, limit, offset int) ([]dto.TemplateCatalogRow, int, error) {
+func (s *UsecaseReadModelStore) ListAccessibleTemplates(ctx context.Context, userID string, limit, offset int) ([]usecase.TemplateCatalogRow, int, error) {
 	rows, total, err := s.store.ListAccessibleTemplates(ctx, userID, limit, offset)
 	if err != nil {
 		return nil, 0, err
 	}
-	out := make([]dto.TemplateCatalogRow, 0, len(rows))
+	out := make([]usecase.TemplateCatalogRow, 0, len(rows))
 	for _, row := range rows {
 		out = append(out, convertTemplateRow(row))
 	}
 	return out, total, nil
 }
 
-func (s *UsecaseReadModelStore) GetAccessibleTemplate(ctx context.Context, userID, templateID string) (*dto.TemplateCatalogRow, error) {
+func (s *UsecaseReadModelStore) GetAccessibleTemplate(ctx context.Context, userID, templateID string) (*usecase.TemplateCatalogRow, error) {
 	row, err := s.store.GetAccessibleTemplate(ctx, userID, templateID)
 	if err != nil || row == nil {
 		return nil, err
@@ -141,7 +141,7 @@ func (s *UsecaseReadModelStore) GetAccessibleTemplate(ctx context.Context, userI
 	return &converted, nil
 }
 
-func (s *UsecaseReadModelStore) GetUserTemplatePreference(ctx context.Context, userID string) (*dto.TemplateCatalogRow, error) {
+func (s *UsecaseReadModelStore) GetUserTemplatePreference(ctx context.Context, userID string) (*usecase.TemplateCatalogRow, error) {
 	row, err := s.store.GetUserTemplatePreference(ctx, userID)
 	if err != nil || row == nil {
 		return nil, err
@@ -150,7 +150,7 @@ func (s *UsecaseReadModelStore) GetUserTemplatePreference(ctx context.Context, u
 	return &converted, nil
 }
 
-func (s *UsecaseReadModelStore) GetResolvedDefaultTemplate(ctx context.Context, userID string) (*dto.TemplateCatalogRow, error) {
+func (s *UsecaseReadModelStore) GetResolvedDefaultTemplate(ctx context.Context, userID string) (*usecase.TemplateCatalogRow, error) {
 	row, err := s.store.GetResolvedDefaultTemplate(ctx, userID)
 	if err != nil || row == nil {
 		return nil, err
@@ -167,7 +167,7 @@ func (s *UsecaseReadModelStore) InsertEvent(ctx context.Context, sessionID, task
 	return s.store.InsertEvent(ctx, sessionID, taskID, workflowID, eventType, message, payload, streamID, ts)
 }
 
-func (s *UsecaseReadModelStore) InsertLLMUsage(ctx context.Context, row dto.UsageLedgerRow) (bool, error) {
+func (s *UsecaseReadModelStore) InsertLLMUsage(ctx context.Context, row usecase.UsageLedgerRow) (bool, error) {
 	return s.store.InsertLLMUsage(ctx, UsageLedgerRow{
 		IdempotencyKey:    row.IdempotencyKey,
 		SchemaVersion:     row.SchemaVersion,
@@ -195,8 +195,8 @@ func (s *UsecaseReadModelStore) InsertLLMUsage(ctx context.Context, row dto.Usag
 	})
 }
 
-func convertSessionRow(row SessionRow) dto.SessionRow {
-	return dto.SessionRow{
+func convertSessionRow(row SessionRow) usecase.SessionRow {
+	return usecase.SessionRow{
 		SessionID:        row.SessionID,
 		UserID:           row.UserID,
 		Title:            row.Title,
@@ -212,8 +212,8 @@ func convertSessionRow(row SessionRow) dto.SessionRow {
 	}
 }
 
-func convertTaskRow(row TaskRow) dto.TaskRow {
-	return dto.TaskRow{
+func convertTaskRow(row TaskRow) usecase.TaskRow {
+	return usecase.TaskRow{
 		TaskID:      row.TaskID,
 		WorkflowID:  row.WorkflowID,
 		Query:       row.Query,
@@ -227,8 +227,8 @@ func convertTaskRow(row TaskRow) dto.TaskRow {
 	}
 }
 
-func convertEventRow(row EventRow) dto.EventRow {
-	return dto.EventRow{
+func convertEventRow(row EventRow) usecase.EventRow {
+	return usecase.EventRow{
 		ID:        row.ID,
 		TaskID:    row.TaskID,
 		Workflow:  row.Workflow,
@@ -240,12 +240,12 @@ func convertEventRow(row EventRow) dto.EventRow {
 	}
 }
 
-func convertUsageSummaryMap(rows map[string]TaskUsageSummary) map[string]dto.TaskUsageSummary {
-	out := make(map[string]dto.TaskUsageSummary, len(rows))
+func convertUsageSummaryMap(rows map[string]TaskUsageSummary) map[string]usecase.TaskUsageSummary {
+	out := make(map[string]usecase.TaskUsageSummary, len(rows))
 	for taskID, row := range rows {
-		breakdown := make([]dto.ModelUsageBreakdown, 0, len(row.ModelBreakdown))
+		breakdown := make([]usecase.ModelUsageBreakdown, 0, len(row.ModelBreakdown))
 		for _, item := range row.ModelBreakdown {
-			breakdown = append(breakdown, dto.ModelUsageBreakdown{
+			breakdown = append(breakdown, usecase.ModelUsageBreakdown{
 				Model:               item.Model,
 				Provider:            item.Provider,
 				Executions:          item.Executions,
@@ -258,7 +258,7 @@ func convertUsageSummaryMap(rows map[string]TaskUsageSummary) map[string]dto.Tas
 				EstimatedExecutions: item.EstimatedExecutions,
 			})
 		}
-		out[taskID] = dto.TaskUsageSummary{
+		out[taskID] = usecase.TaskUsageSummary{
 			TotalTokens:      row.TotalTokens,
 			PromptTokens:     row.PromptTokens,
 			CompletionTokens: row.CompletionTokens,
@@ -271,8 +271,8 @@ func convertUsageSummaryMap(rows map[string]TaskUsageSummary) map[string]dto.Tas
 	return out
 }
 
-func convertTemplateRow(row TemplateCatalogRow) dto.TemplateCatalogRow {
-	return dto.TemplateCatalogRow{
+func convertTemplateRow(row TemplateCatalogRow) usecase.TemplateCatalogRow {
+	return usecase.TemplateCatalogRow{
 		TemplateID:             row.TemplateID,
 		Name:                   row.Name,
 		Description:            row.Description,

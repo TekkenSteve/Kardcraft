@@ -1,59 +1,54 @@
-package usecase
+package workflow
 
 import (
 	"context"
 	"fmt"
 
-	"task-orchestrator/internal/usecase/dto"
-	"task-orchestrator/internal/usecase/port"
+	"task-orchestrator/internal/usecase"
 )
 
-type WorkflowDescription = dto.WorkflowDescription
-type WorkflowState = dto.WorkflowState
-type WorkflowHistoryEvent = dto.WorkflowHistoryEvent
-
-type WorkflowService struct {
-	runtime port.WorkflowRuntime
-	store   port.ReadModelStore
+type UseCase struct {
+	runtime usecase.WorkflowRuntime
+	store   usecase.ReadModelStore
 }
 
-func NewWorkflowService(runtime port.WorkflowRuntime, store port.ReadModelStore) *WorkflowService {
-	return &WorkflowService{runtime: runtime, store: store}
+func New(runtime usecase.WorkflowRuntime, store usecase.ReadModelStore) *UseCase {
+	return &UseCase{runtime: runtime, store: store}
 }
 
-func (s *WorkflowService) Enabled() bool {
+func (s *UseCase) Enabled() bool {
 	return s != nil && s.runtime != nil && s.runtime.Enabled()
 }
 
-func (s *WorkflowService) DescribeWorkflow(ctx context.Context, workflowID, runID string) (*WorkflowDescription, error) {
+func (s *UseCase) DescribeWorkflow(ctx context.Context, workflowID, runID string) (*usecase.WorkflowDescription, error) {
 	if !s.Enabled() {
 		return nil, fmt.Errorf("runtime unavailable")
 	}
 	return s.runtime.DescribeWorkflow(ctx, workflowID, runID)
 }
 
-func (s *WorkflowService) GetWorkflowResult(ctx context.Context, workflowID, runID string) (any, error) {
+func (s *UseCase) GetWorkflowResult(ctx context.Context, workflowID, runID string) (any, error) {
 	if !s.Enabled() {
 		return nil, fmt.Errorf("runtime unavailable")
 	}
 	return s.runtime.GetWorkflowResult(ctx, workflowID, runID)
 }
 
-func (s *WorkflowService) ResolveTaskSession(ctx context.Context, taskID string) (string, error) {
+func (s *UseCase) ResolveTaskSession(ctx context.Context, taskID string) (string, error) {
 	if s == nil || s.store == nil {
 		return "", fmt.Errorf("read model unavailable")
 	}
 	return s.store.GetTaskSession(ctx, taskID)
 }
 
-func (s *WorkflowService) QueryControlState(ctx context.Context, taskID string) (*WorkflowState, error) {
+func (s *UseCase) QueryControlState(ctx context.Context, taskID string) (*usecase.WorkflowState, error) {
 	if !s.Enabled() {
 		return nil, fmt.Errorf("runtime unavailable")
 	}
 	return s.runtime.QueryWorkflowState(ctx, taskID)
 }
 
-func (s *WorkflowService) CancelWorkflow(ctx context.Context, workflowID, reason string) error {
+func (s *UseCase) CancelWorkflow(ctx context.Context, workflowID, reason string) error {
 	if !s.Enabled() {
 		return fmt.Errorf("runtime unavailable")
 	}
@@ -66,7 +61,7 @@ func (s *WorkflowService) CancelWorkflow(ctx context.Context, workflowID, reason
 	return nil
 }
 
-func (s *WorkflowService) ListHistory(ctx context.Context, workflowID string) ([]WorkflowHistoryEvent, error) {
+func (s *UseCase) ListHistory(ctx context.Context, workflowID string) ([]usecase.WorkflowHistoryEvent, error) {
 	if s.Enabled() {
 		return s.runtime.ListWorkflowHistory(ctx, workflowID)
 	}
@@ -77,9 +72,9 @@ func (s *WorkflowService) ListHistory(ctx context.Context, workflowID string) ([
 	if err != nil {
 		return nil, err
 	}
-	out := make([]WorkflowHistoryEvent, 0, len(events))
+	out := make([]usecase.WorkflowHistoryEvent, 0, len(events))
 	for _, ev := range events {
-		out = append(out, WorkflowHistoryEvent{
+		out = append(out, usecase.WorkflowHistoryEvent{
 			EventID:   ev.ID,
 			EventType: ev.Type,
 			Timestamp: ev.Timestamp,

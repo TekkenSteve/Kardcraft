@@ -15,10 +15,10 @@ type ServerDependencies struct {
 	HTTPClient     *http.Client
 	AnkiRuntimeURL string
 
-	TaskService      *usecase.TaskService
-	CommandService   *usecase.CommandService
-	ReadModel        *usecase.ReadModelService
-	WorkflowSvc      *usecase.WorkflowService
+	TaskService      usecase.Task
+	CommandService   usecase.Command
+	ReadModel        usecase.ReadModel
+	WorkflowSvc      usecase.Workflow
 	SessionStore     v1.SessionLifecycleStore
 	DefaultModelRef  string
 	StreamSubscriber *goagentstream.RedisSubscriber

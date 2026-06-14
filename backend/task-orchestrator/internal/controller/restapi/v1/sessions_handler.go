@@ -14,9 +14,9 @@ type SessionsDeps struct {
 	WriteAPIError func(w http.ResponseWriter, status int, code, message string, details map[string]any)
 	UserID        func(r *http.Request) string
 
-	ReadModel         *usecase.ReadModelService
-	WorkflowSvc       *usecase.WorkflowService
-	CommandService    *usecase.CommandService
+	ReadModel         usecase.ReadModel
+	WorkflowSvc       usecase.Workflow
+	CommandService    usecase.Command
 	IsTemporalEnabled func() bool
 
 	AuthzDeniedCode string

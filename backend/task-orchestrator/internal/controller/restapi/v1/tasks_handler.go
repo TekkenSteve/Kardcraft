@@ -13,10 +13,10 @@ type TasksDeps struct {
 	NowRFC3339    func() string
 	UserID        func(r *http.Request) string
 
-	TaskService     *usecase.TaskService
-	CommandService  *usecase.CommandService
-	ReadModel       *usecase.ReadModelService
-	WorkflowSvc     *usecase.WorkflowService
+	TaskService     usecase.Task
+	CommandService  usecase.Command
+	ReadModel       usecase.ReadModel
+	WorkflowSvc     usecase.Workflow
 	DefaultModelRef string
 
 	IsTemporalEnabled          func() bool

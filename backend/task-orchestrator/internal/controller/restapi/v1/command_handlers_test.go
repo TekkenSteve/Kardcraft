@@ -14,8 +14,10 @@ import (
 	"github.com/TekkenSteve/GoAgent/entity"
 	"task-orchestrator/internal/repo/persistent"
 	"task-orchestrator/internal/usecase"
-	ucdto "task-orchestrator/internal/usecase/dto"
-	"task-orchestrator/internal/usecase/port"
+	"task-orchestrator/internal/usecase/command"
+	"task-orchestrator/internal/usecase/readmodel"
+	"task-orchestrator/internal/usecase/task"
+	"task-orchestrator/internal/usecase/workflow"
 )
 
 func TestHandleCreateTaskBoundaries(t *testing.T) {
@@ -37,7 +39,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 	t.Run("active task conflict", func(t *testing.T) {
 		store := newFakeCommandStore()
 		store.inserted = false
-		store.sessionTasks = []port.SessionTask{{TaskID: "active-1", Status: "running"}}
+		store.sessionTasks = []usecase.SessionTask{{TaskID: "active-1", Status: "running"}}
 		s := newCommandTestServer(store, &fakeCommandRuntime{runID: "run-1"}, true)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
@@ -89,7 +91,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 	t.Run("main task uses resolved default template when missing input template", func(t *testing.T) {
 		readStore := &fakeReadModelStore{
 			ready: true,
-			resolvedDefaultTemplate: &ucdto.TemplateCatalogRow{
+			resolvedDefaultTemplate: &usecase.TemplateCatalogRow{
 				DefaultTemplateID:      "tpl-default",
 				DefaultTemplateVersion: 7,
 			},
@@ -152,10 +154,10 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		payload := `{"attachments":[{"file_id":"file_hist_1","filename":"hist.pdf","size":12,"mime_type":"application/pdf"}]}`
 		readStore := &fakeReadModelStore{
 			ready: true,
-			sessionTasks: []ucdto.TaskRow{
+			sessionTasks: []usecase.TaskRow{
 				{TaskID: taskID},
 			},
-			sessionEvents: []ucdto.EventRow{
+			sessionEvents: []usecase.EventRow{
 				{TaskID: &taskID, Payload: &payload, Timestamp: time.Now().UTC()},
 			},
 		}
@@ -188,10 +190,10 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		payload := `{"attachments":[{"file_id":"file_hist_1","filename":"hist.pdf","size":12,"mime_type":"application/pdf"}]}`
 		readStore := &fakeReadModelStore{
 			ready: true,
-			sessionTasks: []ucdto.TaskRow{
+			sessionTasks: []usecase.TaskRow{
 				{TaskID: taskID},
 			},
-			sessionEvents: []ucdto.EventRow{
+			sessionEvents: []usecase.EventRow{
 				{TaskID: &taskID, Payload: &payload, Timestamp: time.Now().UTC()},
 			},
 		}
@@ -236,10 +238,10 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		payload := `{"attachments":[{"file_id":"file_hist_1","filename":"hist.pdf","size":12,"mime_type":"application/pdf"},{"file_id":"file_hist_2","filename":"hist2.pdf","size":16,"mime_type":"application/pdf"}]}`
 		readStore := &fakeReadModelStore{
 			ready: true,
-			sessionTasks: []ucdto.TaskRow{
+			sessionTasks: []usecase.TaskRow{
 				{TaskID: taskID},
 			},
-			sessionEvents: []ucdto.EventRow{
+			sessionEvents: []usecase.EventRow{
 				{TaskID: &taskID, Payload: &payload, Timestamp: time.Now().UTC()},
 			},
 		}
@@ -273,10 +275,10 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		payload := `{"attachments":[{"file_id":"file_hist_9","filename":"hist9.pdf","size":9,"mime_type":"application/pdf"}]}`
 		readStore := &fakeReadModelStore{
 			ready: true,
-			sessionTasks: []ucdto.TaskRow{
+			sessionTasks: []usecase.TaskRow{
 				{TaskID: taskID},
 			},
-			sessionEvents: []ucdto.EventRow{
+			sessionEvents: []usecase.EventRow{
 				{TaskID: &taskID, Payload: &payload, Timestamp: time.Now().UTC()},
 			},
 			workspace: map[string]any{
@@ -537,7 +539,7 @@ func TestHandleTaskPlannerTrace(t *testing.T) {
 	payload := `{"trace_version":"planner_trace.v1","record":{"action":"resolve_effective_file_ids","outcome":"effective=2"}}`
 	readStore := &fakeReadModelStore{
 		ready: true,
-		workflowEvents: []ucdto.EventRow{
+		workflowEvents: []usecase.EventRow{
 			{
 				ID:        1,
 				TaskID:    &taskID,
@@ -587,18 +589,18 @@ func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, runti
 	}
 	repo := persistent.NewInMemoryTaskRepository()
 	publisher := persistent.NewInMemoryEventPublisher()
-	taskService := usecase.NewTaskService(repo, publisher, nil)
+	taskService := task.New(repo, publisher, nil)
 	agentExecutor := &fakeAgentExecutor{runID: "agent-run-1"}
-	commandService := usecase.NewCommandService(taskService, store, agentExecutor, runtime)
+	commandService := command.New(taskService, store, agentExecutor, runtime)
 
 	enabled := &fakeWorkflowRuntime{enabled: temporalEnabled}
-	readModel := usecase.NewReadModelService(readStore)
+	readModel := readmodel.New(readStore)
 	s := &Server{
 		mux:                     http.NewServeMux(),
 		taskService:             taskService,
 		commandService:          commandService,
 		readModel:               readModel,
-		workflowSvc:             usecase.NewWorkflowService(enabled, &fakeReadModelStore{ready: true}),
+		workflowSvc:             workflow.New(enabled, &fakeReadModelStore{ready: true}),
 		defaultModelRef:         "test-model",
 		timelineByWorkflow:      make(map[string][]TimelineEvent),
 		uploads:                 make(map[string]*uploadState),
@@ -633,7 +635,7 @@ func decodeAgentTaskInput(t *testing.T, executor *fakeAgentExecutor) map[string]
 type fakeCommandStore struct {
 	upsertErr    error
 	inserted     bool
-	sessionTasks []port.SessionTask
+	sessionTasks []usecase.SessionTask
 }
 
 func newFakeCommandStore() *fakeCommandStore {
@@ -651,9 +653,9 @@ func (f *fakeCommandStore) InsertTaskIfNoActive(ctx context.Context, taskID, ses
 func (f *fakeCommandStore) UpdateTaskStatus(ctx context.Context, taskID, status, errMsg string) error {
 	return nil
 }
-func (f *fakeCommandStore) ListSessionTasks(ctx context.Context, sessionID, userID string) ([]port.SessionTask, error) {
+func (f *fakeCommandStore) ListSessionTasks(ctx context.Context, sessionID, userID string) ([]usecase.SessionTask, error) {
 	if len(f.sessionTasks) == 0 {
-		return []port.SessionTask{{TaskID: "task-1", Status: "running", TaskType: ucdto.TaskTypeMain}}, nil
+		return []usecase.SessionTask{{TaskID: "task-1", Status: "running", TaskType: usecase.TaskTypeMain}}, nil
 	}
 	return f.sessionTasks, nil
 }
@@ -666,7 +668,7 @@ type fakeCommandRuntime struct {
 	startErr  error
 	signalErr error
 	cancelErr error
-	lastCmd   ucdto.CreateTaskCommand
+	lastCmd   usecase.CreateTaskCommand
 }
 
 type fakeAgentExecutor struct {
@@ -689,7 +691,7 @@ func (f *fakeAgentExecutor) Control(ctx context.Context, runID string, op entity
 	return nil
 }
 
-func (f *fakeCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd ucdto.CreateTaskCommand) (string, error) {
+func (f *fakeCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd usecase.CreateTaskCommand) (string, error) {
 	f.lastCmd = cmd
 	if f.startErr != nil {
 		return "", f.startErr
@@ -699,7 +701,7 @@ func (f *fakeCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd ucdto.Cr
 	}
 	return f.runID, nil
 }
-func (f *fakeCommandRuntime) SignalWorkflow(ctx context.Context, taskID, signalName string, signal ucdto.ControlSignal) error {
+func (f *fakeCommandRuntime) SignalWorkflow(ctx context.Context, taskID, signalName string, signal usecase.ControlSignal) error {
 	return f.signalErr
 }
 func (f *fakeCommandRuntime) CancelWorkflow(ctx context.Context, taskID string) error {
@@ -711,13 +713,13 @@ type fakeWorkflowRuntime struct {
 }
 
 func (f *fakeWorkflowRuntime) Enabled() bool { return f.enabled }
-func (f *fakeWorkflowRuntime) DescribeWorkflow(ctx context.Context, workflowID, runID string) (*ucdto.WorkflowDescription, error) {
+func (f *fakeWorkflowRuntime) DescribeWorkflow(ctx context.Context, workflowID, runID string) (*usecase.WorkflowDescription, error) {
 	resolvedRunID := strings.TrimSpace(runID)
 	if resolvedRunID == "" {
 		resolvedRunID = "run-test"
 	}
 	now := time.Now().UTC()
-	return &ucdto.WorkflowDescription{
+	return &usecase.WorkflowDescription{
 		WorkflowID: workflowID,
 		RunID:      resolvedRunID,
 		Status:     "TASK_STATUS_RUNNING",
@@ -727,28 +729,28 @@ func (f *fakeWorkflowRuntime) DescribeWorkflow(ctx context.Context, workflowID, 
 func (f *fakeWorkflowRuntime) GetWorkflowResult(ctx context.Context, workflowID, runID string) (any, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *fakeWorkflowRuntime) QueryWorkflowState(ctx context.Context, workflowID string) (*ucdto.WorkflowState, error) {
+func (f *fakeWorkflowRuntime) QueryWorkflowState(ctx context.Context, workflowID string) (*usecase.WorkflowState, error) {
 	return nil, errors.New("not implemented")
 }
 func (f *fakeWorkflowRuntime) CancelWorkflow(ctx context.Context, workflowID string) error {
 	return nil
 }
-func (f *fakeWorkflowRuntime) ListWorkflowHistory(ctx context.Context, workflowID string) ([]ucdto.WorkflowHistoryEvent, error) {
+func (f *fakeWorkflowRuntime) ListWorkflowHistory(ctx context.Context, workflowID string) ([]usecase.WorkflowHistoryEvent, error) {
 	return nil, nil
 }
-func (f *fakeWorkflowRuntime) SignalWorkflow(ctx context.Context, taskID, signalName string, signal ucdto.ControlSignal) error {
+func (f *fakeWorkflowRuntime) SignalWorkflow(ctx context.Context, taskID, signalName string, signal usecase.ControlSignal) error {
 	return nil
 }
 
 type fakeReadModelStore struct {
 	ready          bool
-	sessionTasks   []ucdto.TaskRow
-	sessionEvents  []ucdto.EventRow
+	sessionTasks   []usecase.TaskRow
+	sessionEvents  []usecase.EventRow
 	workspace      map[string]any
-	workflowEvents []ucdto.EventRow
+	workflowEvents []usecase.EventRow
 	insertedEvents []capturedEventInsert
 
-	resolvedDefaultTemplate *ucdto.TemplateCatalogRow
+	resolvedDefaultTemplate *usecase.TemplateCatalogRow
 	resolvedDefaultErr      error
 }
 
@@ -764,11 +766,11 @@ type capturedEventInsert struct {
 }
 
 func (f *fakeReadModelStore) Ready() bool { return f.ready }
-func (f *fakeReadModelStore) ListSessions(ctx context.Context, userID string, limit, offset int) ([]ucdto.SessionRow, int, error) {
+func (f *fakeReadModelStore) ListSessions(ctx context.Context, userID string, limit, offset int) ([]usecase.SessionRow, int, error) {
 	return nil, 0, nil
 }
-func (f *fakeReadModelStore) GetSession(ctx context.Context, sessionID, userID string) (*ucdto.SessionRow, error) {
-	return &ucdto.SessionRow{SessionID: sessionID, UserID: userID}, nil
+func (f *fakeReadModelStore) GetSession(ctx context.Context, sessionID, userID string) (*usecase.SessionRow, error) {
+	return &usecase.SessionRow{SessionID: sessionID, UserID: userID}, nil
 }
 func (f *fakeReadModelStore) UpdateSessionMeta(ctx context.Context, sessionID, userID string, title *string, pinned *bool) error {
 	return nil
@@ -776,13 +778,13 @@ func (f *fakeReadModelStore) UpdateSessionMeta(ctx context.Context, sessionID, u
 func (f *fakeReadModelStore) DeleteSession(ctx context.Context, sessionID, userID string) (int64, error) {
 	return 0, nil
 }
-func (f *fakeReadModelStore) ListSessionTasks(ctx context.Context, sessionID, userID string) ([]ucdto.TaskRow, error) {
+func (f *fakeReadModelStore) ListSessionTasks(ctx context.Context, sessionID, userID string) ([]usecase.TaskRow, error) {
 	return f.sessionTasks, nil
 }
-func (f *fakeReadModelStore) ListSessionEvents(ctx context.Context, sessionID string, limit, offset int) ([]ucdto.EventRow, error) {
+func (f *fakeReadModelStore) ListSessionEvents(ctx context.Context, sessionID string, limit, offset int) ([]usecase.EventRow, error) {
 	return f.sessionEvents, nil
 }
-func (f *fakeReadModelStore) ListWorkflowEvents(ctx context.Context, workflowID string, limit, offset int) ([]ucdto.EventRow, error) {
+func (f *fakeReadModelStore) ListWorkflowEvents(ctx context.Context, workflowID string, limit, offset int) ([]usecase.EventRow, error) {
 	return f.workflowEvents, nil
 }
 func (f *fakeReadModelStore) LoadWorkspace(ctx context.Context, sessionID string) (map[string]any, error) {
@@ -803,22 +805,22 @@ func (f *fakeReadModelStore) GetTaskSession(ctx context.Context, taskID string) 
 func (f *fakeReadModelStore) UpdateTaskStatus(ctx context.Context, taskID, status, errMsg string) error {
 	return nil
 }
-func (f *fakeReadModelStore) GetTaskUsageSummaryMapBySession(ctx context.Context, sessionID, userID string) (map[string]ucdto.TaskUsageSummary, error) {
-	return map[string]ucdto.TaskUsageSummary{}, nil
+func (f *fakeReadModelStore) GetTaskUsageSummaryMapBySession(ctx context.Context, sessionID, userID string) (map[string]usecase.TaskUsageSummary, error) {
+	return map[string]usecase.TaskUsageSummary{}, nil
 }
-func (f *fakeReadModelStore) GetTaskUsageSummaryMapByTaskIDs(ctx context.Context, userID string, taskIDs []string) (map[string]ucdto.TaskUsageSummary, error) {
-	return map[string]ucdto.TaskUsageSummary{}, nil
+func (f *fakeReadModelStore) GetTaskUsageSummaryMapByTaskIDs(ctx context.Context, userID string, taskIDs []string) (map[string]usecase.TaskUsageSummary, error) {
+	return map[string]usecase.TaskUsageSummary{}, nil
 }
-func (f *fakeReadModelStore) ListAccessibleTemplates(ctx context.Context, userID string, limit, offset int) ([]ucdto.TemplateCatalogRow, int, error) {
+func (f *fakeReadModelStore) ListAccessibleTemplates(ctx context.Context, userID string, limit, offset int) ([]usecase.TemplateCatalogRow, int, error) {
 	return nil, 0, nil
 }
-func (f *fakeReadModelStore) GetAccessibleTemplate(ctx context.Context, userID, templateID string) (*ucdto.TemplateCatalogRow, error) {
+func (f *fakeReadModelStore) GetAccessibleTemplate(ctx context.Context, userID, templateID string) (*usecase.TemplateCatalogRow, error) {
 	return nil, nil
 }
-func (f *fakeReadModelStore) GetUserTemplatePreference(ctx context.Context, userID string) (*ucdto.TemplateCatalogRow, error) {
+func (f *fakeReadModelStore) GetUserTemplatePreference(ctx context.Context, userID string) (*usecase.TemplateCatalogRow, error) {
 	return nil, nil
 }
-func (f *fakeReadModelStore) GetResolvedDefaultTemplate(ctx context.Context, userID string) (*ucdto.TemplateCatalogRow, error) {
+func (f *fakeReadModelStore) GetResolvedDefaultTemplate(ctx context.Context, userID string) (*usecase.TemplateCatalogRow, error) {
 	return f.resolvedDefaultTemplate, f.resolvedDefaultErr
 }
 func (f *fakeReadModelStore) UpsertUserTemplatePreference(ctx context.Context, userID, templateID string, version int) error {
@@ -839,8 +841,8 @@ func (f *fakeReadModelStore) InsertEvent(ctx context.Context, sessionID, taskID,
 }
 
 func ptrString(v string) *string { return &v }
-func (f *fakeReadModelStore) InsertLLMUsage(ctx context.Context, row ucdto.UsageLedgerRow) (bool, error) {
+func (f *fakeReadModelStore) InsertLLMUsage(ctx context.Context, row usecase.UsageLedgerRow) (bool, error) {
 	return true, nil
 }
 
-var _ port.ReadModelStore = (*fakeReadModelStore)(nil)
+var _ usecase.ReadModelStore = (*fakeReadModelStore)(nil)

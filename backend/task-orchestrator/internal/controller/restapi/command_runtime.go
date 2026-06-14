@@ -11,15 +11,14 @@ import (
 
 	"task-orchestrator/internal/controller/temporal"
 	"task-orchestrator/internal/repo/persistent"
-	"task-orchestrator/internal/usecase/dto"
-	"task-orchestrator/internal/usecase/port"
+	"task-orchestrator/internal/usecase"
 )
 
 type commandSessionStore struct {
 	store *persistent.SessionStore
 }
 
-func NewCommandSessionStore(store *persistent.SessionStore) port.CommandSessionStore {
+func NewCommandSessionStore(store *persistent.SessionStore) usecase.CommandSessionStore {
 	return commandSessionStore{store: store}
 }
 
@@ -31,12 +30,12 @@ func (s commandSessionStore) InsertTaskIfNoActive(ctx context.Context, taskID, s
 	return s.store.InsertTaskIfNoActive(ctx, taskID, sessionID, userID, taskType, status, query)
 }
 
-func (s commandSessionStore) ListSessionTasks(ctx context.Context, sessionID, userID string) ([]port.SessionTask, error) {
+func (s commandSessionStore) ListSessionTasks(ctx context.Context, sessionID, userID string) ([]usecase.SessionTask, error) {
 	rows, err := s.store.ListSessionTasks(ctx, sessionID, userID)
 	if err != nil {
 		return nil, err
 	}
-	out := make([]port.SessionTask, 0, len(rows))
+	out := make([]usecase.SessionTask, 0, len(rows))
 	for _, row := range rows {
 		status := ""
 		if row.Status != nil {
@@ -46,7 +45,7 @@ func (s commandSessionStore) ListSessionTasks(ctx context.Context, sessionID, us
 		if row.TaskType != nil {
 			taskType = strings.TrimSpace(*row.TaskType)
 		}
-		out = append(out, port.SessionTask{TaskID: row.TaskID, Status: status, TaskType: taskType})
+		out = append(out, usecase.SessionTask{TaskID: row.TaskID, Status: status, TaskType: taskType})
 	}
 	return out, nil
 }
@@ -65,11 +64,11 @@ type temporalCommandRuntime struct {
 	taskQueue string
 }
 
-func NewTemporalCommandRuntime(client tclient.Client, taskQueue string) port.CommandRuntime {
+func NewTemporalCommandRuntime(client tclient.Client, taskQueue string) usecase.CommandRuntime {
 	return temporalCommandRuntime{client: client, taskQueue: taskQueue}
 }
 
-func (r temporalCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd dto.CreateTaskCommand) (string, error) {
+func (r temporalCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd usecase.CreateTaskCommand) (string, error) {
 	opts := tclient.StartWorkflowOptions{
 		ID:                  cmd.TaskID,
 		TaskQueue:           r.taskQueue,
@@ -84,7 +83,7 @@ func (r temporalCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd dto.C
 	return "", fmt.Errorf("unsupported task_type for temporal command runtime: %s", taskType)
 }
 
-func (r temporalCommandRuntime) startCardTemplateWorkflow(ctx context.Context, cmd dto.CreateTaskCommand, opts tclient.StartWorkflowOptions) (string, error) {
+func (r temporalCommandRuntime) startCardTemplateWorkflow(ctx context.Context, cmd usecase.CreateTaskCommand, opts tclient.StartWorkflowOptions) (string, error) {
 	payload := temporal.TaskInput{
 		TaskID:   cmd.TaskID,
 		UserID:   cmd.UserID,
@@ -119,7 +118,7 @@ func (r temporalCommandRuntime) startCardTemplateWorkflow(ctx context.Context, c
 	return wr.GetRunID(), nil
 }
 
-func (r temporalCommandRuntime) SignalWorkflow(ctx context.Context, taskID, command string, signal dto.ControlSignal) error {
+func (r temporalCommandRuntime) SignalWorkflow(ctx context.Context, taskID, command string, signal usecase.ControlSignal) error {
 	payload := map[string]any{
 		"command":    command,
 		"reason":     signal.Reason,

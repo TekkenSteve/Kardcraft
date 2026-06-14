@@ -13,7 +13,7 @@ import (
 type CardsDeps struct {
 	WriteJSON func(w http.ResponseWriter, status int, v any)
 	UserID    func(r *http.Request) string
-	ReadModel *usecase.ReadModelService
+	ReadModel usecase.ReadModel
 }
 
 func NewCardsHandler(deps CardsDeps) http.HandlerFunc {

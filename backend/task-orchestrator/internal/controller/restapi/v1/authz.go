@@ -7,7 +7,7 @@ import (
 	"task-orchestrator/internal/usecase"
 )
 
-func AuthorizeTaskAccess(ctx context.Context, readModel *usecase.ReadModelService, userID, taskID string) bool {
+func AuthorizeTaskAccess(ctx context.Context, readModel usecase.ReadModel, userID, taskID string) bool {
 	if readModel == nil || !readModel.Ready() {
 		return false
 	}

@@ -22,7 +22,7 @@ type ExportsDeps struct {
 
 	HTTPClient     *http.Client
 	AnkiRuntimeURL string
-	ReadModel      *usecase.ReadModelService
+	ReadModel      usecase.ReadModel
 }
 
 type apkgExportRequest struct {

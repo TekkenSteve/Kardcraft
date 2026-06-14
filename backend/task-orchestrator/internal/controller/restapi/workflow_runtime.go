@@ -8,15 +8,14 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	tclient "go.temporal.io/sdk/client"
 
-	"task-orchestrator/internal/usecase/dto"
-	"task-orchestrator/internal/usecase/port"
+	"task-orchestrator/internal/usecase"
 )
 
 type temporalWorkflowRuntime struct {
 	client tclient.Client
 }
 
-func NewTemporalWorkflowRuntime(client tclient.Client) port.WorkflowRuntime {
+func NewTemporalWorkflowRuntime(client tclient.Client) usecase.WorkflowRuntime {
 	return temporalWorkflowRuntime{client: client}
 }
 
@@ -24,7 +23,7 @@ func (r temporalWorkflowRuntime) Enabled() bool {
 	return r.client != nil
 }
 
-func (r temporalWorkflowRuntime) DescribeWorkflow(ctx context.Context, workflowID, runID string) (*dto.WorkflowDescription, error) {
+func (r temporalWorkflowRuntime) DescribeWorkflow(ctx context.Context, workflowID, runID string) (*usecase.WorkflowDescription, error) {
 	resp, err := r.client.DescribeWorkflowExecution(ctx, workflowID, runID)
 	if err != nil {
 		return nil, err
@@ -34,7 +33,7 @@ func (r temporalWorkflowRuntime) DescribeWorkflow(ctx context.Context, workflowI
 		t := resp.WorkflowExecutionInfo.CloseTime.AsTime().UTC()
 		closeTime = &t
 	}
-	return &dto.WorkflowDescription{
+	return &usecase.WorkflowDescription{
 		WorkflowID: workflowID,
 		RunID:      resp.WorkflowExecutionInfo.Execution.RunId,
 		Status:     mapRuntimeStatus(resp.WorkflowExecutionInfo.Status),
@@ -52,7 +51,7 @@ func (r temporalWorkflowRuntime) GetWorkflowResult(ctx context.Context, workflow
 	return result, nil
 }
 
-func (r temporalWorkflowRuntime) SignalWorkflow(ctx context.Context, workflowID, command string, signal dto.ControlSignal) error {
+func (r temporalWorkflowRuntime) SignalWorkflow(ctx context.Context, workflowID, command string, signal usecase.ControlSignal) error {
 	payload := map[string]any{
 		"command":    command,
 		"reason":     signal.Reason,
@@ -66,7 +65,7 @@ func (r temporalWorkflowRuntime) CancelWorkflow(ctx context.Context, workflowID 
 	return r.client.CancelWorkflow(ctx, workflowID, "")
 }
 
-func (r temporalWorkflowRuntime) QueryWorkflowState(ctx context.Context, workflowID string) (*dto.WorkflowState, error) {
+func (r temporalWorkflowRuntime) QueryWorkflowState(ctx context.Context, workflowID string) (*usecase.WorkflowState, error) {
 	queryResp, err := r.client.QueryWorkflow(ctx, workflowID, "", orchestration.QueryRunStatus)
 	if err != nil {
 		return nil, err
@@ -82,7 +81,7 @@ func (r temporalWorkflowRuntime) QueryWorkflowState(ctx context.Context, workflo
 		t := rs.UpdatedAt.UTC()
 		pausedAt = &t
 	}
-	return &dto.WorkflowState{
+	return &usecase.WorkflowState{
 		IsPaused:     isPaused,
 		IsCancelled:  isCancelled,
 		PausedAt:     pausedAt,
@@ -98,15 +97,15 @@ func mapReason(active bool, reason string) string {
 	return ""
 }
 
-func (r temporalWorkflowRuntime) ListWorkflowHistory(ctx context.Context, workflowID string) ([]dto.WorkflowHistoryEvent, error) {
+func (r temporalWorkflowRuntime) ListWorkflowHistory(ctx context.Context, workflowID string) ([]usecase.WorkflowHistoryEvent, error) {
 	iter := r.client.GetWorkflowHistory(ctx, workflowID, "", false, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
-	out := make([]dto.WorkflowHistoryEvent, 0)
+	out := make([]usecase.WorkflowHistoryEvent, 0)
 	for iter.HasNext() {
 		ev, err := iter.Next()
 		if err != nil {
 			return out, err
 		}
-		out = append(out, dto.WorkflowHistoryEvent{
+		out = append(out, usecase.WorkflowHistoryEvent{
 			EventID:   ev.EventId,
 			EventType: ev.EventType.String(),
 			Timestamp: ev.EventTime.AsTime().UTC(),

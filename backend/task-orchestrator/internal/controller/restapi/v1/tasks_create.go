@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"task-orchestrator/internal/usecase"
-	ucdto "task-orchestrator/internal/usecase/dto"
 )
 
 func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
@@ -81,14 +80,14 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 			http.Error(w, "failed to generate correlation_id", http.StatusInternalServerError)
 			return
 		}
-		workflowID := deps.NextWorkflowID(ucdto.TaskTypeCardTemplate)
-		cmd := ucdto.CreateTaskCommand{
+		workflowID := deps.NextWorkflowID(usecase.TaskTypeCardTemplate)
+		cmd := usecase.CreateTaskCommand{
 			TaskID:    workflowID,
 			UserID:    userID,
-			TaskType:  ucdto.TaskTypeCardTemplate,
+			TaskType:  usecase.TaskTypeCardTemplate,
 			SessionID: sessionID,
 			Query:     fmt.Sprintf("template:%s", strings.TrimSpace(req.TemplateID)),
-			Input: ucdto.CreateTaskInput{
+			Input: usecase.AgentTaskInput{
 				SessionID:  sessionID,
 				TemplateID: req.TemplateID,
 				Variables:  req.Variables,
@@ -96,8 +95,8 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 					"correlation_id": correlationID,
 				},
 			},
-			Config: ucdto.CreateTaskConfig{ModelRef: strings.TrimSpace(firstNonEmptyStringAny(req.Config.ModelRef, deps.DefaultModelRef))},
-			Metadata: ucdto.CreateTaskMetadata{
+			Config: usecase.CreateTaskConfig{ModelRef: strings.TrimSpace(firstNonEmptyStringAny(req.Config.ModelRef, deps.DefaultModelRef))},
+			Metadata: usecase.CreateTaskMetadata{
 				RequestID: correlationID,
 				Source:    "tasks/template",
 			},
@@ -137,9 +136,9 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 	}
 	taskType := strings.TrimSpace(req.TaskType)
 	if taskType == "" {
-		taskType = ucdto.TaskTypeMain
+		taskType = usecase.TaskTypeMain
 	}
-	if taskType != ucdto.TaskTypeMain && taskType != ucdto.TaskTypeCardTemplate {
+	if taskType != usecase.TaskTypeMain && taskType != usecase.TaskTypeCardTemplate {
 		http.Error(w, "unsupported task_type", http.StatusBadRequest)
 		return
 	}
@@ -150,7 +149,7 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 	req.Input.Query = query
 	userID := deps.UserID(r)
 	switch taskType {
-	case ucdto.TaskTypeMain:
+	case usecase.TaskTypeMain:
 		if query == "" {
 			http.Error(w, "query is required in input.query for main task", http.StatusBadRequest)
 			return
@@ -169,7 +168,7 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 				return
 			}
 		}
-	case ucdto.TaskTypeCardTemplate:
+	case usecase.TaskTypeCardTemplate:
 		if strings.TrimSpace(req.Input.TemplateID) == "" {
 			http.Error(w, "template_id is required in input.template_id for card_template task", http.StatusBadRequest)
 			return
@@ -179,7 +178,7 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 	req.Input.SessionID = sessionID
 	req.Input.FilePolicy = normalizeFilePolicy(req.Input.FilePolicy)
 	conversationHistory := normalizeConversationHistoryFromRequest(req.Input.ConversationHistory, 24)
-	if taskType == ucdto.TaskTypeMain && deps.ReadModel != nil && deps.ReadModel.Ready() {
+	if taskType == usecase.TaskTypeMain && deps.ReadModel != nil && deps.ReadModel.Ready() {
 		historyFromSession, err := buildConversationHistoryFromSession(r.Context(), deps, sessionID, userID, 24)
 		if err != nil {
 			log.Printf("failed to build conversation history session_id=%s user_id=%s err=%v", sessionID, userID, err)
@@ -188,7 +187,7 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 		}
 	}
 	taskQuery := query
-	if taskQuery == "" && taskType == ucdto.TaskTypeCardTemplate {
+	if taskQuery == "" && taskType == usecase.TaskTypeCardTemplate {
 		taskQuery = fmt.Sprintf("template:%s", strings.TrimSpace(req.Input.TemplateID))
 	}
 	if !deps.IsTemporalEnabled() {
@@ -242,17 +241,17 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 	req.Input.ContextEnvelope["correlation_id"] = correlationID
 
 	workflowID := deps.NextWorkflowID(taskType)
-	cmd := ucdto.CreateTaskCommand{
+	cmd := usecase.CreateTaskCommand{
 		TaskID:    workflowID,
 		UserID:    userID,
 		TaskType:  taskType,
 		SessionID: sessionID,
 		Query:     taskQuery,
-		Input: ucdto.CreateTaskInput{
+		Input: usecase.AgentTaskInput{
 			SessionID:           req.Input.SessionID,
 			Query:               req.Input.Query,
 			ConversationHistory: conversationHistory,
-			Context:             ucdto.TemplateContext{TemplateID: req.Input.Context.TemplateID, TemplateVersion: req.Input.Context.TemplateVersion, TemplateProfile: req.Input.Context.TemplateProfile},
+			Context:             usecase.TemplateContext{TemplateID: req.Input.Context.TemplateID, TemplateVersion: req.Input.Context.TemplateVersion, TemplateProfile: req.Input.Context.TemplateProfile},
 			FilePolicy:          req.Input.FilePolicy,
 			ContextEnvelope:     req.Input.ContextEnvelope,
 			FileIDs:             req.Input.FileIDs,
@@ -262,11 +261,11 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 			TemplateID:          req.Input.TemplateID,
 			Variables:           req.Input.Variables,
 		},
-		Config: ucdto.CreateTaskConfig{
+		Config: usecase.CreateTaskConfig{
 			ActivityTaskQueue: req.Config.ActivityTaskQueue,
 			ModelRef:          strings.TrimSpace(firstNonEmptyStringAny(req.Config.ModelRef, deps.DefaultModelRef)),
 		},
-		Metadata: ucdto.CreateTaskMetadata{
+		Metadata: usecase.CreateTaskMetadata{
 			RequestID: correlationID,
 			Source:    req.Metadata.Source,
 			TraceID:   req.Metadata.TraceID,
