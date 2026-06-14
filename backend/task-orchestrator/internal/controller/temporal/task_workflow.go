@@ -6,9 +6,11 @@ import (
 	"time"
 
 	"github.com/TekkenSteve/GoAgent/agentfw/orchestration"
-	"github.com/TekkenSteve/GoAgent/entity"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
+
+	"task-orchestrator/internal/usecase"
+	outcomemodel "task-orchestrator/internal/usecase/outcome"
 )
 
 // CommandSignal is the unified signal payload received on the AgentCommandSignal channel.
@@ -31,63 +33,20 @@ type WorkflowState struct {
 	CancelledAt  time.Time `json:"cancelled_at"`
 }
 
-type TaskType string
+type TaskType = usecase.WorkflowTaskType
 
 const (
-	TaskTypeMain         TaskType = "main"
-	TaskTypeCardTemplate TaskType = "card_template"
+	TaskTypeMain         = usecase.WorkflowTaskTypeMain
+	TaskTypeCardTemplate = usecase.WorkflowTaskTypeCardTemplate
 )
 
-type TaskInputContext struct {
-	TemplateID      string `json:"template_id"`
-	TemplateVersion int    `json:"template_version,omitempty"`
-	TemplateProfile string `json:"template_profile,omitempty"`
-}
+type TaskInputContext = usecase.WorkflowTaskInputContext
+type TaskInputPayload = usecase.WorkflowTaskInputPayload
+type TaskConfig = usecase.WorkflowTaskConfig
+type TaskMetadata = usecase.WorkflowTaskMetadata
+type TaskInput = usecase.WorkflowTaskInput
 
-type TaskInputPayload struct {
-	SessionID           string           `json:"session_id"`
-	Query               string           `json:"query,omitempty"`
-	ConversationHistory []entity.Message `json:"conversation_history,omitempty"`
-	Context             TaskInputContext `json:"context,omitempty"`
-	FilePolicy          string           `json:"file_policy,omitempty"`
-	ContextEnvelope     map[string]any   `json:"context_envelope,omitempty"`
-	FileIDs             []string         `json:"file_ids,omitempty"`
-	EffectiveFileIDs    []string         `json:"effective_file_ids,omitempty"`
-	TargetCount         int              `json:"target_count,omitempty"`
-	DifficultyLevel     string           `json:"difficulty_level,omitempty"`
-	TemplateID          string           `json:"template_id,omitempty"`
-	Variables           map[string]any   `json:"variables,omitempty"`
-}
-
-type TaskConfig struct {
-	ActivityTaskQueue string `json:"activity_task_queue,omitempty"`
-}
-
-type TaskMetadata struct {
-	RequestID string `json:"request_id,omitempty"`
-	Source    string `json:"source,omitempty"`
-	TraceID   string `json:"trace_id,omitempty"`
-}
-
-type TaskInput struct {
-	TaskID   string           `json:"task_id"`
-	UserID   string           `json:"user_id"`
-	TaskType TaskType         `json:"task_type"`
-	Input    TaskInputPayload `json:"input"`
-	Config   TaskConfig       `json:"config"`
-	Metadata TaskMetadata     `json:"metadata"`
-}
-
-type TaskOutput struct {
-	TaskID      string         `json:"task_id"`
-	WorkflowID  string         `json:"workflow_id"`
-	RunID       string         `json:"run_id"`
-	Status      string         `json:"status"`
-	Result      map[string]any `json:"result,omitempty"`
-	Error       string         `json:"error,omitempty"`
-	StartedAt   time.Time      `json:"started_at"`
-	CompletedAt time.Time      `json:"completed_at"`
-}
+type TaskOutput = usecase.WorkflowTaskOutput
 
 func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 	logger := workflow.GetLogger(ctx)
@@ -309,8 +268,8 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 	}
 	if activityErr != nil {
 		logger.Error("execute_agent_workflow failed", "task_id", input.TaskID, "err", activityErr)
-		failedOutcome := TaskOutcome{
-			SchemaVersion: TaskOutcomeSchema,
+		failedOutcome := outcomemodel.TaskOutcome{
+			SchemaVersion: outcomemodel.TaskOutcomeSchema,
 			TaskID:        input.TaskID,
 			WorkflowID:    workflow.GetInfo(ctx).WorkflowExecution.ID,
 			Status:        "failed",
@@ -350,7 +309,7 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 			CompletedAt: workflow.Now(ctx),
 		}, activityErr
 	}
-	outcome := BuildTaskOutcome(
+	outcome := outcomemodel.BuildTaskOutcome(
 		input.TaskID,
 		workflow.GetInfo(ctx).WorkflowExecution.ID,
 		"completed",

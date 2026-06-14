@@ -3,11 +3,11 @@ package v1
 import (
 	"strings"
 
-	"task-orchestrator/internal/controller/temporal"
+	"task-orchestrator/internal/usecase/outcome"
 )
 
 func DecodeTaskOutcomeMessage(payload map[string]any) (string, bool) {
-	out, err := temporal.DecodeTaskOutcome(payload)
+	out, err := outcome.DecodeTaskOutcome(payload)
 	if err != nil {
 		return "", false
 	}

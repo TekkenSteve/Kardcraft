@@ -1,4 +1,4 @@
-package temporal
+package outcomeprojector
 
 import (
 	"context"
@@ -8,10 +8,11 @@ import (
 	"strings"
 	"time"
 
-	"task-orchestrator/internal/repo/persistent"
+	"task-orchestrator/internal/repo"
+	outcomemodel "task-orchestrator/internal/usecase/outcome"
 )
 
-type PersistTaskOutcomeInput struct {
+type Input struct {
 	TaskID        string         `json:"task_id"`
 	Status        string         `json:"status"`
 	Result        map[string]any `json:"result,omitempty"`
@@ -23,23 +24,25 @@ type PersistTaskOutcomeInput struct {
 	TerminalNote  string         `json:"terminal_note,omitempty"`
 }
 
-type taskOutcomeStore interface {
+type Store interface {
 	UpdateTaskFinalState(ctx context.Context, taskID string, status string, result any, errMsg string, completedAt time.Time) error
 	GetTaskSession(ctx context.Context, taskID string) (string, error)
 	InsertEvent(ctx context.Context, sessionID, taskID, workflowID, eventType, message, payload, streamID string, ts time.Time) error
 	LoadWorkspace(ctx context.Context, sessionID string) (map[string]any, error)
 	SaveWorkspace(ctx context.Context, sessionID string, workspace map[string]any) error
-	AppendWorkflowOutboxEvent(ctx context.Context, event persistent.WorkflowOutboxEvent) error
+	AppendWorkflowOutboxEvent(ctx context.Context, event repo.WorkflowOutboxEvent) error
 }
 
-var persistenceStore taskOutcomeStore
-
-func ConfigureTaskPersistenceStore(store *persistent.SessionStore) {
-	persistenceStore = store
+type Projector struct {
+	store Store
 }
 
-func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput) error {
-	if persistenceStore == nil {
+func New(store Store) *Projector {
+	return &Projector{store: store}
+}
+
+func (p *Projector) Project(ctx context.Context, in Input) error {
+	if p == nil || p.store == nil {
 		return fmt.Errorf("session store not configured")
 	}
 	taskID := strings.TrimSpace(in.TaskID)
@@ -50,72 +53,72 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 	if status == "" {
 		status = "completed"
 	}
-	outcome, err := DecodeTaskOutcome(in.Result)
+	taskOutcome, err := outcomemodel.DecodeTaskOutcome(in.Result)
 	if err != nil {
 		if status == "completed" {
 			log.Printf("metric=outcome_decode_failure task_id=%s workflow_id=%s status=%s err=%v", taskID, in.WorkflowID, status, err)
 			return fmt.Errorf("decode task outcome: %w", err)
 		}
-		outcome = TaskOutcome{
-			SchemaVersion: TaskOutcomeSchema,
+		taskOutcome = outcomemodel.TaskOutcome{
+			SchemaVersion: outcomemodel.TaskOutcomeSchema,
 			TaskID:        taskID,
 			WorkflowID:    strings.TrimSpace(in.WorkflowID),
 			Status:        status,
 			Message:       strings.TrimSpace(in.Error),
 		}
 	} else {
-		log.Printf("metric=outcome_decode_success task_id=%s workflow_id=%s schema=%s", taskID, in.WorkflowID, outcome.SchemaVersion)
+		log.Printf("metric=outcome_decode_success task_id=%s workflow_id=%s schema=%s", taskID, in.WorkflowID, taskOutcome.SchemaVersion)
 	}
-	if outcome.Status == "" {
-		outcome.Status = status
+	if taskOutcome.Status == "" {
+		taskOutcome.Status = status
 	}
-	if outcome.TaskID == "" {
-		outcome.TaskID = taskID
+	if taskOutcome.TaskID == "" {
+		taskOutcome.TaskID = taskID
 	}
-	if outcome.WorkflowID == "" {
-		outcome.WorkflowID = strings.TrimSpace(in.WorkflowID)
-		if outcome.WorkflowID == "" {
-			outcome.WorkflowID = taskID
+	if taskOutcome.WorkflowID == "" {
+		taskOutcome.WorkflowID = strings.TrimSpace(in.WorkflowID)
+		if taskOutcome.WorkflowID == "" {
+			taskOutcome.WorkflowID = taskID
 		}
 	}
-	if status != "" && status != outcome.Status {
-		outcome.Status = status
+	if status != "" && status != taskOutcome.Status {
+		taskOutcome.Status = status
 	}
 
-	if err := persistenceStore.UpdateTaskFinalState(ctx, taskID, outcome.Status, outcome.ToMap(), in.Error, in.CompletedAt); err != nil {
-		log.Printf("metric=outcome_persist_critical_failure task_id=%s workflow_id=%s err=%v", taskID, outcome.WorkflowID, err)
+	if err := p.store.UpdateTaskFinalState(ctx, taskID, taskOutcome.Status, taskOutcome.ToMap(), in.Error, in.CompletedAt); err != nil {
+		log.Printf("metric=outcome_persist_critical_failure task_id=%s workflow_id=%s err=%v", taskID, taskOutcome.WorkflowID, err)
 		return err
 	}
 
-	sessionID, _ := persistenceStore.GetTaskSession(ctx, taskID)
+	sessionID, _ := p.store.GetTaskSession(ctx, taskID)
 	if strings.TrimSpace(sessionID) == "" {
-		sessionID = strings.TrimSpace(outcome.SessionID)
+		sessionID = strings.TrimSpace(taskOutcome.SessionID)
 	}
 	if strings.TrimSpace(sessionID) == "" {
 		return nil
 	}
-	workflowID := strings.TrimSpace(outcome.WorkflowID)
+	workflowID := strings.TrimSpace(taskOutcome.WorkflowID)
 	runID := strings.TrimSpace(in.RunID)
 	if runID == "" {
 		return fmt.Errorf("run_id is required")
 	}
 	correlationID := strings.TrimSpace(in.CorrelationID)
-	if correlationID == "" && outcome.Metadata != nil {
-		correlationID = strings.TrimSpace(asString(outcome.Metadata["request_id"]))
+	if correlationID == "" && taskOutcome.Metadata != nil {
+		correlationID = strings.TrimSpace(outcomemodel.AsString(taskOutcome.Metadata["request_id"]))
 	}
 	if correlationID == "" {
 		return fmt.Errorf("correlation_id is required")
 	}
 
 	eventType := "WORKFLOW_COMPLETED"
-	if outcome.Status == "failed" {
+	if taskOutcome.Status == "failed" {
 		eventType = "WORKFLOW_FAILED"
-	} else if outcome.Status == "cancelled" {
+	} else if taskOutcome.Status == "cancelled" {
 		eventType = "WORKFLOW_CANCELLED"
 	}
 	msg := strings.TrimSpace(in.TerminalNote)
 	if msg == "" {
-		msg = strings.TrimSpace(outcome.Message)
+		msg = strings.TrimSpace(taskOutcome.Message)
 	}
 	if msg == "" {
 		switch eventType {
@@ -127,12 +130,12 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 			msg = "Workflow cancelled"
 		}
 	}
-	if outcome.Status == "completed" {
-		cards := buildWorkspaceCards(outcome.FinalCards, outcome.UserID)
+	if taskOutcome.Status == "completed" {
+		cards := buildWorkspaceCards(taskOutcome.FinalCards, taskOutcome.UserID)
 		if len(cards) > 0 {
 			var currentWorkspace map[string]any
 			nextVersion := 1
-			if loadedWorkspace, err := persistenceStore.LoadWorkspace(ctx, sessionID); err == nil {
+			if loadedWorkspace, err := p.store.LoadWorkspace(ctx, sessionID); err == nil {
 				currentWorkspace = loadedWorkspace
 				nextVersion = workspaceVersion(currentWorkspace) + 1
 			}
@@ -145,14 +148,14 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 				"updated_at": now.Format(time.RFC3339),
 				"version":    nextVersion,
 			}
-			if len(outcome.Metadata) > 0 {
-				if templateID := strings.TrimSpace(asString(outcome.Metadata["template_id"])); templateID != "" {
+			if len(taskOutcome.Metadata) > 0 {
+				if templateID := strings.TrimSpace(outcomemodel.AsString(taskOutcome.Metadata["template_id"])); templateID != "" {
 					workspace["template_id"] = templateID
 				}
-				if supported := normalizeStringSlice(asAnySlice(outcome.Metadata["supported_question_types"])); len(supported) > 0 {
+				if supported := outcomemodel.NormalizeStringSlice(outcomemodel.AsAnySlice(taskOutcome.Metadata["supported_question_types"])); len(supported) > 0 {
 					workspace["supported_question_types"] = supported
 				}
-				if selected := strings.TrimSpace(asString(outcome.Metadata["selected_question_type"])); selected != "" {
+				if selected := strings.TrimSpace(outcomemodel.AsString(taskOutcome.Metadata["selected_question_type"])); selected != "" {
 					workspace["selected_question_type"] = selected
 				}
 			}
@@ -161,7 +164,7 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 					workspace["apkg_exports"] = apkgExports
 				}
 			}
-			if err := persistenceStore.SaveWorkspace(ctx, sessionID, workspace); err != nil {
+			if err := p.store.SaveWorkspace(ctx, sessionID, workspace); err != nil {
 				log.Printf("metric=projection_critical_failure type=workspace task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
 				return err
 			} else {
@@ -190,10 +193,10 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 					"cards":          cards,
 					"message":        "Workspace updated",
 				}
-				if err := persistenceStore.AppendWorkflowOutboxEvent(ctx, persistent.WorkflowOutboxEvent{
+				if err := p.store.AppendWorkflowOutboxEvent(ctx, repo.WorkflowOutboxEvent{
 					TaskID:     taskID,
 					SessionID:  sessionID,
-					UserID:     outcome.UserID,
+					UserID:     taskOutcome.UserID,
 					WorkflowID: workflowID,
 					RunID:      runID,
 					EventType:  "WORKSPACE_UPDATED",
@@ -204,7 +207,7 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 					log.Printf("metric=projection_critical_failure type=workspace_outbox task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
 					return err
 				}
-				if err := persistenceStore.InsertEvent(
+				if err := p.store.InsertEvent(
 					ctx,
 					sessionID,
 					taskID,
@@ -228,13 +231,13 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 		"session_id":     sessionID,
 		"workspace_id":   sessionID,
 		"correlation_id": correlationID,
-		"status":         outcome.Status,
+		"status":         taskOutcome.Status,
 		"message":        msg,
 	}
-	if err := persistenceStore.AppendWorkflowOutboxEvent(ctx, persistent.WorkflowOutboxEvent{
+	if err := p.store.AppendWorkflowOutboxEvent(ctx, repo.WorkflowOutboxEvent{
 		TaskID:     taskID,
 		SessionID:  sessionID,
-		UserID:     outcome.UserID,
+		UserID:     taskOutcome.UserID,
 		WorkflowID: workflowID,
 		RunID:      runID,
 		EventType:  eventType,
@@ -246,7 +249,7 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 		return err
 	}
 
-	if err := persistenceStore.InsertEvent(
+	if err := p.store.InsertEvent(
 		ctx,
 		sessionID,
 		taskID,
@@ -254,7 +257,7 @@ func PersistTaskOutcomeActivity(ctx context.Context, in PersistTaskOutcomeInput)
 		eventType,
 		msg,
 		"",
-		"terminal:"+taskID+":"+outcome.Status,
+		"terminal:"+taskID+":"+taskOutcome.Status,
 		time.Now().UTC(),
 	); err != nil {
 		log.Printf("metric=projection_failure type=terminal_event task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
@@ -281,7 +284,16 @@ func workspaceVersion(workspace map[string]any) int {
 	}
 }
 
-func buildWorkspaceCards(cards []TaskOutcomeCard, userID string) []map[string]any {
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func buildWorkspaceCards(cards []outcomemodel.TaskOutcomeCard, userID string) []map[string]any {
 	if len(cards) == 0 {
 		return []map[string]any{}
 	}

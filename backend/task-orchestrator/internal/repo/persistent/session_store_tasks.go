@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"task-orchestrator/internal/repo"
 )
 
 func (s *SessionStore) UpsertSession(ctx context.Context, sessionID, userID, latestQuery, latestStatus string) error {
@@ -200,7 +201,7 @@ func (s *SessionStore) UpdateTaskFinalState(
 	return nil
 }
 
-func (s *SessionStore) AppendWorkflowOutboxEvent(ctx context.Context, event WorkflowOutboxEvent) error {
+func (s *SessionStore) AppendWorkflowOutboxEvent(ctx context.Context, event repo.WorkflowOutboxEvent) error {
 	if s == nil || s.pg == nil {
 		return fmt.Errorf("postgres not configured")
 	}

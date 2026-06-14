@@ -3,6 +3,7 @@ package repo
 
 import (
 	"context"
+	"time"
 
 	"task-orchestrator/internal/entity"
 )
@@ -22,5 +23,17 @@ type (
 
 	EventPublisher interface {
 		Publish(ctx context.Context, events []entity.DomainEvent) error
+	}
+
+	WorkflowOutboxEvent struct {
+		TaskID     string
+		SessionID  string
+		UserID     string
+		WorkflowID string
+		RunID      string
+		EventType  string
+		Channel    string
+		Payload    map[string]any
+		OccurredAt time.Time
 	}
 )

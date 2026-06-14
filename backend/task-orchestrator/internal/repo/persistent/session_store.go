@@ -88,18 +88,6 @@ type UsageLedgerRow struct {
 	CreatedAt         time.Time
 }
 
-type WorkflowOutboxEvent struct {
-	TaskID     string
-	SessionID  string
-	UserID     string
-	WorkflowID string
-	RunID      string
-	EventType  string
-	Channel    string
-	Payload    map[string]any
-	OccurredAt time.Time
-}
-
 type ModelUsageBreakdown struct {
 	Model               string  `json:"model"`
 	Provider            string  `json:"provider"`

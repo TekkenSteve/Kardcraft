@@ -12,6 +12,7 @@ import (
 	schemas "github.com/maximhq/bifrost/core/schemas"
 	gosdk "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
+	"go.temporal.io/sdk/workflow"
 
 	"github.com/TekkenSteve/GoAgent/agentfw/orchestration"
 	agentruntime "github.com/TekkenSteve/GoAgent/agentfw/runtime"
@@ -28,6 +29,7 @@ import (
 
 	"task-orchestrator/internal/controller/temporal"
 	"task-orchestrator/internal/repo/persistent"
+	"task-orchestrator/internal/usecase"
 )
 
 func main() {
@@ -55,7 +57,7 @@ func main() {
 	defer c.Close()
 
 	w := worker.New(c, taskQueue, worker.Options{})
-	w.RegisterWorkflow(temporal.TaskWorkflow)
+	w.RegisterWorkflowWithOptions(temporal.TaskWorkflow, workflow.RegisterOptions{Name: usecase.TaskWorkflowName})
 	storeCfg := persistent.SessionStoreConfigFromEnv()
 	redisURL, err := storeCfg.GoAgentRedisURL()
 	if err != nil {

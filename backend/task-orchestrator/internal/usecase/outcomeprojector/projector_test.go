@@ -1,4 +1,4 @@
-package temporal
+package outcomeprojector
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"task-orchestrator/internal/repo/persistent"
+	"task-orchestrator/internal/repo"
 )
 
 type fakeOutcomeStore struct {
@@ -64,7 +64,7 @@ func (f *fakeOutcomeStore) SaveWorkspace(ctx context.Context, sessionID string, 
 	return f.saveErr
 }
 
-func (f *fakeOutcomeStore) AppendWorkflowOutboxEvent(ctx context.Context, event persistent.WorkflowOutboxEvent) error {
+func (f *fakeOutcomeStore) AppendWorkflowOutboxEvent(ctx context.Context, event repo.WorkflowOutboxEvent) error {
 	f.calls = append(f.calls, "append_outbox")
 	f.outboxChannels = append(f.outboxChannels, event.Channel)
 	f.outboxTypes = append(f.outboxTypes, event.EventType)
@@ -72,8 +72,8 @@ func (f *fakeOutcomeStore) AppendWorkflowOutboxEvent(ctx context.Context, event 
 	return f.outboxErr
 }
 
-func persistInput(status string, finalCards []any) PersistTaskOutcomeInput {
-	return PersistTaskOutcomeInput{
+func persistInput(status string, finalCards []any) Input {
+	return Input{
 		TaskID:        "t1",
 		WorkflowID:    "w1",
 		RunID:         "run1",
@@ -93,13 +93,10 @@ func persistInput(status string, finalCards []any) PersistTaskOutcomeInput {
 	}
 }
 
-func TestPersistTaskOutcomeActivity_CriticalFinalStateFailure(t *testing.T) {
+func TestProject_CriticalFinalStateFailure(t *testing.T) {
 	store := &fakeOutcomeStore{sessionID: "s1", updateErr: errors.New("db down")}
-	prev := persistenceStore
-	persistenceStore = store
-	t.Cleanup(func() { persistenceStore = prev })
 
-	err := PersistTaskOutcomeActivity(context.Background(), persistInput("completed", []any{}))
+	err := New(store).Project(context.Background(), persistInput("completed", []any{}))
 	if err == nil {
 		t.Fatalf("expected error when UpdateTaskFinalState fails")
 	}
@@ -108,16 +105,13 @@ func TestPersistTaskOutcomeActivity_CriticalFinalStateFailure(t *testing.T) {
 	}
 }
 
-func TestPersistTaskOutcomeActivity_WorkspaceSaveFailureBlocksTerminal(t *testing.T) {
+func TestProject_WorkspaceSaveFailureBlocksTerminal(t *testing.T) {
 	store := &fakeOutcomeStore{
 		sessionID: "s1",
 		saveErr:   errors.New("save failed"),
 	}
-	prev := persistenceStore
-	persistenceStore = store
-	t.Cleanup(func() { persistenceStore = prev })
 
-	err := PersistTaskOutcomeActivity(context.Background(), persistInput("completed", []any{
+	err := New(store).Project(context.Background(), persistInput("completed", []any{
 		map[string]any{"id": "c1", "front": "f", "back": "b", "model": "mcq"},
 	}))
 	if err == nil {
@@ -128,13 +122,10 @@ func TestPersistTaskOutcomeActivity_WorkspaceSaveFailureBlocksTerminal(t *testin
 	}
 }
 
-func TestPersistTaskOutcomeActivity_WorkspaceEventPrecedesTerminalAndCarriesCards(t *testing.T) {
+func TestProject_WorkspaceEventPrecedesTerminalAndCarriesCards(t *testing.T) {
 	store := &fakeOutcomeStore{sessionID: "s1"}
-	prev := persistenceStore
-	persistenceStore = store
-	t.Cleanup(func() { persistenceStore = prev })
 
-	err := PersistTaskOutcomeActivity(context.Background(), persistInput("completed", []any{
+	err := New(store).Project(context.Background(), persistInput("completed", []any{
 		map[string]any{"id": "c1", "front": "f", "back": "b", "model": "mcq"},
 	}))
 	if err != nil {
@@ -168,13 +159,10 @@ func TestPersistTaskOutcomeActivity_WorkspaceEventPrecedesTerminalAndCarriesCard
 	}
 }
 
-func TestPersistTaskOutcomeActivity_FailedStatusUsesFallbackOutcome(t *testing.T) {
+func TestProject_FailedStatusUsesFallbackOutcome(t *testing.T) {
 	store := &fakeOutcomeStore{sessionID: "s1"}
-	prev := persistenceStore
-	persistenceStore = store
-	t.Cleanup(func() { persistenceStore = prev })
 
-	err := PersistTaskOutcomeActivity(context.Background(), PersistTaskOutcomeInput{
+	err := New(store).Project(context.Background(), Input{
 		TaskID:        "t-failed",
 		WorkflowID:    "w-failed",
 		RunID:         "run-failed",

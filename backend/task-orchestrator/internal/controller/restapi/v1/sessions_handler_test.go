@@ -2,9 +2,10 @@ package v1
 
 import (
 	"reflect"
-	"task-orchestrator/internal/controller/temporal"
-	"task-orchestrator/internal/usecase"
 	"testing"
+
+	"task-orchestrator/internal/usecase"
+	"task-orchestrator/internal/usecase/outcome"
 )
 
 func TestNormalizeWorkspaceResponse_StableAcrossRepeatedCalls(t *testing.T) {
@@ -117,14 +118,14 @@ func TestExtractResultMessage_FallbackWhenEnabled(t *testing.T) {
 
 func TestExtractResultMessage_FromCanonicalOutcome(t *testing.T) {
 	t.Setenv("TASK_READ_PATH_BACKFILL_ENABLED", "false")
-	outcome := temporal.TaskOutcome{
-		SchemaVersion: temporal.TaskOutcomeSchema,
+	taskOutcome := outcome.TaskOutcome{
+		SchemaVersion: outcome.TaskOutcomeSchema,
 		TaskID:        "t1",
 		WorkflowID:    "w1",
 		Status:        "completed",
 		Message:       "canonical-message",
 	}
-	message := ExtractResultMessage(outcome.ToMap())
+	message := ExtractResultMessage(taskOutcome.ToMap())
 	if message != "canonical-message" {
 		t.Fatalf("expected canonical message, got %q", message)
 	}

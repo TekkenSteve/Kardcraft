@@ -1,10 +1,8 @@
-package temporal
+package outcome
 
 import (
 	"fmt"
 	"strings"
-
-	"github.com/TekkenSteve/GoAgent/entity"
 )
 
 const TaskOutcomeSchema = "task-outcome"
@@ -20,7 +18,6 @@ type TaskOutcomeCard struct {
 }
 
 type TaskOutcome struct {
-	entity.BaseEvent
 	SchemaVersion string            `json:"schema_version"`
 	TaskID        string            `json:"task_id"`
 	WorkflowID    string            `json:"workflow_id"`
@@ -224,6 +221,10 @@ func normalizeStringSlice(raw []any) []string {
 	return out
 }
 
+func NormalizeStringSlice(raw []any) []string {
+	return normalizeStringSlice(raw)
+}
+
 func asAnySlice(v any) []any {
 	switch t := v.(type) {
 	case []any:
@@ -239,6 +240,10 @@ func asAnySlice(v any) []any {
 	}
 }
 
+func AsAnySlice(v any) []any {
+	return asAnySlice(v)
+}
+
 func asString(v any) string {
 	switch t := v.(type) {
 	case string:
@@ -246,6 +251,10 @@ func asString(v any) string {
 	default:
 		return ""
 	}
+}
+
+func AsString(v any) string {
+	return asString(v)
 }
 
 func firstNonEmpty(values ...string) string {

@@ -9,7 +9,6 @@ import (
 	"github.com/TekkenSteve/GoAgent/agentfw/orchestration"
 	tclient "go.temporal.io/sdk/client"
 
-	"task-orchestrator/internal/controller/temporal"
 	"task-orchestrator/internal/repo/persistent"
 	"task-orchestrator/internal/usecase"
 )
@@ -77,22 +76,22 @@ func (r temporalCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd useca
 	}
 
 	taskType := strings.TrimSpace(cmd.TaskType)
-	if strings.EqualFold(taskType, string(temporal.TaskTypeCardTemplate)) {
+	if strings.EqualFold(taskType, usecase.TaskTypeCardTemplate) {
 		return r.startCardTemplateWorkflow(ctx, cmd, opts)
 	}
 	return "", fmt.Errorf("unsupported task_type for temporal command runtime: %s", taskType)
 }
 
 func (r temporalCommandRuntime) startCardTemplateWorkflow(ctx context.Context, cmd usecase.CreateTaskCommand, opts tclient.StartWorkflowOptions) (string, error) {
-	payload := temporal.TaskInput{
+	payload := usecase.WorkflowTaskInput{
 		TaskID:   cmd.TaskID,
 		UserID:   cmd.UserID,
-		TaskType: temporal.TaskTypeCardTemplate,
-		Input: temporal.TaskInputPayload{
+		TaskType: usecase.WorkflowTaskTypeCardTemplate,
+		Input: usecase.WorkflowTaskInputPayload{
 			SessionID:           cmd.Input.SessionID,
 			Query:               cmd.Input.Query,
 			ConversationHistory: cmd.Input.ConversationHistory,
-			Context:             temporal.TaskInputContext{TemplateID: cmd.Input.Context.TemplateID, TemplateVersion: cmd.Input.Context.TemplateVersion, TemplateProfile: cmd.Input.Context.TemplateProfile},
+			Context:             usecase.WorkflowTaskInputContext{TemplateID: cmd.Input.Context.TemplateID, TemplateVersion: cmd.Input.Context.TemplateVersion, TemplateProfile: cmd.Input.Context.TemplateProfile},
 			FilePolicy:          cmd.Input.FilePolicy,
 			ContextEnvelope:     cmd.Input.ContextEnvelope,
 			FileIDs:             cmd.Input.FileIDs,
@@ -102,16 +101,16 @@ func (r temporalCommandRuntime) startCardTemplateWorkflow(ctx context.Context, c
 			TemplateID:          cmd.Input.TemplateID,
 			Variables:           cmd.Input.Variables,
 		},
-		Config: temporal.TaskConfig{
+		Config: usecase.WorkflowTaskConfig{
 			ActivityTaskQueue: cmd.Config.ActivityTaskQueue,
 		},
-		Metadata: temporal.TaskMetadata{
+		Metadata: usecase.WorkflowTaskMetadata{
 			RequestID: cmd.Metadata.RequestID,
 			Source:    cmd.Metadata.Source,
 			TraceID:   cmd.Metadata.TraceID,
 		},
 	}
-	wr, err := r.client.ExecuteWorkflow(ctx, opts, temporal.TaskWorkflow, payload)
+	wr, err := r.client.ExecuteWorkflow(ctx, opts, usecase.TaskWorkflowName, payload)
 	if err != nil {
 		return "", fmt.Errorf("failed to start card template workflow: %w", err)
 	}
