@@ -14,6 +14,17 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type SessionStoreConfig struct {
+	PostgresDSN   string
+	RedisAddr     string
+	RedisPassword string
+	RedisDB       int
+	CacheTTL      time.Duration
+	ActiveWindow  time.Duration
+	CleanupEvery  time.Duration
+	CleanupBatch  int
+}
+
 func NewSessionStore(ctx context.Context, cfg SessionStoreConfig) *SessionStore {
 	return NewSessionStoreWithRedis(ctx, cfg, nil)
 }
