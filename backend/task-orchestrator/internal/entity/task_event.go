@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sync/atomic"
 	"time"
-
-	"github.com/TekkenSteve/GoAgent/entity"
 )
 
 type DomainEvent interface {
@@ -16,16 +14,18 @@ type DomainEvent interface {
 }
 
 type taskEvent struct {
-	entity.BaseEvent
+	eventID     string
+	eventType   string
+	occurredAt  time.Time
 	aggregateID string
 }
 
 func (e taskEvent) EventID() string {
-	return e.BaseEvent.EventID
+	return e.eventID
 }
 
 func (e taskEvent) EventType() string {
-	return e.BaseEvent.EventType
+	return e.eventType
 }
 
 func (e taskEvent) AggregateID() string {
@@ -33,7 +33,7 @@ func (e taskEvent) AggregateID() string {
 }
 
 func (e taskEvent) OccurredAt() time.Time {
-	return e.BaseEvent.Timestamp
+	return e.occurredAt
 }
 
 type TaskCreated struct{ taskEvent }
@@ -116,11 +116,9 @@ func baseTaskEvent(eventType string, taskID TaskID, at time.Time) taskEvent {
 	ts := at.UTC()
 	seq := atomic.AddUint64(&eventSeq, 1)
 	return taskEvent{
-		BaseEvent: entity.BaseEvent{
-			EventID:   fmt.Sprintf("%s-%s-%d", eventType, taskID.String(), seq),
-			EventType: eventType,
-			Timestamp: ts,
-		},
+		eventID:     fmt.Sprintf("%s-%s-%d", eventType, taskID.String(), seq),
+		eventType:   eventType,
+		occurredAt:  ts,
 		aggregateID: taskID.String(),
 	}
 }

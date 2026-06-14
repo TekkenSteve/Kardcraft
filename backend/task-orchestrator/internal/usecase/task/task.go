@@ -7,20 +7,21 @@ import (
 	"time"
 
 	"task-orchestrator/internal/entity"
+	"task-orchestrator/internal/repo"
 	"task-orchestrator/internal/usecase"
 )
 
 type UseCase struct {
-	repo      entity.Repository
-	publisher entity.EventPublisher
+	repo      repo.TaskRepo
+	publisher repo.EventPublisher
 	clock     usecase.Clock
 }
 
-func New(repo entity.Repository, publisher entity.EventPublisher, clock usecase.Clock) *UseCase {
+func New(taskRepo repo.TaskRepo, publisher repo.EventPublisher, clock usecase.Clock) *UseCase {
 	if clock == nil {
 		clock = time.Now
 	}
-	return &UseCase{repo: repo, publisher: publisher, clock: clock}
+	return &UseCase{repo: taskRepo, publisher: publisher, clock: clock}
 }
 
 func (s *UseCase) CreateTask(ctx context.Context, in usecase.CreateTaskInput) (*entity.Task, error) {
@@ -106,7 +107,7 @@ func (s *UseCase) ListTasks(ctx context.Context, in usecase.ListTasksInput) ([]*
 	if offset < 0 {
 		offset = 0
 	}
-	return s.repo.List(ctx, entity.ListFilter{UserID: strings.TrimSpace(in.UserID), Limit: limit, Offset: offset})
+	return s.repo.List(ctx, repo.TaskFilter{UserID: strings.TrimSpace(in.UserID), Limit: limit, Offset: offset})
 }
 
 func (s *UseCase) transition(ctx context.Context, rawTaskID string, fn func(t *entity.Task, now time.Time) error) error {

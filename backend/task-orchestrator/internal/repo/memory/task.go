@@ -1,4 +1,4 @@
-package persistent
+package memory
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"task-orchestrator/internal/entity"
+	"task-orchestrator/internal/repo"
 )
 
 type InMemoryTaskRepository struct {
@@ -39,7 +40,7 @@ func (r *InMemoryTaskRepository) Save(_ context.Context, aggregate *entity.Task)
 	return nil
 }
 
-func (r *InMemoryTaskRepository) List(_ context.Context, filter entity.ListFilter) ([]*entity.Task, int, error) {
+func (r *InMemoryTaskRepository) List(_ context.Context, filter repo.TaskFilter) ([]*entity.Task, int, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 

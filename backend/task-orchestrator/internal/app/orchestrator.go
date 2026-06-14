@@ -18,6 +18,7 @@ import (
 	"github.com/TekkenSteve/GoAgent/usecase/executor"
 
 	"task-orchestrator/internal/controller/restapi"
+	"task-orchestrator/internal/repo/memory"
 	"task-orchestrator/internal/repo/persistent"
 	"task-orchestrator/internal/usecase"
 	"task-orchestrator/internal/usecase/command"
@@ -67,9 +68,9 @@ func NewOrchestratorFromEnv() *restapi.Server {
 		}
 	}
 
-	repo := persistent.NewInMemoryTaskRepository()
-	publisher := persistent.NewInMemoryEventPublisher()
-	taskService := task.New(repo, publisher, nil)
+	taskRepo := memory.NewInMemoryTaskRepository()
+	publisher := memory.NewInMemoryEventPublisher()
+	taskService := task.New(taskRepo, publisher, nil)
 
 	readModel := readmodel.New(readModelStore)
 	workflowSvc := workflow.New(restapi.NewTemporalWorkflowRuntime(temporalClient), readModelStore)

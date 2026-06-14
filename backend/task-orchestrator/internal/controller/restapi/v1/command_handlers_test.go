@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/TekkenSteve/GoAgent/entity"
-	"task-orchestrator/internal/repo/persistent"
+	"task-orchestrator/internal/repo/memory"
 	"task-orchestrator/internal/usecase"
 	"task-orchestrator/internal/usecase/command"
 	"task-orchestrator/internal/usecase/readmodel"
@@ -587,9 +587,9 @@ func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, runti
 	if readStore == nil {
 		readStore = &fakeReadModelStore{ready: true}
 	}
-	repo := persistent.NewInMemoryTaskRepository()
-	publisher := persistent.NewInMemoryEventPublisher()
-	taskService := task.New(repo, publisher, nil)
+	taskRepo := memory.NewInMemoryTaskRepository()
+	publisher := memory.NewInMemoryEventPublisher()
+	taskService := task.New(taskRepo, publisher, nil)
 	agentExecutor := &fakeAgentExecutor{runID: "agent-run-1"}
 	commandService := command.New(taskService, store, agentExecutor, runtime)
 
