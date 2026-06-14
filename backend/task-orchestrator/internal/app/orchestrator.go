@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -10,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	goredis "github.com/redis/go-redis/v9"
 	tclient "go.temporal.io/sdk/client"
 
 	"github.com/TekkenSteve/GoAgent/agentfw/config"
@@ -21,13 +19,29 @@ import (
 
 	"task-orchestrator/internal/controller/restapi"
 	"task-orchestrator/internal/repo/persistent"
-	redissvc "task-orchestrator/internal/repo/redis"
 	"task-orchestrator/internal/usecase"
 )
 
 func NewOrchestratorFromEnv() *restapi.Server {
 	storeCfg := persistent.SessionStoreConfigFromEnv()
-	sessionStore := persistent.NewSessionStore(context.Background(), storeCfg)
+
+	var goagentRedis *goagentredis.Redis
+	var goagentSubscriber *goagentstream.RedisSubscriber
+	var goagentGateway *goagentstream.SSEGateway
+	if redisURL, err := storeCfg.GoAgentRedisURL(); err != nil {
+		log.Fatalf("invalid redis configuration: %v", err)
+	} else if redisURL != "" {
+		rdb, err := goagentredis.New(context.Background(), redisURL)
+		if err != nil {
+			log.Printf("warning: goagent redis client creation failed: %v", err)
+		} else {
+			goagentRedis = rdb
+			goagentSubscriber = goagentstream.NewRedisSubscriber(rdb.Hub())
+			goagentGateway = goagentstream.NewSSEGateway()
+		}
+	}
+
+	sessionStore := persistent.NewSessionStoreWithRedis(context.Background(), storeCfg, goagentRedis)
 	readModelStore := persistent.NewUsecaseReadModelStore(sessionStore)
 
 	taskQueue := strings.TrimSpace(os.Getenv("TASK_QUEUE"))
@@ -46,32 +60,6 @@ func NewOrchestratorFromEnv() *restapi.Server {
 			log.Printf("warning: temporal enabled but dial failed: %v", err)
 		} else {
 			temporalClient = client
-		}
-	}
-
-	var redisClient *goredis.Client
-	var streamClient *restapi.RedisStreamClient
-	var goagentSubscriber *goagentstream.RedisSubscriber
-	var goagentGateway *goagentstream.SSEGateway
-	if storeCfg.RedisAddr != "" {
-		rdb, err := redissvc.NewStreamClient(context.Background(), storeCfg.RedisAddr, storeCfg.RedisPassword, storeCfg.RedisDB)
-		if err != nil {
-			log.Printf("warning: redis stream client ping failed: %v", err)
-		} else {
-			redisClient = rdb
-			streamClient = restapi.NewRedisStreamClient(redissvc.NewService(redisClient))
-		}
-
-		redisURL := fmt.Sprintf("redis://%s/%d", storeCfg.RedisAddr, storeCfg.RedisDB)
-		if storeCfg.RedisPassword != "" {
-			redisURL = fmt.Sprintf("redis://:%s@%s/%d", storeCfg.RedisPassword, storeCfg.RedisAddr, storeCfg.RedisDB)
-		}
-		goagentRDB, err := goagentredis.New(context.Background(), redisURL)
-		if err != nil {
-			log.Printf("warning: goagent redis client creation failed: %v", err)
-		} else {
-			goagentSubscriber = goagentstream.NewRedisSubscriber(goagentRDB.Hub())
-			goagentGateway = goagentstream.NewSSEGateway()
 		}
 	}
 
@@ -100,8 +88,8 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	if temporalClient != nil {
 		closeFuncs = append(closeFuncs, temporalClient.Close)
 	}
-	if redisClient != nil {
-		closeFuncs = append(closeFuncs, func() { _ = redisClient.Close() })
+	if goagentRedis != nil {
+		closeFuncs = append(closeFuncs, func() { _ = goagentRedis.Close() })
 	}
 
 	srv := restapi.NewServer(defaultPortFromEnv(), restapi.ServerDependencies{
@@ -113,7 +101,6 @@ func NewOrchestratorFromEnv() *restapi.Server {
 		WorkflowSvc:      workflowSvc,
 		SessionStore:     sessionStore,
 		DefaultModelRef:  strings.TrimSpace(os.Getenv("GOAGENT_MODEL_REF")),
-		RedisSvc:         streamClient,
 		StreamSubscriber: goagentSubscriber,
 		StreamGateway:    goagentGateway,
 		CloseFuncs:       closeFuncs,

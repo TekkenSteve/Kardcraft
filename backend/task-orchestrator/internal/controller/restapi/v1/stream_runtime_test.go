@@ -163,18 +163,8 @@ func TestBuildUsageLedgerRowAcceptsUnknownFieldsForForwardCompatibility(t *testi
 	}
 }
 
-type fakeRedisStreamClient struct {
-	enabled   bool
-	readCalls atomic.Int64
-}
-
-func (f *fakeRedisStreamClient) Enabled() bool { return f.enabled }
-
-func (f *fakeRedisStreamClient) Stats() map[string]any { return map[string]any{} }
-
-func newTestServer(redisClient RedisStreamClientPort) *Server {
+func newTestServer() *Server {
 	return &Server{
-		redisSvc:                redisClient,
 		timelineByWorkflow:      make(map[string][]TimelineEvent),
 		uploads:                 make(map[string]*uploadState),
 		subscribers:             make(map[string]map[int]chan OutboundEvent),
@@ -198,7 +188,7 @@ func waitFor(t *testing.T, timeout time.Duration, fn func() bool) {
 }
 
 func TestAppendTimelineDedupeByStreamID(t *testing.T) {
-	s := newTestServer(nil)
+	s := newTestServer()
 	wf := "wf-dedupe"
 	runID := "run-dedupe"
 	s.bindWorkflowRunID(wf, runID)
@@ -215,7 +205,7 @@ func TestAppendTimelineDedupeByStreamID(t *testing.T) {
 }
 
 func TestAppendTimelinePublishesPayloadContract(t *testing.T) {
-	s := newTestServer(nil)
+	s := newTestServer()
 	wf := "wf-payload"
 	subID, ch := s.subscribe(wf)
 	defer s.unsubscribe(wf, subID)
@@ -255,7 +245,7 @@ func TestAppendTimelinePublishesPayloadContract(t *testing.T) {
 }
 
 func TestAppendTimelineRunSeqMonotonic(t *testing.T) {
-	s := newTestServer(nil)
+	s := newTestServer()
 	wf := "wf-seq"
 	runID := "run-seq-1"
 
@@ -273,7 +263,7 @@ func TestAppendTimelineRunSeqMonotonic(t *testing.T) {
 }
 
 func TestWorkflowStreamReaderSkipsWhenNoSubscriber(t *testing.T) {
-	s := newTestServer(nil)
+	s := newTestServer()
 	wf := "wf-nosub"
 
 	s.ensureWorkflowStreamReader(wf)

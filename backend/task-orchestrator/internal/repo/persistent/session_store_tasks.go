@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	redissvc "task-orchestrator/internal/repo/redis"
 )
 
 func (s *SessionStore) UpsertSession(ctx context.Context, sessionID, userID, latestQuery, latestStatus string) error {
@@ -50,8 +49,8 @@ func (s *SessionStore) UpsertTask(ctx context.Context, taskID, sessionID, userID
                 query = EXCLUDED.query
 	`, taskID, sessionID, userID, taskType, status, query)
 	if err == nil {
-		if s.redisSvc != nil {
-			_ = s.redisSvc.SetString(ctx, redissvc.TaskSessionKey(taskID), sessionID, 24*time.Hour)
+		if s.redisEnabled() {
+			_ = s.redisSetString(ctx, taskSessionKey(taskID), sessionID, 24*time.Hour)
 		}
 		s.invalidateSessionCache(ctx, sessionID, userID)
 		s.touchSessionActivity(ctx, sessionID, userID)
@@ -82,8 +81,8 @@ func (s *SessionStore) InsertTaskIfNoActive(ctx context.Context, taskID, session
 	}
 	inserted := cmd.RowsAffected() > 0
 	if inserted {
-		if s.redisSvc != nil {
-			_ = s.redisSvc.SetString(ctx, redissvc.TaskSessionKey(taskID), sessionID, 24*time.Hour)
+		if s.redisEnabled() {
+			_ = s.redisSetString(ctx, taskSessionKey(taskID), sessionID, 24*time.Hour)
 		}
 		s.invalidateSessionCache(ctx, sessionID, userID)
 		s.touchSessionActivity(ctx, sessionID, userID)

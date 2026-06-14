@@ -4,16 +4,14 @@ import (
 	"context"
 	"fmt"
 	"strings"
-
-	redissvc "task-orchestrator/internal/repo/redis"
 )
 
 func (s *SessionStore) LoadWorkspace(ctx context.Context, sessionID string) (map[string]any, error) {
-	if s == nil || s.redisSvc == nil {
+	if !s.redisEnabled() {
 		return nil, fmt.Errorf("redis not configured")
 	}
 	out := map[string]any{}
-	ok, err := s.redisSvc.GetJSON(ctx, redissvc.SessionWorkspaceKey(sessionID), &out)
+	ok, err := s.redisGetJSON(ctx, sessionWorkspaceKey(sessionID), &out)
 	if err != nil {
 		return nil, err
 	}
@@ -30,7 +28,7 @@ func (s *SessionStore) LoadWorkspace(ctx context.Context, sessionID string) (map
 }
 
 func (s *SessionStore) SaveWorkspace(ctx context.Context, sessionID string, workspace map[string]any) error {
-	if s == nil || s.redisSvc == nil {
+	if !s.redisEnabled() {
 		return fmt.Errorf("redis not configured")
 	}
 	if strings.TrimSpace(sessionID) == "" {
@@ -40,12 +38,12 @@ func (s *SessionStore) SaveWorkspace(ctx context.Context, sessionID string, work
 		workspace = map[string]any{}
 	}
 	workspace["session_id"] = sessionID
-	return s.redisSvc.SetJSON(ctx, redissvc.SessionWorkspaceKey(sessionID), workspace, 0)
+	return s.redisSetJSON(ctx, sessionWorkspaceKey(sessionID), workspace, 0)
 }
 
 func (s *SessionStore) deleteWorkspace(ctx context.Context, sessionID string) {
-	if s == nil || s.redisSvc == nil {
+	if !s.redisEnabled() {
 		return
 	}
-	_ = s.redisSvc.Del(ctx, redissvc.SessionWorkspaceKey(sessionID))
+	_ = s.redisDelete(ctx, sessionWorkspaceKey(sessionID))
 }

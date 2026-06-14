@@ -16,7 +16,6 @@ type HealthDeps struct {
 	UsageDeduped   func() int64
 	UsageFailed    func() int64
 	UsageInvalid   func() int64
-	RedisStats     func() map[string]any
 }
 
 func NewHealthHandler(deps HealthDeps) http.HandlerFunc {
@@ -33,11 +32,6 @@ func NewHealthHandler(deps HealthDeps) http.HandlerFunc {
 				"llm_usage_failed":       deps.UsageFailed(),
 				"llm_usage_invalid":      deps.UsageInvalid(),
 			},
-		}
-		if deps.RedisStats != nil {
-			if stats := deps.RedisStats(); stats != nil {
-				resp["redis_stream"] = stats
-			}
 		}
 		deps.WriteJSON(w, http.StatusOK, resp)
 	}

@@ -6,16 +6,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	redissvc "task-orchestrator/internal/repo/redis"
 )
 
 func (s *SessionStore) GetTaskSession(ctx context.Context, taskID string) (string, error) {
 	if s == nil {
 		return "", fmt.Errorf("session store not initialized")
 	}
-	if s.redisSvc != nil {
-		if sid, err := s.redisSvc.GetString(ctx, redissvc.TaskSessionKey(taskID)); err == nil && sid != "" {
+	if s.redisEnabled() {
+		if sid, err := s.redisGetString(ctx, taskSessionKey(taskID)); err == nil && sid != "" {
 			return sid, nil
 		}
 	}
@@ -24,8 +22,8 @@ func (s *SessionStore) GetTaskSession(ctx context.Context, taskID string) (strin
 	}
 	var sessionID string
 	err := s.pg.QueryRow(ctx, `SELECT session_id FROM kc_tasks WHERE task_id = $1`, taskID).Scan(&sessionID)
-	if err == nil && s.redisSvc != nil && sessionID != "" {
-		_ = s.redisSvc.SetString(ctx, redissvc.TaskSessionKey(taskID), sessionID, 24*time.Hour)
+	if err == nil && s.redisEnabled() && sessionID != "" {
+		_ = s.redisSetString(ctx, taskSessionKey(taskID), sessionID, 24*time.Hour)
 	}
 	return sessionID, err
 }
@@ -34,7 +32,7 @@ func (s *SessionStore) GetSession(ctx context.Context, sessionID, userID string)
 	if s == nil || s.pg == nil {
 		return nil, fmt.Errorf("postgres not configured")
 	}
-	cacheKey := redissvc.SessionCacheKey(userID, sessionID, "detail")
+	cacheKey := sessionCacheKey(userID, sessionID, "detail")
 	var cached SessionRow
 	if s.cacheGetJSON(ctx, cacheKey, &cached) {
 		s.touchSessionActivity(ctx, sessionID, userID)
@@ -203,7 +201,7 @@ func (s *SessionStore) ListSessionTasks(ctx context.Context, sessionID, userID s
 	if s == nil || s.pg == nil {
 		return nil, fmt.Errorf("postgres not configured")
 	}
-	cacheKey := redissvc.SessionCacheKey(userID, sessionID, "history")
+	cacheKey := sessionCacheKey(userID, sessionID, "history")
 	var cached []TaskRow
 	if s.cacheGetJSON(ctx, cacheKey, &cached) {
 		return cached, nil

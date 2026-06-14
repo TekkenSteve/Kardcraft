@@ -600,7 +600,6 @@ func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, runti
 		readModel:               readModel,
 		workflowSvc:             usecase.NewWorkflowService(enabled, &fakeReadModelStore{ready: true}),
 		defaultModelRef:         "test-model",
-		redisSvc:                &fakeRedisStreamClient{enabled: false},
 		timelineByWorkflow:      make(map[string][]TimelineEvent),
 		uploads:                 make(map[string]*uploadState),
 		subscribers:             make(map[string]map[int]chan OutboundEvent),

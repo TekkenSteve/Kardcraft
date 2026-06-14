@@ -1,11 +1,15 @@
 package persistent
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
 	"time"
 
+	goagentredis "github.com/TekkenSteve/GoAgent/pkg/redis"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
-	redissvc "task-orchestrator/internal/repo/redis"
 )
 
 type SessionStoreConfig struct {
@@ -144,10 +148,108 @@ type TemplateCatalogRow struct {
 
 type SessionStore struct {
 	pg           *pgxpool.Pool
-	redis        *redis.Client
-	redisSvc     *redissvc.Service
+	redis        *goagentredis.Redis
 	cacheTTL     time.Duration
 	activeWindow time.Duration
 	cleanupEvery time.Duration
 	cleanupBatch int
+}
+
+func taskSessionKey(taskID string) string {
+	return "task:session:" + strings.TrimSpace(taskID)
+}
+
+func sessionWorkspaceKey(sessionID string) string {
+	return "pack:session:" + strings.TrimSpace(sessionID)
+}
+
+func sessionCacheKey(userID, sessionID, suffix string) string {
+	return "sess:" + strings.TrimSpace(userID) + ":" + strings.TrimSpace(sessionID) + ":" + strings.TrimSpace(suffix)
+}
+
+func sessionCachePattern(sessionID, suffix string) string {
+	return "sess:*:" + strings.TrimSpace(sessionID) + ":" + strings.TrimSpace(suffix)
+}
+
+func sessionActiveKey(userID, sessionID string) string {
+	return sessionCacheKey(userID, sessionID, "active")
+}
+
+func (s *SessionStore) redisEnabled() bool {
+	return s != nil && s.redis != nil
+}
+
+func (s *SessionStore) redisGetString(ctx context.Context, key string) (string, error) {
+	if !s.redisEnabled() {
+		return "", errors.New("redis not configured")
+	}
+	return s.redis.Get(ctx, key)
+}
+
+func (s *SessionStore) redisSetString(ctx context.Context, key, value string, ttl time.Duration) error {
+	if !s.redisEnabled() {
+		return errors.New("redis not configured")
+	}
+	return s.redis.Set(ctx, key, value, ttl)
+}
+
+func (s *SessionStore) redisDelete(ctx context.Context, keys ...string) error {
+	if !s.redisEnabled() || len(keys) == 0 {
+		return nil
+	}
+	_, err := s.redis.Del(ctx, keys...)
+	return err
+}
+
+func (s *SessionStore) redisGetJSON(ctx context.Context, key string, out any) (bool, error) {
+	raw, err := s.redisGetString(ctx, key)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return false, nil
+		}
+		return false, err
+	}
+	if strings.TrimSpace(raw) == "" {
+		return false, nil
+	}
+	if err := json.Unmarshal([]byte(raw), out); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (s *SessionStore) redisSetJSON(ctx context.Context, key string, value any, ttl time.Duration) error {
+	if !s.redisEnabled() {
+		return errors.New("redis not configured")
+	}
+	b, err := json.Marshal(value)
+	if err != nil {
+		return err
+	}
+	return s.redisSetString(ctx, key, string(b), ttl)
+}
+
+func (s *SessionStore) redisDeleteByPattern(ctx context.Context, pattern string, scanCount int) error {
+	if !s.redisEnabled() {
+		return errors.New("redis not configured")
+	}
+	if scanCount <= 0 {
+		scanCount = 100
+	}
+	var cursor uint64
+	for {
+		keys, next, err := s.redis.GeneralClient.Scan(ctx, cursor, pattern, int64(scanCount)).Result()
+		if err != nil {
+			return err
+		}
+		if len(keys) > 0 {
+			if _, err := s.redis.DelMultiple(ctx, keys); err != nil {
+				return err
+			}
+		}
+		cursor = next
+		if cursor == 0 {
+			return nil
+		}
+	}
 }

@@ -19,11 +19,6 @@ import (
 
 const maxTimelineEventsInMemory = 500
 
-type RedisStreamClientPort interface {
-	Enabled() bool
-	Stats() map[string]any
-}
-
 type SessionLifecycleStore interface {
 	Ready() bool
 	StartLifecycle(ctx context.Context)
@@ -98,7 +93,6 @@ type Server struct {
 	ankiRuntimeURL   string
 	bgCancel         context.CancelFunc
 	closeFuncs       []func()
-	redisSvc         RedisStreamClientPort
 	streamSubscriber *goagentstream.RedisSubscriber
 	streamGateway    *goagentstream.SSEGateway
 
@@ -138,7 +132,6 @@ type ServerDependencies struct {
 	WorkflowSvc      *usecase.WorkflowService
 	SessionStore     SessionLifecycleStore
 	DefaultModelRef  string
-	RedisSvc         RedisStreamClientPort
 	StreamSubscriber *goagentstream.RedisSubscriber
 	StreamGateway    *goagentstream.SSEGateway
 
@@ -163,7 +156,6 @@ func NewServer(port int, deps ServerDependencies) *Server {
 		httpClient:              httpClient,
 		ankiRuntimeURL:          ankiRuntimeURL,
 		closeFuncs:              deps.CloseFuncs,
-		redisSvc:                deps.RedisSvc,
 		streamSubscriber:        deps.StreamSubscriber,
 		streamGateway:           deps.StreamGateway,
 		taskService:             deps.TaskService,

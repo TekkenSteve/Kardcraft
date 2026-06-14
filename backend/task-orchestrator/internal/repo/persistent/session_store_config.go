@@ -4,16 +4,21 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	goagentredis "github.com/TekkenSteve/GoAgent/pkg/redis"
 	"github.com/jackc/pgx/v5/pgxpool"
-	redissvc "task-orchestrator/internal/repo/redis"
 )
 
 func NewSessionStore(ctx context.Context, cfg SessionStoreConfig) *SessionStore {
+	return NewSessionStoreWithRedis(ctx, cfg, nil)
+}
+
+func NewSessionStoreWithRedis(ctx context.Context, cfg SessionStoreConfig, redisClient *goagentredis.Redis) *SessionStore {
 	if cfg.CacheTTL <= 0 {
 		cfg.CacheTTL = 30 * time.Minute
 	}
@@ -31,6 +36,7 @@ func NewSessionStore(ctx context.Context, cfg SessionStoreConfig) *SessionStore 
 		activeWindow: cfg.ActiveWindow,
 		cleanupEvery: cfg.CleanupEvery,
 		cleanupBatch: cfg.CleanupBatch,
+		redis:        redisClient,
 	}
 	if cfg.PostgresDSN != "" {
 		pg, err := pgxpool.New(ctx, cfg.PostgresDSN)
@@ -47,15 +53,6 @@ func NewSessionStore(ctx context.Context, cfg SessionStoreConfig) *SessionStore 
 					s.pg = nil
 				}
 			}
-		}
-	}
-	if cfg.RedisAddr != "" {
-		rdb, err := redissvc.NewGeneralClient(ctx, cfg.RedisAddr, cfg.RedisPassword, cfg.RedisDB)
-		if err != nil {
-			log.Printf("session store redis ping failed: %v", err)
-		} else {
-			s.redis = rdb
-			s.redisSvc = redissvc.NewService(rdb)
 		}
 	}
 	return s
@@ -130,6 +127,25 @@ func SessionStoreConfigFromEnv() SessionStoreConfig {
 		CleanupEvery:  cleanupEvery,
 		CleanupBatch:  cleanupBatch,
 	}
+}
+
+func (cfg SessionStoreConfig) GoAgentRedisURL() (string, error) {
+	addr := strings.TrimSpace(cfg.RedisAddr)
+	if addr == "" {
+		return "", nil
+	}
+	if cfg.RedisDB != 0 {
+		return "", fmt.Errorf("GoAgent Redis client currently supports REDIS_DB=0, got %d", cfg.RedisDB)
+	}
+	u := url.URL{
+		Scheme: "redis",
+		Host:   addr,
+		Path:   "/0",
+	}
+	if cfg.RedisPassword != "" {
+		u.User = url.UserPassword("", cfg.RedisPassword)
+	}
+	return u.String(), nil
 }
 
 func (s *SessionStore) validateRequiredSchema(ctx context.Context) error {

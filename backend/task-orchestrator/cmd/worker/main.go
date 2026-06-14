@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"os"
 	"os/signal"
@@ -11,7 +10,6 @@ import (
 	"time"
 
 	schemas "github.com/maximhq/bifrost/core/schemas"
-	goredis "github.com/redis/go-redis/v9"
 	gosdk "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
 
@@ -58,11 +56,25 @@ func main() {
 
 	w := worker.New(c, taskQueue, worker.Options{})
 	w.RegisterWorkflow(temporal.TaskWorkflow)
-	sessionStore := persistent.NewSessionStore(context.Background(), persistent.SessionStoreConfigFromEnv())
+	storeCfg := persistent.SessionStoreConfigFromEnv()
+	redisURL, err := storeCfg.GoAgentRedisURL()
+	if err != nil {
+		log.Fatalf("invalid redis configuration: %v", err)
+	}
+	if redisURL == "" {
+		log.Fatal("REDIS_HOST is required for task worker")
+	}
+	rdb, err := goagentredis.New(context.Background(), redisURL)
+	if err != nil {
+		log.Fatalf("failed to create GoAgent Redis client: %v", err)
+	}
+	defer rdb.Close()
+
+	sessionStore := persistent.NewSessionStoreWithRedis(context.Background(), storeCfg, rdb)
 	temporal.ConfigureTaskPersistenceStore(sessionStore)
 	w.RegisterActivity(temporal.PersistTaskOutcomeActivity)
 
-	activities, closeActivities := buildAgentActivities()
+	activities, closeActivities := buildAgentActivities(rdb)
 	defer closeActivities()
 	registrar := agentruntime.NewDefaultRegistrar(activities)
 	registrar.RegisterWorkflows(&agentruntime.TemporalRuntime{Worker: w})
@@ -86,16 +98,11 @@ func main() {
 	}
 }
 
-func buildAgentActivities() (*orchestration.AgentActivities, func()) {
+func buildAgentActivities(rdb *goagentredis.Redis) (*orchestration.AgentActivities, func()) {
 	l := logger.New("info")
 
-	redisURL := buildRedisURLFromEnv()
-	if redisURL == "" {
-		log.Fatal("REDIS_HOST is required for GoAgent activities")
-	}
-	rdb, err := goagentredis.New(context.Background(), redisURL)
-	if err != nil {
-		log.Fatalf("failed to create GoAgent Redis client: %v", err)
+	if rdb == nil {
+		log.Fatal("GoAgent Redis client is required for activities")
 	}
 	sequencer := goagentstream.NewRedisSequencer(rdb)
 	eventStore := goagentstream.NewRedisEventStore(rdb, sequencer)
@@ -111,53 +118,13 @@ func buildAgentActivities() (*orchestration.AgentActivities, func()) {
 	toolPipeline := &agenttool.Pipeline{Executor: toolRegistry}
 	toolExecutor := framework.NewToolPipeline(toolPipeline)
 
-	walClient, err := newRedisClientFromEnv()
-	if err != nil {
-		log.Fatalf("failed to create WAL Redis client: %v", err)
-	}
-	wal := pipeline.NewWriteAheadLog(walClient)
+	wal := pipeline.NewWriteAheadLog(rdb.GeneralClient)
 
 	comp := compressor.New(compressor.Config{LLM: provider})
 
 	agentUC := agentuc.New(provider, toolExecutor, wal, comp, toolRegistry, nil)
 
 	return orchestration.NewAgentActivities(agentUC, eventStore, l), provider.Close
-}
-
-func buildRedisURLFromEnv() string {
-	host := getenv("REDIS_HOST", "")
-	port := getenv("REDIS_PORT", "6379")
-	password := strings.TrimSpace(os.Getenv("REDIS_PASSWORD"))
-	db := getenv("REDIS_DB", "0")
-	if host == "" {
-		return ""
-	}
-	if password != "" {
-		return fmt.Sprintf("redis://:%s@%s:%s/%s", password, host, port, db)
-	}
-	return fmt.Sprintf("redis://%s:%s/%s", host, port, db)
-}
-
-func newRedisClientFromEnv() (goredis.Cmdable, error) {
-	host := getenv("REDIS_HOST", "")
-	if host == "" {
-		return nil, fmt.Errorf("REDIS_HOST is required")
-	}
-	port := getenv("REDIS_PORT", "6379")
-	password := strings.TrimSpace(os.Getenv("REDIS_PASSWORD"))
-	dbStr := getenv("REDIS_DB", "0")
-	db := 0
-	fmt.Sscanf(dbStr, "%d", &db)
-
-	client := goredis.NewClient(&goredis.Options{
-		Addr:     host + ":" + port,
-		Password: password,
-		DB:       db,
-	})
-	if err := client.Ping(context.Background()).Err(); err != nil {
-		return nil, err
-	}
-	return client, nil
 }
 
 func buildLLMConfigFromEnv() *webapi.BifrostConfig {

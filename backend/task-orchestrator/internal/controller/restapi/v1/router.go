@@ -318,12 +318,6 @@ func (s *Server) registerMiscRoutes() {
 		UsageDeduped:   func() int64 { return atomic.LoadInt64(&s.llmUsageDeduped) },
 		UsageFailed:    func() int64 { return atomic.LoadInt64(&s.llmUsageFailed) },
 		UsageInvalid:   func() int64 { return atomic.LoadInt64(&s.llmUsageInvalid) },
-		RedisStats: func() map[string]any {
-			if s.redisSvc == nil {
-				return nil
-			}
-			return s.redisSvc.Stats()
-		},
 	})
 	s.mux.HandleFunc("/health", health)
 	s.mux.HandleFunc("/health/task-orchestrator", health)
