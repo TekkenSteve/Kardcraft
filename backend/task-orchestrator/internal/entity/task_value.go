@@ -7,9 +7,7 @@ import (
 
 var (
 	ErrInvalidTaskID  = errors.New("invalid task id")
-	ErrInvalidStepID  = errors.New("invalid step id")
 	ErrInvalidStatus  = errors.New("invalid status")
-	ErrEmptyStepName  = errors.New("step name cannot be empty")
 	ErrEmptyFailCause = errors.New("fail reason cannot be empty")
 )
 
@@ -30,26 +28,6 @@ func (id TaskID) String() string {
 }
 
 func (id TaskID) Equal(other TaskID) bool {
-	return id.value == other.value
-}
-
-type StepID struct {
-	value string
-}
-
-func NewStepID(raw string) (StepID, error) {
-	v := strings.TrimSpace(raw)
-	if v == "" {
-		return StepID{}, ErrInvalidStepID
-	}
-	return StepID{value: v}, nil
-}
-
-func (id StepID) String() string {
-	return id.value
-}
-
-func (id StepID) Equal(other StepID) bool {
 	return id.value == other.value
 }
 

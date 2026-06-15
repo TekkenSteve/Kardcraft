@@ -20,7 +20,6 @@ type Task struct {
 	userID       string
 	query        string
 	sessionID    string
-	steps        []Step
 	createdAt    time.Time
 	updatedAt    time.Time
 	startedAt    *time.Time
@@ -34,13 +33,11 @@ type Task struct {
 	events       []DomainEvent
 }
 
-func NewTask(id TaskID, taskType, userID, query, sessionID string, steps []Step, now time.Time) *Task {
+func NewTask(id TaskID, taskType, userID, query, sessionID string, now time.Time) *Task {
 	typeValue := strings.TrimSpace(taskType)
 	if typeValue == "" {
 		typeValue = "main"
 	}
-	copiedSteps := make([]Step, len(steps))
-	copy(copiedSteps, steps)
 	ts := now.UTC()
 	t := &Task{
 		id:        id,
@@ -49,7 +46,6 @@ func NewTask(id TaskID, taskType, userID, query, sessionID string, steps []Step,
 		userID:    strings.TrimSpace(userID),
 		query:     strings.TrimSpace(query),
 		sessionID: strings.TrimSpace(sessionID),
-		steps:     copiedSteps,
 		createdAt: ts,
 		updatedAt: ts,
 	}
@@ -58,8 +54,6 @@ func NewTask(id TaskID, taskType, userID, query, sessionID string, steps []Step,
 }
 
 func RestoreTask(snapshot TaskSnapshot) *Task {
-	copiedSteps := make([]Step, len(snapshot.Steps))
-	copy(copiedSteps, snapshot.Steps)
 	return &Task{
 		id:           snapshot.ID,
 		status:       snapshot.Status,
@@ -67,7 +61,6 @@ func RestoreTask(snapshot TaskSnapshot) *Task {
 		userID:       snapshot.UserID,
 		query:        snapshot.Query,
 		sessionID:    snapshot.SessionID,
-		steps:        copiedSteps,
 		createdAt:    snapshot.CreatedAt,
 		updatedAt:    snapshot.UpdatedAt,
 		startedAt:    cloneTimePtr(snapshot.StartedAt),
@@ -96,14 +89,6 @@ func (t *Task) Start(now time.Time) error {
 	t.pauseReason = ""
 	t.cancelledAt = nil
 	t.cancelReason = ""
-
-	for i := range t.steps {
-		if t.steps[i].Status().Equal(PendingStatus()) {
-			if err := t.steps[i].Start(ts); err != nil {
-				return err
-			}
-		}
-	}
 
 	t.recordEvent(newTaskStartedEvent(t.id, ts))
 	return nil
@@ -216,8 +201,6 @@ func (t *Task) PullEvents() []DomainEvent {
 }
 
 func (t *Task) Snapshot() TaskSnapshot {
-	steps := make([]Step, len(t.steps))
-	copy(steps, t.steps)
 	return TaskSnapshot{
 		ID:           t.id,
 		Status:       t.status,
@@ -225,7 +208,6 @@ func (t *Task) Snapshot() TaskSnapshot {
 		UserID:       t.userID,
 		Query:        t.query,
 		SessionID:    t.sessionID,
-		Steps:        steps,
 		CreatedAt:    t.createdAt,
 		UpdatedAt:    t.updatedAt,
 		StartedAt:    cloneTimePtr(t.startedAt),
@@ -303,12 +285,6 @@ func (t *Task) CancelReason() string {
 	return t.cancelReason
 }
 
-func (t *Task) Steps() []Step {
-	out := make([]Step, len(t.steps))
-	copy(out, t.steps)
-	return out
-}
-
 func (t *Task) recordEvent(event DomainEvent) {
 	t.events = append(t.events, event)
 }
@@ -320,7 +296,6 @@ type TaskSnapshot struct {
 	UserID       string
 	Query        string
 	SessionID    string
-	Steps        []Step
 	CreatedAt    time.Time
 	UpdatedAt    time.Time
 	StartedAt    *time.Time

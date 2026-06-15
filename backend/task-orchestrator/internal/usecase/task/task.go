@@ -34,7 +34,7 @@ func (s *UseCase) CreateTask(ctx context.Context, in usecase.CreateTaskInput) (*
 	} else if existing != nil {
 		return nil, fmt.Errorf("task already exists: %s", in.TaskID)
 	}
-	agg := entity.NewTask(taskID, in.TaskType, in.UserID, in.Query, in.SessionID, nil, s.clock())
+	agg := entity.NewTask(taskID, in.TaskType, in.UserID, in.Query, in.SessionID, s.clock())
 	if err := s.repo.Save(ctx, agg); err != nil {
 		return nil, err
 	}
