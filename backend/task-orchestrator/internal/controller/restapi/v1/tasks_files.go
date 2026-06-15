@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TekkenSteve/GoAgent/entity"
 	"task-orchestrator/internal/usecase"
 )
 
@@ -141,13 +140,13 @@ func extractFileArtifactsFromEventPayload(record map[string]any) []map[string]an
 	return deduped
 }
 
-func normalizeConversationHistoryFromRequest(messages []entity.Message, maxMessages int) []entity.Message {
+func normalizeConversationHistoryFromRequest(messages []usecase.AgentMessage, maxMessages int) []usecase.AgentMessage {
 	if maxMessages <= 0 {
 		maxMessages = 24
 	}
-	normalized := make([]entity.Message, 0, len(messages))
+	normalized := make([]usecase.AgentMessage, 0, len(messages))
 	for _, msg := range messages {
-		role := strings.ToLower(strings.TrimSpace(string(msg.Role)))
+		role := strings.ToLower(strings.TrimSpace(msg.Role))
 		if role != "user" && role != "assistant" && role != "system" {
 			continue
 		}
@@ -155,8 +154,8 @@ func normalizeConversationHistoryFromRequest(messages []entity.Message, maxMessa
 		if content == "" {
 			continue
 		}
-		normalized = append(normalized, entity.Message{
-			Role:    entity.MessageRole(role),
+		normalized = append(normalized, usecase.AgentMessage{
+			Role:    role,
 			Content: content,
 		})
 	}
@@ -166,7 +165,7 @@ func normalizeConversationHistoryFromRequest(messages []entity.Message, maxMessa
 	return normalized
 }
 
-func buildConversationHistoryFromSession(ctx context.Context, deps TasksDeps, sessionID, userID string, maxMessages int) ([]entity.Message, error) {
+func buildConversationHistoryFromSession(ctx context.Context, deps TasksDeps, sessionID, userID string, maxMessages int) ([]usecase.AgentMessage, error) {
 	if maxMessages <= 0 {
 		maxMessages = 24
 	}
@@ -190,13 +189,13 @@ func buildConversationHistoryFromSession(ctx context.Context, deps TasksDeps, se
 		eventsByTask[taskID] = append(eventsByTask[taskID], ev)
 	}
 
-	messages := make([]entity.Message, 0, len(tasks)*2)
+	messages := make([]usecase.AgentMessage, 0, len(tasks)*2)
 	for _, t := range tasks {
 		taskID := strings.TrimSpace(t.TaskID)
 		query := strings.TrimSpace(valueFromPtr(t.Query))
 		if query != "" {
-			messages = append(messages, entity.Message{
-				Role:    entity.RoleUser,
+			messages = append(messages, usecase.AgentMessage{
+				Role:    "user",
 				Content: query,
 			})
 		}
@@ -208,15 +207,15 @@ func buildConversationHistoryFromSession(ctx context.Context, deps TasksDeps, se
 			}
 		}
 		if assistantContent != "" {
-			messages = append(messages, entity.Message{
-				Role:    entity.RoleAssistant,
+			messages = append(messages, usecase.AgentMessage{
+				Role:    "assistant",
 				Content: assistantContent,
 			})
 			continue
 		}
 		if strings.EqualFold(valueFromPtr(t.Status), "cancelled") {
-			messages = append(messages, entity.Message{
-				Role:    entity.RoleAssistant,
+			messages = append(messages, usecase.AgentMessage{
+				Role:    "assistant",
 				Content: "This task was cancelled.",
 			})
 		}

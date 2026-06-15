@@ -9,14 +9,10 @@ import (
 	"strings"
 	"time"
 
+	agentostemporal "github.com/TekkenSteve/GoAgent/agentos/temporal"
 	tclient "go.temporal.io/sdk/client"
 
-	"github.com/TekkenSteve/GoAgent/agentfw/config"
-	goagentredis "github.com/TekkenSteve/GoAgent/pkg/redis"
-	goagentpersistent "github.com/TekkenSteve/GoAgent/repo/persistent"
-	goagentstream "github.com/TekkenSteve/GoAgent/repo/stream"
-	"github.com/TekkenSteve/GoAgent/usecase/executor"
-
+	goagentadapter "task-orchestrator/internal/adapter/goagent"
 	"task-orchestrator/internal/controller/restapi"
 	"task-orchestrator/internal/repo/memory"
 	"task-orchestrator/internal/repo/persistent"
@@ -29,24 +25,7 @@ import (
 
 func NewOrchestratorFromEnv() *restapi.Server {
 	storeCfg := persistent.SessionStoreConfigFromEnv()
-
-	var goagentRedis *goagentredis.Redis
-	var goagentSubscriber *goagentstream.RedisSubscriber
-	var goagentGateway *goagentstream.SSEGateway
-	if redisURL, err := storeCfg.GoAgentRedisURL(); err != nil {
-		log.Fatalf("invalid redis configuration: %v", err)
-	} else if redisURL != "" {
-		rdb, err := goagentredis.New(context.Background(), redisURL)
-		if err != nil {
-			log.Printf("warning: goagent redis client creation failed: %v", err)
-		} else {
-			goagentRedis = rdb
-			goagentSubscriber = goagentstream.NewRedisSubscriber(rdb.Hub())
-			goagentGateway = goagentstream.NewSSEGateway()
-		}
-	}
-
-	sessionStore := persistent.NewSessionStoreWithRedis(context.Background(), storeCfg, goagentRedis)
+	sessionStore := persistent.NewSessionStore(context.Background(), storeCfg)
 	readModelStore := persistent.NewUsecaseReadModelStore(sessionStore)
 
 	taskQueue := strings.TrimSpace(os.Getenv("TASK_QUEUE"))
@@ -76,15 +55,20 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	workflowSvc := workflow.New(restapi.NewTemporalWorkflowRuntime(temporalClient), readModelStore)
 
 	var commandSvc usecase.Command
+	var agentRuntime usecase.AgentRuntime
 	if temporalClient != nil {
-		executorTemporal := goagentpersistent.NewExecutorTemporal(temporalClient, config.Temporal{
-			TaskQueue: taskQueue,
-		})
-		agentExecutor := executor.New(executorTemporal)
+		goagentRuntime, err := agentostemporal.NewRuntimeWithClient(context.Background(), agentostemporal.RuntimeConfig{
+			TemporalTaskQueue: taskQueue,
+			RedisURL:          redisURLFromConfig(storeCfg),
+		}, temporalClient)
+		if err != nil {
+			log.Fatalf("failed to create GoAgent runtime: %v", err)
+		}
+		agentRuntime = goagentadapter.NewRuntime(goagentRuntime)
 		commandSvc = command.New(
 			taskService,
 			restapi.NewCommandSessionStore(sessionStore),
-			agentExecutor,
+			agentRuntime,
 			restapi.NewTemporalCommandRuntime(temporalClient, taskQueue),
 		)
 	}
@@ -93,25 +77,32 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	if temporalClient != nil {
 		closeFuncs = append(closeFuncs, temporalClient.Close)
 	}
-	if goagentRedis != nil {
-		closeFuncs = append(closeFuncs, func() { _ = goagentRedis.Close() })
+	if closer, ok := agentRuntime.(interface{ Close() error }); ok {
+		closeFuncs = append(closeFuncs, func() { _ = closer.Close() })
 	}
 
 	srv := restapi.NewServer(defaultPortFromEnv(), restapi.ServerDependencies{
-		HTTPClient:       &http.Client{Timeout: 5 * time.Second},
-		AnkiRuntimeURL:   strings.TrimSpace(os.Getenv("ANKI_RUNTIME_URL")),
-		TaskService:      taskService,
-		CommandService:   commandSvc,
-		ReadModel:        readModel,
-		WorkflowSvc:      workflowSvc,
-		SessionStore:     sessionStore,
-		DefaultModelRef:  strings.TrimSpace(os.Getenv("GOAGENT_MODEL_REF")),
-		StreamSubscriber: goagentSubscriber,
-		StreamGateway:    goagentGateway,
-		CloseFuncs:       closeFuncs,
+		HTTPClient:      &http.Client{Timeout: 5 * time.Second},
+		AnkiRuntimeURL:  strings.TrimSpace(os.Getenv("ANKI_RUNTIME_URL")),
+		TaskService:     taskService,
+		CommandService:  commandSvc,
+		ReadModel:       readModel,
+		WorkflowSvc:     workflowSvc,
+		SessionStore:    sessionStore,
+		DefaultModelRef: strings.TrimSpace(os.Getenv("GOAGENT_MODEL_REF")),
+		AgentRuntime:    agentRuntime,
+		CloseFuncs:      closeFuncs,
 	})
 	publisher.AddHook(srv.ProjectDomainEvents)
 	return srv
+}
+
+func redisURLFromConfig(cfg persistent.SessionStoreConfig) string {
+	redisURL, err := cfg.RedisURL()
+	if err != nil {
+		log.Fatalf("invalid redis configuration: %v", err)
+	}
+	return redisURL
 }
 
 func defaultPortFromEnv() int {

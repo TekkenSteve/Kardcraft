@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TekkenSteve/GoAgent/agentfw/orchestration"
 	tclient "go.temporal.io/sdk/client"
 
+	tasktemporal "task-orchestrator/internal/controller/temporal"
 	"task-orchestrator/internal/usecase"
 )
 
@@ -78,7 +78,7 @@ func (r temporalCommandRuntime) SignalWorkflow(ctx context.Context, taskID, comm
 		"request_by": signal.RequestBy,
 		"timestamp":  signal.Timestamp,
 	}
-	return r.client.SignalWorkflow(ctx, taskID, "", orchestration.AgentCommandSignal, payload)
+	return r.client.SignalWorkflow(ctx, taskID, "", tasktemporal.CommandSignalName, payload)
 }
 
 func (r temporalCommandRuntime) CancelWorkflow(ctx context.Context, taskID string) error {

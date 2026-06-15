@@ -1,10 +1,6 @@
 package usecase
 
-import (
-	"time"
-
-	goagententity "github.com/TekkenSteve/GoAgent/entity"
-)
+import "time"
 
 const (
 	TaskTypeMain         = "main"
@@ -49,7 +45,7 @@ type TemplateContext struct {
 type AgentTaskInput struct {
 	SessionID           string
 	Query               string
-	ConversationHistory []goagententity.Message
+	ConversationHistory []AgentMessage
 	Context             TemplateContext
 	FilePolicy          string
 	ContextEnvelope     map[string]any

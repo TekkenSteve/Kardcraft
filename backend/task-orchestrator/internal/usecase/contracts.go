@@ -6,8 +6,6 @@ import (
 	"errors"
 	"time"
 
-	goagententity "github.com/TekkenSteve/GoAgent/entity"
-
 	"task-orchestrator/internal/entity"
 )
 
@@ -76,9 +74,10 @@ type (
 		ReadModel
 	}
 
-	AgentExecutor interface {
-		Execute(ctx context.Context, req *goagententity.ExecuteRequest) (goagententity.RunStatus, error)
-		Control(ctx context.Context, runID string, op goagententity.ControlOperation) error
+	AgentRuntime interface {
+		StartAgentRun(ctx context.Context, req AgentRunRequest) (AgentRunStatus, error)
+		ControlAgentRun(ctx context.Context, runID string, op AgentControlOperation) error
+		SubscribeAgentEvents(ctx context.Context, scope AgentEventScope) (AgentEventSubscription, error)
 	}
 
 	CommandRuntime interface {
@@ -119,4 +118,73 @@ type ListTasksInput struct {
 	UserID string
 	Limit  int
 	Offset int
+}
+
+type AgentControlOperation string
+
+const (
+	AgentControlPause  AgentControlOperation = "pause"
+	AgentControlResume AgentControlOperation = "resume"
+	AgentControlCancel AgentControlOperation = "cancel"
+)
+
+type AgentRunRequest struct {
+	RunID          string
+	ThreadID       string
+	AccountID      string
+	ProjectID      string
+	AgentID        string
+	ModelRef       string
+	SystemPrompt   string
+	UserMessage    string
+	IdempotencyKey string
+	RequestedAt    time.Time
+	Metadata       map[string]string
+}
+
+type AgentRunStatus struct {
+	RunID          string
+	LifecycleState string
+	Step           int32
+	Reason         string
+	UpdatedAt      time.Time
+}
+
+type AgentMessage struct {
+	Role       string          `json:"role"`
+	Content    string          `json:"content,omitempty"`
+	ToolCallID string          `json:"tool_call_id,omitempty"`
+	ToolCalls  []AgentToolCall `json:"tool_calls,omitempty"`
+}
+
+type AgentToolCall struct {
+	ID       string                `json:"id"`
+	Type     string                `json:"type"`
+	Function AgentToolCallFunction `json:"function"`
+}
+
+type AgentToolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+}
+
+type AgentEventScope struct {
+	RunID         string
+	ThreadID      string
+	AfterSequence int64
+}
+
+type AgentRuntimeEvent struct {
+	EventID   string
+	EventType string
+	RunID     string
+	ThreadID  string
+	Sequence  int64
+	Timestamp time.Time
+	Payload   map[string]any
+}
+
+type AgentEventSubscription interface {
+	Events() <-chan AgentRuntimeEvent
+	Close() error
 }

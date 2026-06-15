@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TekkenSteve/GoAgent/entity"
+	"task-orchestrator/internal/usecase"
 )
 
 const (
@@ -100,7 +100,7 @@ func buildContextEnvelope(
 	query string,
 	filePolicy string,
 	base map[string]any,
-	conversationHistory []entity.Message,
+	conversationHistory []usecase.AgentMessage,
 	sessionFileArtifacts []map[string]any,
 	explicitFileIDs []string,
 	inheritedFileIDs []string,

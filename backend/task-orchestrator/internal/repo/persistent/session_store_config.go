@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	goagentredis "github.com/TekkenSteve/GoAgent/pkg/redis"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 type SessionStoreConfig struct {
@@ -29,7 +29,7 @@ func NewSessionStore(ctx context.Context, cfg SessionStoreConfig) *SessionStore 
 	return NewSessionStoreWithRedis(ctx, cfg, nil)
 }
 
-func NewSessionStoreWithRedis(ctx context.Context, cfg SessionStoreConfig, redisClient *goagentredis.Redis) *SessionStore {
+func NewSessionStoreWithRedis(ctx context.Context, cfg SessionStoreConfig, redisClient *redis.Client) *SessionStore {
 	if cfg.CacheTTL <= 0 {
 		cfg.CacheTTL = 30 * time.Minute
 	}
@@ -48,6 +48,14 @@ func NewSessionStoreWithRedis(ctx context.Context, cfg SessionStoreConfig, redis
 		cleanupEvery: cfg.CleanupEvery,
 		cleanupBatch: cfg.CleanupBatch,
 		redis:        redisClient,
+	}
+	if s.redis == nil {
+		client, err := cfg.NewRedisClient(ctx)
+		if err != nil {
+			log.Printf("session store redis init failed: %v", err)
+		} else {
+			s.redis = client
+		}
 	}
 	if cfg.PostgresDSN != "" {
 		pg, err := pgxpool.New(ctx, cfg.PostgresDSN)
@@ -140,23 +148,40 @@ func SessionStoreConfigFromEnv() SessionStoreConfig {
 	}
 }
 
-func (cfg SessionStoreConfig) GoAgentRedisURL() (string, error) {
+func (cfg SessionStoreConfig) RedisURL() (string, error) {
 	addr := strings.TrimSpace(cfg.RedisAddr)
 	if addr == "" {
 		return "", nil
 	}
-	if cfg.RedisDB != 0 {
-		return "", fmt.Errorf("GoAgent Redis client currently supports REDIS_DB=0, got %d", cfg.RedisDB)
-	}
 	u := url.URL{
 		Scheme: "redis",
 		Host:   addr,
-		Path:   "/0",
+		Path:   "/" + strconv.Itoa(cfg.RedisDB),
 	}
 	if cfg.RedisPassword != "" {
 		u.User = url.UserPassword("", cfg.RedisPassword)
 	}
 	return u.String(), nil
+}
+
+func (cfg SessionStoreConfig) NewRedisClient(ctx context.Context) (*redis.Client, error) {
+	redisURL, err := cfg.RedisURL()
+	if err != nil {
+		return nil, err
+	}
+	if redisURL == "" {
+		return nil, nil
+	}
+	opts, err := redis.ParseURL(redisURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse redis url: %w", err)
+	}
+	client := redis.NewClient(opts)
+	if err := client.Ping(ctx).Err(); err != nil {
+		_ = client.Close()
+		return nil, fmt.Errorf("redis ping: %w", err)
+	}
+	return client, nil
 }
 
 func (s *SessionStore) validateRequiredSchema(ctx context.Context) error {

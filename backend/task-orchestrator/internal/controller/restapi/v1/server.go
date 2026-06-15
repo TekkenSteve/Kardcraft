@@ -11,7 +11,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	goagentstream "github.com/TekkenSteve/GoAgent/repo/stream"
 	"task-orchestrator/internal/controller/restapi/middleware"
 	"task-orchestrator/internal/entity"
 	"task-orchestrator/internal/usecase"
@@ -86,15 +85,14 @@ type uploadState struct {
 }
 
 type Server struct {
-	port             int
-	httpServer       *http.Server
-	mux              *http.ServeMux
-	httpClient       *http.Client
-	ankiRuntimeURL   string
-	bgCancel         context.CancelFunc
-	closeFuncs       []func()
-	streamSubscriber *goagentstream.RedisSubscriber
-	streamGateway    *goagentstream.SSEGateway
+	port           int
+	httpServer     *http.Server
+	mux            *http.ServeMux
+	httpClient     *http.Client
+	ankiRuntimeURL string
+	bgCancel       context.CancelFunc
+	closeFuncs     []func()
+	agentRuntime   usecase.AgentRuntime
 
 	taskService     usecase.Task
 	commandService  usecase.Command
@@ -126,14 +124,13 @@ type ServerDependencies struct {
 	HTTPClient     *http.Client
 	AnkiRuntimeURL string
 
-	TaskService      usecase.Task
-	CommandService   usecase.Command
-	ReadModel        usecase.ReadModel
-	WorkflowSvc      usecase.Workflow
-	SessionStore     SessionLifecycleStore
-	DefaultModelRef  string
-	StreamSubscriber *goagentstream.RedisSubscriber
-	StreamGateway    *goagentstream.SSEGateway
+	TaskService     usecase.Task
+	CommandService  usecase.Command
+	ReadModel       usecase.ReadModel
+	WorkflowSvc     usecase.Workflow
+	SessionStore    SessionLifecycleStore
+	DefaultModelRef string
+	AgentRuntime    usecase.AgentRuntime
 
 	CloseFuncs []func()
 }
@@ -156,8 +153,7 @@ func NewServer(port int, deps ServerDependencies) *Server {
 		httpClient:              httpClient,
 		ankiRuntimeURL:          ankiRuntimeURL,
 		closeFuncs:              deps.CloseFuncs,
-		streamSubscriber:        deps.StreamSubscriber,
-		streamGateway:           deps.StreamGateway,
+		agentRuntime:            deps.AgentRuntime,
 		taskService:             deps.TaskService,
 		commandService:          deps.CommandService,
 		readModel:               deps.ReadModel,

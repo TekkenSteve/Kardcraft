@@ -1,6 +1,6 @@
 package v1
 
-import "github.com/TekkenSteve/GoAgent/entity"
+import "task-orchestrator/internal/usecase"
 
 type CreateTaskContext struct {
 	TemplateID      string `json:"template_id"`
@@ -16,19 +16,19 @@ type Attachment struct {
 }
 
 type CreateTaskInput struct {
-	SessionID           string            `json:"session_id"`
-	Query               string            `json:"query,omitempty"`
-	ConversationHistory []entity.Message  `json:"conversation_history,omitempty"`
-	Context             CreateTaskContext `json:"context,omitempty"`
-	FilePolicy          string            `json:"file_policy,omitempty"`
-	ContextEnvelope     map[string]any    `json:"context_envelope,omitempty"`
-	FileIDs             []string          `json:"file_ids,omitempty"`
-	EffectiveFileIDs    []string          `json:"effective_file_ids,omitempty"`
-	Attachments         []Attachment      `json:"attachments,omitempty"`
-	TargetCount         int               `json:"target_count,omitempty"`
-	DifficultyLevel     string            `json:"difficulty_level,omitempty"`
-	TemplateID          string            `json:"template_id,omitempty"`
-	Variables           map[string]any    `json:"variables,omitempty"`
+	SessionID           string                 `json:"session_id"`
+	Query               string                 `json:"query,omitempty"`
+	ConversationHistory []usecase.AgentMessage `json:"conversation_history,omitempty"`
+	Context             CreateTaskContext      `json:"context,omitempty"`
+	FilePolicy          string                 `json:"file_policy,omitempty"`
+	ContextEnvelope     map[string]any         `json:"context_envelope,omitempty"`
+	FileIDs             []string               `json:"file_ids,omitempty"`
+	EffectiveFileIDs    []string               `json:"effective_file_ids,omitempty"`
+	Attachments         []Attachment           `json:"attachments,omitempty"`
+	TargetCount         int                    `json:"target_count,omitempty"`
+	DifficultyLevel     string                 `json:"difficulty_level,omitempty"`
+	TemplateID          string                 `json:"template_id,omitempty"`
+	Variables           map[string]any         `json:"variables,omitempty"`
 }
 
 type CreateTaskConfig struct {

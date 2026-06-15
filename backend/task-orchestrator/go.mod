@@ -13,6 +13,8 @@ require (
 	google.golang.org/protobuf v1.36.11
 )
 
+replace github.com/TekkenSteve/GoAgent => ../../../GoAgent
+
 require (
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect

@@ -7,21 +7,19 @@ import (
 	"strings"
 	"time"
 
-	goagententity "github.com/TekkenSteve/GoAgent/entity"
-
 	"task-orchestrator/internal/usecase"
 )
 
 type UseCase struct {
-	tasks    usecase.Task
-	store    usecase.CommandSessionStore
-	executor usecase.AgentExecutor
-	runtime  usecase.CommandRuntime
-	now      func() time.Time
+	tasks        usecase.Task
+	store        usecase.CommandSessionStore
+	agentRuntime usecase.AgentRuntime
+	runtime      usecase.CommandRuntime
+	now          func() time.Time
 }
 
-func New(tasks usecase.Task, store usecase.CommandSessionStore, agentExecutor usecase.AgentExecutor, runtime usecase.CommandRuntime) *UseCase {
-	return &UseCase{tasks: tasks, store: store, executor: agentExecutor, runtime: runtime, now: time.Now}
+func New(tasks usecase.Task, store usecase.CommandSessionStore, agentRuntime usecase.AgentRuntime, runtime usecase.CommandRuntime) *UseCase {
+	return &UseCase{tasks: tasks, store: store, agentRuntime: agentRuntime, runtime: runtime, now: time.Now}
 }
 
 func (s *UseCase) CreateTaskInSession(ctx context.Context, cmd usecase.CreateTaskCommand) (*usecase.CreateTaskResult, string, error) {
@@ -74,8 +72,8 @@ func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskComma
 	if taskType == "card_template" {
 		return s.runtime.StartTaskWorkflow(ctx, cmd)
 	}
-	if s.executor == nil {
-		return "", fmt.Errorf("goagent executor is required for main task execution")
+	if s.agentRuntime == nil {
+		return "", fmt.Errorf("agent runtime is required for main task execution")
 	}
 	modelRef := strings.TrimSpace(cmd.Config.ModelRef)
 	if modelRef == "" {
@@ -85,7 +83,7 @@ func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskComma
 	if err != nil {
 		return "", err
 	}
-	status, err := s.executor.Execute(ctx, &goagententity.ExecuteRequest{
+	status, err := s.agentRuntime.StartAgentRun(ctx, usecase.AgentRunRequest{
 		RunID:          cmd.TaskID,
 		ThreadID:       cmd.SessionID,
 		AccountID:      cmd.UserID,
@@ -162,19 +160,19 @@ func (s *UseCase) ControlSession(ctx context.Context, cmd usecase.SessionControl
 	}
 	switch action {
 	case "pause":
-		if err := s.controlWorkflow(ctx, taskID, taskType, goagententity.ControlPause, signalPayload); err != nil {
+		if err := s.controlWorkflow(ctx, taskID, taskType, usecase.AgentControlPause, signalPayload); err != nil {
 			return nil, err
 		}
 		_ = s.store.UpdateTaskStatus(ctx, taskID, "paused", "")
 		state = "PAUSED"
 	case "resume":
-		if err := s.controlWorkflow(ctx, taskID, taskType, goagententity.ControlResume, signalPayload); err != nil {
+		if err := s.controlWorkflow(ctx, taskID, taskType, usecase.AgentControlResume, signalPayload); err != nil {
 			return nil, err
 		}
 		_ = s.store.UpdateTaskStatus(ctx, taskID, "running", "")
 		state = "RUNNING"
 	case "cancel":
-		if err := s.controlWorkflow(ctx, taskID, taskType, goagententity.ControlCancel, signalPayload); err != nil {
+		if err := s.controlWorkflow(ctx, taskID, taskType, usecase.AgentControlCancel, signalPayload); err != nil {
 			return nil, err
 		}
 		if strings.EqualFold(taskType, usecase.TaskTypeCardTemplate) {
@@ -196,12 +194,12 @@ func (s *UseCase) ControlSession(ctx context.Context, cmd usecase.SessionControl
 	}, nil
 }
 
-func (s *UseCase) controlWorkflow(ctx context.Context, taskID, taskType string, op goagententity.ControlOperation, signal usecase.ControlSignal) error {
+func (s *UseCase) controlWorkflow(ctx context.Context, taskID, taskType string, op usecase.AgentControlOperation, signal usecase.ControlSignal) error {
 	if !strings.EqualFold(taskType, usecase.TaskTypeCardTemplate) {
-		if s.executor == nil {
-			return fmt.Errorf("goagent executor is required for main task control")
+		if s.agentRuntime == nil {
+			return fmt.Errorf("agent runtime is required for main task control")
 		}
-		return s.executor.Control(ctx, taskID, op)
+		return s.agentRuntime.ControlAgentRun(ctx, taskID, op)
 	}
 	return s.runtime.SignalWorkflow(ctx, taskID, string(op), signal)
 }

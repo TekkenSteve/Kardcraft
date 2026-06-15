@@ -18,6 +18,8 @@ Any new feature must follow this document to avoid architecture drift.
 internal/
   app/
     orchestrator.go   # Orchestrator composition root / wiring
+  adapter/
+    goagent/          # GoAgent AgentOS adapter boundary
   entity/
     aggregate.go      # Task aggregate root (Start/Complete/Fail and invariants)
     entity.go         # Child entities (e.g. Step)
@@ -80,6 +82,13 @@ Constraints:
 - Never move business rules from entity/usecase to outer layer.
 - Keep translation/mapping explicit between transport/storage and entity/usecase models.
 
+### 4) Agent Runtime Boundary
+- `internal/usecase` owns Kardcraft-level agent ports: `AgentRuntime`, run requests, runtime events, and control operations.
+- GoAgent is an external runtime provider, not a domain dependency.
+- Only composition roots and `internal/adapter/goagent` may import `github.com/TekkenSteve/GoAgent/agentos*`.
+- No package may import GoAgent internal implementation paths such as `agentfw`, `entity`, `repo`, `pkg`, or `usecase`.
+- Kardcraft task, session, template, file policy, and context-envelope semantics are translated at the adapter boundary.
+
 ## Aggregate Rules (Task)
 
 `Task` is the aggregate root. All state transitions pass through it.
@@ -120,6 +129,8 @@ Mandatory rules:
 - CI checks:
   - `go test ./...`
   - `scripts/check_task_orchestrator_architecture.sh`
+- Architecture guard:
+  - `internal/architecture/import_boundary_test.go` blocks GoAgent internal imports outside the adapter/composition boundary.
 - Code review gate:
   - Every PR touching task status must show aggregate/usecase change + event/projection impact.
 

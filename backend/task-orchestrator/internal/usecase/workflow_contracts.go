@@ -1,10 +1,6 @@
 package usecase
 
-import (
-	"time"
-
-	goagententity "github.com/TekkenSteve/GoAgent/entity"
-)
+import "time"
 
 const TaskWorkflowName = "TaskWorkflow"
 
@@ -24,7 +20,7 @@ type WorkflowTaskInputContext struct {
 type WorkflowTaskInputPayload struct {
 	SessionID           string                   `json:"session_id"`
 	Query               string                   `json:"query,omitempty"`
-	ConversationHistory []goagententity.Message  `json:"conversation_history,omitempty"`
+	ConversationHistory []AgentMessage           `json:"conversation_history,omitempty"`
 	Context             WorkflowTaskInputContext `json:"context,omitempty"`
 	FilePolicy          string                   `json:"file_policy,omitempty"`
 	ContextEnvelope     map[string]any           `json:"context_envelope,omitempty"`

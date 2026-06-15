@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/TekkenSteve/GoAgent/agentfw/orchestration"
 	enumspb "go.temporal.io/api/enums/v1"
 	tclient "go.temporal.io/sdk/client"
 
+	tasktemporal "task-orchestrator/internal/controller/temporal"
 	"task-orchestrator/internal/usecase"
 )
 
@@ -58,7 +58,7 @@ func (r temporalWorkflowRuntime) SignalWorkflow(ctx context.Context, workflowID,
 		"request_by": signal.RequestBy,
 		"timestamp":  signal.Timestamp,
 	}
-	return r.client.SignalWorkflow(ctx, workflowID, "", orchestration.AgentCommandSignal, payload)
+	return r.client.SignalWorkflow(ctx, workflowID, "", tasktemporal.CommandSignalName, payload)
 }
 
 func (r temporalWorkflowRuntime) CancelWorkflow(ctx context.Context, workflowID string) error {
@@ -66,16 +66,16 @@ func (r temporalWorkflowRuntime) CancelWorkflow(ctx context.Context, workflowID 
 }
 
 func (r temporalWorkflowRuntime) QueryWorkflowState(ctx context.Context, workflowID string) (*usecase.WorkflowState, error) {
-	queryResp, err := r.client.QueryWorkflow(ctx, workflowID, "", orchestration.QueryRunStatus)
+	queryResp, err := r.client.QueryWorkflow(ctx, workflowID, "", tasktemporal.QueryRunStatus)
 	if err != nil {
 		return nil, err
 	}
-	var rs orchestration.RunStatus
+	var rs tasktemporal.RunStatus
 	if err := queryResp.Get(&rs); err != nil {
 		return nil, err
 	}
 	isPaused := rs.LifecycleState == "paused"
-	isCancelled := rs.LifecycleState == orchestration.LifecycleStateCanceled
+	isCancelled := rs.LifecycleState == tasktemporal.LifecycleStateCanceled
 	var pausedAt *time.Time
 	if isPaused && !rs.UpdatedAt.IsZero() {
 		t := rs.UpdatedAt.UTC()

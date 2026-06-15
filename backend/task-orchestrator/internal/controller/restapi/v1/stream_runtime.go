@@ -285,7 +285,7 @@ func (s *Server) unsubscribe(workflowID string, subscriberID int) {
 }
 
 func (s *Server) ensureWorkflowStreamReader(workflowID string) {
-	if s.streamSubscriber == nil {
+	if s.agentRuntime == nil {
 		return
 	}
 	s.mu.Lock()
@@ -305,7 +305,7 @@ func (s *Server) ensureWorkflowStreamReader(workflowID string) {
 			}
 			s.mu.Unlock()
 		}()
-		s.subscribeGoAgentStream(ctx, workflowID)
+		s.subscribeAgentStream(ctx, workflowID)
 	}()
 }
 
@@ -322,7 +322,7 @@ func (s *Server) stopWorkflowStreamReader(workflowID string) {
 	}
 }
 
-func (s *Server) subscribeGoAgentStream(ctx context.Context, workflowID string) {
+func (s *Server) subscribeAgentStream(ctx context.Context, workflowID string) {
 	sessionID := workflowID
 	if s.readModel != nil {
 		if sid, err := s.readModel.GetTaskSession(ctx, workflowID); err == nil && sid != "" {
@@ -330,9 +330,13 @@ func (s *Server) subscribeGoAgentStream(ctx context.Context, workflowID string) 
 		}
 	}
 
-	sub, err := s.streamSubscriber.Subscribe(ctx, sessionID, 0)
+	sub, err := s.agentRuntime.SubscribeAgentEvents(ctx, usecase.AgentEventScope{
+		RunID:         workflowID,
+		ThreadID:      sessionID,
+		AfterSequence: 0,
+	})
 	if err != nil {
-		log.Printf("goagent stream subscribe failed workflow_id=%s session_id=%s err=%v", workflowID, sessionID, err)
+		log.Printf("agent stream subscribe failed workflow_id=%s session_id=%s err=%v", workflowID, sessionID, err)
 		return
 	}
 	defer sub.Close()
@@ -355,14 +359,13 @@ func (s *Server) subscribeGoAgentStream(ctx context.Context, workflowID string) 
 		select {
 		case <-ctx.Done():
 			return
-		case stored, ok := <-sub.C:
+		case event, ok := <-sub.Events():
 			if !ok {
 				return
 			}
-			base := stored.Event.Base()
-			runID := strings.TrimSpace(base.RunID)
-			evSessionID := strings.TrimSpace(base.SessionID)
-			eventType := base.EventType
+			runID := strings.TrimSpace(event.RunID)
+			evSessionID := strings.TrimSpace(event.ThreadID)
+			eventType := strings.TrimSpace(event.EventType)
 			if eventType == "" {
 				eventType = "WORKFLOW_PROGRESS"
 			}
@@ -378,9 +381,14 @@ func (s *Server) subscribeGoAgentStream(ctx context.Context, workflowID string) 
 				"workflow_id": workflowID,
 				"run_id":      runID,
 				"session_id":  evSessionID,
-				"event_id":    strings.TrimSpace(base.EventID),
-				"timestamp":   base.Timestamp,
-				"sequence":    stored.Sequence,
+				"event_id":    strings.TrimSpace(event.EventID),
+				"timestamp":   event.Timestamp,
+				"sequence":    event.Sequence,
+			}
+			for key, value := range event.Payload {
+				if _, exists := payload[key]; !exists {
+					payload[key] = value
+				}
 			}
 
 			normalized := NormalizedEvent{
@@ -388,7 +396,7 @@ func (s *Server) subscribeGoAgentStream(ctx context.Context, workflowID string) 
 				SessionID:  evSessionID,
 				TaskID:     workflowID,
 				EventType:  eventType,
-				StreamID:   fmt.Sprintf("%d", stored.Sequence),
+				StreamID:   fmt.Sprintf("%d", event.Sequence),
 				Payload:    payload,
 			}
 			usageProjector.Project(ctx, normalized)

@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TekkenSteve/GoAgent/agentfw/orchestration"
 	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/workflow"
 
@@ -51,11 +50,11 @@ type TaskOutput = usecase.WorkflowTaskOutput
 func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 	logger := workflow.GetLogger(ctx)
 	state := WorkflowState{}
-	_ = workflow.SetQueryHandler(ctx, orchestration.QueryRunStatus, func() (orchestration.RunStatus, error) {
+	_ = workflow.SetQueryHandler(ctx, QueryRunStatus, func() (RunStatus, error) {
 		return workflowStateToRunStatus(state, workflow.GetInfo(ctx).WorkflowExecution.RunID), nil
 	})
 
-	commandSignalChan := workflow.GetSignalChannel(ctx, orchestration.AgentCommandSignal)
+	commandSignalChan := workflow.GetSignalChannel(ctx, CommandSignalName)
 
 	activityQueue := "agent-activities-queue"
 	if strings.TrimSpace(input.Config.ActivityTaskQueue) != "" {
@@ -164,7 +163,7 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 				break
 			}
 			switch cmd.Command {
-			case orchestration.AgentCmdPause:
+			case CommandPause:
 				state.IsPaused = true
 				state.PauseReason = cmd.Reason
 				state.PausedBy = cmd.RequestBy
@@ -172,7 +171,7 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 				if cancelActivity != nil && !activityDone {
 					cancelActivity()
 				}
-			case orchestration.AgentCmdResume:
+			case CommandResume:
 				state.PauseReason = ""
 				state.PausedBy = ""
 				state.PausedAt = time.Time{}
@@ -181,7 +180,7 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 				} else {
 					state.IsPaused = false
 				}
-			case orchestration.AgentCmdCancel:
+			case CommandCancel:
 				state.IsCancelled = true
 				state.CancelReason = cmd.Reason
 				state.CancelledBy = cmd.RequestBy
@@ -215,12 +214,12 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 				var cmd CommandSignal
 				c.Receive(ctx, &cmd)
 				switch cmd.Command {
-				case orchestration.AgentCmdResume:
+				case CommandResume:
 					state.PauseReason = ""
 					state.PausedBy = ""
 					state.PausedAt = time.Time{}
 					resumeRequested = true
-				case orchestration.AgentCmdCancel:
+				case CommandCancel:
 					state.IsCancelled = true
 					state.CancelReason = cmd.Reason
 					state.CancelledBy = cmd.RequestBy
@@ -245,7 +244,7 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 			var cmd CommandSignal
 			c.Receive(ctx, &cmd)
 			switch cmd.Command {
-			case orchestration.AgentCmdPause:
+			case CommandPause:
 				state.IsPaused = true
 				state.PauseReason = cmd.Reason
 				state.PausedBy = cmd.RequestBy
@@ -253,7 +252,7 @@ func TaskWorkflow(ctx workflow.Context, input TaskInput) (*TaskOutput, error) {
 				if cancelActivity != nil && !activityDone {
 					cancelActivity()
 				}
-			case orchestration.AgentCmdCancel:
+			case CommandCancel:
 				state.IsCancelled = true
 				state.CancelReason = cmd.Reason
 				state.CancelledBy = cmd.RequestBy
@@ -404,13 +403,13 @@ func validateTaskActivityPayload(input TaskInput) error {
 	return nil
 }
 
-func workflowStateToRunStatus(state WorkflowState, runID string) orchestration.RunStatus {
+func workflowStateToRunStatus(state WorkflowState, runID string) RunStatus {
 	lifecycle := "running"
 	reason := ""
 	var updatedAt time.Time
 	switch {
 	case state.IsCancelled:
-		lifecycle = orchestration.LifecycleStateCanceled
+		lifecycle = LifecycleStateCanceled
 		reason = state.CancelReason
 		updatedAt = state.CancelledAt
 	case state.IsPaused:
@@ -418,7 +417,7 @@ func workflowStateToRunStatus(state WorkflowState, runID string) orchestration.R
 		reason = state.PauseReason
 		updatedAt = state.PausedAt
 	}
-	return orchestration.RunStatus{
+	return RunStatus{
 		RunID:          runID,
 		LifecycleState: lifecycle,
 		Reason:         reason,

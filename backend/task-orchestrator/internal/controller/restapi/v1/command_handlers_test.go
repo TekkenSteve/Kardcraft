@@ -11,7 +11,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TekkenSteve/GoAgent/entity"
 	"task-orchestrator/internal/repo/memory"
 	"task-orchestrator/internal/usecase"
 	"task-orchestrator/internal/usecase/command"
@@ -673,22 +672,26 @@ type fakeCommandRuntime struct {
 
 type fakeAgentExecutor struct {
 	runID   string
-	lastReq *entity.ExecuteRequest
-	lastOp  entity.ControlOperation
+	lastReq *usecase.AgentRunRequest
+	lastOp  usecase.AgentControlOperation
 }
 
-func (f *fakeAgentExecutor) Execute(ctx context.Context, req *entity.ExecuteRequest) (entity.RunStatus, error) {
-	f.lastReq = req
+func (f *fakeAgentExecutor) StartAgentRun(ctx context.Context, req usecase.AgentRunRequest) (usecase.AgentRunStatus, error) {
+	f.lastReq = &req
 	runID := f.runID
 	if runID == "" {
 		runID = req.RunID
 	}
-	return entity.RunStatus{RunID: runID, LifecycleState: "created", UpdatedAt: time.Now().UTC()}, nil
+	return usecase.AgentRunStatus{RunID: runID, LifecycleState: "created", UpdatedAt: time.Now().UTC()}, nil
 }
 
-func (f *fakeAgentExecutor) Control(ctx context.Context, runID string, op entity.ControlOperation) error {
+func (f *fakeAgentExecutor) ControlAgentRun(ctx context.Context, runID string, op usecase.AgentControlOperation) error {
 	f.lastOp = op
 	return nil
+}
+
+func (f *fakeAgentExecutor) SubscribeAgentEvents(ctx context.Context, scope usecase.AgentEventScope) (usecase.AgentEventSubscription, error) {
+	return nil, errors.New("not implemented")
 }
 
 func (f *fakeCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd usecase.CreateTaskCommand) (string, error) {

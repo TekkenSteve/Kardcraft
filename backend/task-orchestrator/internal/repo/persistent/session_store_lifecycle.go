@@ -29,6 +29,9 @@ func (s *SessionStore) Close() {
 	if s.pg != nil {
 		s.pg.Close()
 	}
+	if s.redis != nil {
+		_ = s.redis.Close()
+	}
 }
 
 func (s *SessionStore) StartLifecycle(ctx context.Context) {

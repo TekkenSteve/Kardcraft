@@ -4,13 +4,13 @@ import (
 	"strings"
 	"time"
 
-	goagentredis "github.com/TekkenSteve/GoAgent/pkg/redis"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 )
 
 type SessionStore struct {
 	pg           *pgxpool.Pool
-	redis        *goagentredis.Redis
+	redis        *redis.Client
 	cacheTTL     time.Duration
 	activeWindow time.Duration
 	cleanupEvery time.Duration

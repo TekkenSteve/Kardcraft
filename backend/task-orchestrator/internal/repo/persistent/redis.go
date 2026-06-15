@@ -18,21 +18,21 @@ func (s *SessionStore) redisGetString(ctx context.Context, key string) (string, 
 	if !s.redisEnabled() {
 		return "", errors.New("redis not configured")
 	}
-	return s.redis.Get(ctx, key)
+	return s.redis.Get(ctx, key).Result()
 }
 
 func (s *SessionStore) redisSetString(ctx context.Context, key, value string, ttl time.Duration) error {
 	if !s.redisEnabled() {
 		return errors.New("redis not configured")
 	}
-	return s.redis.Set(ctx, key, value, ttl)
+	return s.redis.Set(ctx, key, value, ttl).Err()
 }
 
 func (s *SessionStore) redisDelete(ctx context.Context, keys ...string) error {
 	if !s.redisEnabled() || len(keys) == 0 {
 		return nil
 	}
-	_, err := s.redis.Del(ctx, keys...)
+	_, err := s.redis.Del(ctx, keys...).Result()
 	return err
 }
 
@@ -73,12 +73,12 @@ func (s *SessionStore) redisDeleteByPattern(ctx context.Context, pattern string,
 	}
 	var cursor uint64
 	for {
-		keys, next, err := s.redis.GeneralClient.Scan(ctx, cursor, pattern, int64(scanCount)).Result()
+		keys, next, err := s.redis.Scan(ctx, cursor, pattern, int64(scanCount)).Result()
 		if err != nil {
 			return err
 		}
 		if len(keys) > 0 {
-			if _, err := s.redis.DelMultiple(ctx, keys); err != nil {
+			if _, err := s.redis.Del(ctx, keys...).Result(); err != nil {
 				return err
 			}
 		}
