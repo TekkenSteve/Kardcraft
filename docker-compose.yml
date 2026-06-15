@@ -415,6 +415,8 @@ services:
     build:
       context: ./backend/task-orchestrator
       dockerfile: Dockerfile
+      additional_contexts:
+        goagent: ${GOAGENT_SOURCE_PATH:-../GoAgent}
     container_name: kardcraft-task-orchestrator
     restart: always
     command: [ /app/task-orchestrator ]
@@ -466,6 +468,8 @@ services:
     build:
       context: ./backend/task-orchestrator
       dockerfile: Dockerfile
+      additional_contexts:
+        goagent: ${GOAGENT_SOURCE_PATH:-../GoAgent}
     container_name: kardcraft-go-worker
     restart: always
     command: [ "/app/task-worker" ]
@@ -483,8 +487,10 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres123
       - POSTGRES_SSLMODE=disable
+      - GOAGENT_LLM_CONFIG_PATH=/app/goagent-llm.yaml
     volumes:
       - ./backend/task-orchestrator/config.yaml:/app/config.yaml
+      - ${GOAGENT_LLM_CONFIG_HOST_PATH:?GOAGENT_LLM_CONFIG_HOST_PATH must point to a GoAgent LLM YAML config}:/app/goagent-llm.yaml:ro
     depends_on:
       temporal:
         condition: service_started

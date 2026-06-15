@@ -58,6 +58,7 @@ logs/
 .env.ragix
 .env.local
 .env.development.local
+backend/task-orchestrator/goagent-llm.yaml
 .env.test.local
 .env.production.local
 secrets.yaml

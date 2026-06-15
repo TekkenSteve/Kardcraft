@@ -1,0 +1,13 @@
+providers:
+  - name: openai
+    api_key: sk-your-openai-api-key
+    base_url: https://api.openai.com/v1
+
+scenarios:
+  default:
+    description: "Kardcraft default agent execution"
+    candidates:
+      - provider: openai
+        model: gpt-4o
+        temperature: 0
+        max_tokens: 4096
