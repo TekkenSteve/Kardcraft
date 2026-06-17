@@ -63,7 +63,7 @@ func extractAssistantContentFromEvents(events []usecase.EventRow) (string, time.
 		if ev.Message != nil {
 			msg = strings.TrimSpace(*ev.Message)
 		}
-		if msg != "" && (ev.Type == "WORKFLOW_COMPLETED" || ev.Type == "thread.message.completed" || ev.Type == "LLM_OUTPUT") {
+		if msg != "" && (ev.Type == usecase.EventWorkflowCompleted || ev.Type == usecase.EventThreadMessageCompleted || ev.Type == usecase.EventLLMOutput) {
 			return msg, ev.Timestamp
 		}
 	}

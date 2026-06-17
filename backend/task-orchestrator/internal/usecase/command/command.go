@@ -2,7 +2,6 @@ package command
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -14,12 +13,23 @@ type UseCase struct {
 	tasks        usecase.Task
 	store        usecase.CommandSessionStore
 	agentRuntime usecase.AgentRuntime
-	runtime      usecase.CommandRuntime
+	backend      usecase.AgentBackendRef
 	now          func() time.Time
 }
 
-func New(tasks usecase.Task, store usecase.CommandSessionStore, agentRuntime usecase.AgentRuntime, runtime usecase.CommandRuntime) *UseCase {
-	return &UseCase{tasks: tasks, store: store, agentRuntime: agentRuntime, runtime: runtime, now: time.Now}
+func New(tasks usecase.Task, store usecase.CommandSessionStore, agentRuntime usecase.AgentRuntime) *UseCase {
+	return NewWithBackend(tasks, store, agentRuntime, DefaultBackend())
+}
+
+func NewWithBackend(tasks usecase.Task, store usecase.CommandSessionStore, agentRuntime usecase.AgentRuntime, backend usecase.AgentBackendRef) *UseCase {
+	if strings.TrimSpace(backend.Kind) == "" || strings.TrimSpace(backend.Name) == "" {
+		backend = DefaultBackend()
+	}
+	return &UseCase{tasks: tasks, store: store, agentRuntime: agentRuntime, backend: backend, now: time.Now}
+}
+
+func DefaultBackend() usecase.AgentBackendRef {
+	return usecase.AgentBackendRef{Kind: "temporal_external", Name: "kardcraft-agent-workflow"}
 }
 
 func (s *UseCase) CreateTaskInSession(ctx context.Context, cmd usecase.CreateTaskCommand) (*usecase.CreateTaskResult, string, error) {
@@ -68,30 +78,22 @@ func (s *UseCase) CreateTaskInSession(ctx context.Context, cmd usecase.CreateTas
 }
 
 func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskCommand) (string, error) {
-	taskType := strings.ToLower(strings.TrimSpace(cmd.TaskType))
-	if taskType == "card_template" {
-		return s.runtime.StartTaskWorkflow(ctx, cmd)
-	}
 	if s.agentRuntime == nil {
-		return "", fmt.Errorf("agent runtime is required for main task execution")
+		return "", fmt.Errorf("agent runtime is required for task execution")
 	}
 	modelRef := strings.TrimSpace(cmd.Config.ModelRef)
-	if modelRef == "" {
-		return "", fmt.Errorf("model_ref is required for main task execution")
-	}
-	userMessage, err := buildAgentUserMessage(cmd)
-	if err != nil {
-		return "", err
-	}
+	agentInput := buildAgentTaskInput(cmd)
 	status, err := s.agentRuntime.StartAgentRun(ctx, usecase.AgentRunRequest{
 		RunID:          cmd.TaskID,
 		ThreadID:       cmd.SessionID,
 		AccountID:      cmd.UserID,
 		ModelRef:       modelRef,
 		SystemPrompt:   systemPromptFromCommand(cmd),
-		UserMessage:    userMessage,
+		UserMessage:    strings.TrimSpace(cmd.Input.Query),
 		IdempotencyKey: strings.TrimSpace(cmd.Metadata.RequestID),
 		RequestedAt:    s.now().UTC(),
+		Backend:        s.backend,
+		Input:          agentInput,
 	})
 	if err != nil {
 		return "", err
@@ -99,8 +101,8 @@ func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskComma
 	return status.RunID, nil
 }
 
-func buildAgentUserMessage(cmd usecase.CreateTaskCommand) (string, error) {
-	payload := map[string]any{
+func buildAgentTaskInput(cmd usecase.CreateTaskCommand) map[string]any {
+	return map[string]any{
 		"schema_version":       "kardcraft.task.input.v1",
 		"task_id":              strings.TrimSpace(cmd.TaskID),
 		"task_type":            strings.TrimSpace(cmd.TaskType),
@@ -121,11 +123,6 @@ func buildAgentUserMessage(cmd usecase.CreateTaskCommand) (string, error) {
 		"template_id":        strings.TrimSpace(cmd.Input.TemplateID),
 		"variables":          cmd.Input.Variables,
 	}
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("marshal agent task input: %w", err)
-	}
-	return string(body), nil
 }
 
 func systemPromptFromCommand(cmd usecase.CreateTaskCommand) string {
@@ -134,6 +131,57 @@ func systemPromptFromCommand(cmd usecase.CreateTaskCommand) string {
 		return ""
 	}
 	return fmt.Sprintf("Use Kardcraft template %s to help the user produce study-card content.", templateID)
+}
+
+func (s *UseCase) SendMessageToSession(ctx context.Context, cmd usecase.SessionMessageCommand) (*usecase.SessionMessageResult, error) {
+	if s.agentRuntime == nil {
+		return nil, fmt.Errorf("agent runtime is required for session messages")
+	}
+	if err := s.store.EnsureSessionAccess(ctx, cmd.SessionID, cmd.UserID); err != nil {
+		return nil, err
+	}
+	tasks, err := s.store.ListSessionTasks(ctx, cmd.SessionID, cmd.UserID)
+	if err != nil {
+		return nil, err
+	}
+	taskID, _, ok := resolveActiveTask(tasks)
+	if !ok {
+		return nil, usecase.ErrNoActiveTask
+	}
+	sentAt := cmd.SentAt
+	if sentAt.IsZero() {
+		sentAt = s.now().UTC()
+	}
+	idempotencyKey := strings.TrimSpace(cmd.IdempotencyKey)
+	if idempotencyKey == "" {
+		return nil, fmt.Errorf("idempotency key is required")
+	}
+	payload := map[string]any{
+		"schema_version":   "kardcraft.user_message.v1",
+		"session_id":       strings.TrimSpace(cmd.SessionID),
+		"user_id":          strings.TrimSpace(cmd.UserID),
+		"active_task_id":   taskID,
+		"content":          strings.TrimSpace(cmd.Content),
+		"attachments":      cmd.Attachments,
+		"file_ids":         cmd.FileIDs,
+		"context":          cmd.Context,
+		"context_envelope": cmd.ContextEnvelope,
+		"metadata":         cmd.Metadata,
+	}
+	if err := s.agentRuntime.SignalAgentRun(ctx, taskID, usecase.AgentSignal{
+		Type:           usecase.AgentSignalUserMessage,
+		IdempotencyKey: idempotencyKey,
+		Payload:        payload,
+		SentAt:         sentAt,
+	}); err != nil {
+		return nil, err
+	}
+	return &usecase.SessionMessageResult{
+		SessionID:      cmd.SessionID,
+		ActiveTaskID:   taskID,
+		IdempotencyKey: idempotencyKey,
+		SentAt:         sentAt,
+	}, nil
 }
 
 func (s *UseCase) ControlSession(ctx context.Context, cmd usecase.SessionControlCommand) (*usecase.SessionControlResult, error) {
@@ -175,11 +223,6 @@ func (s *UseCase) ControlSession(ctx context.Context, cmd usecase.SessionControl
 		if err := s.controlWorkflow(ctx, taskID, taskType, usecase.AgentControlCancel, signalPayload); err != nil {
 			return nil, err
 		}
-		if strings.EqualFold(taskType, usecase.TaskTypeCardTemplate) {
-			if err := s.runtime.CancelWorkflow(ctx, taskID); err != nil {
-				return nil, err
-			}
-		}
 		state = "TERMINATING"
 	default:
 		return nil, fmt.Errorf("unsupported action: %s", cmd.Action)
@@ -195,13 +238,11 @@ func (s *UseCase) ControlSession(ctx context.Context, cmd usecase.SessionControl
 }
 
 func (s *UseCase) controlWorkflow(ctx context.Context, taskID, taskType string, op usecase.AgentControlOperation, signal usecase.ControlSignal) error {
-	if !strings.EqualFold(taskType, usecase.TaskTypeCardTemplate) {
-		if s.agentRuntime == nil {
-			return fmt.Errorf("agent runtime is required for main task control")
-		}
-		return s.agentRuntime.ControlAgentRun(ctx, taskID, op)
+	if s.agentRuntime == nil {
+		return fmt.Errorf("agent runtime is required for task control")
 	}
-	return s.runtime.SignalWorkflow(ctx, taskID, string(op), signal)
+	_ = taskType
+	return s.agentRuntime.ControlAgentRun(ctx, taskID, op)
 }
 
 func validateTransition(action, state string) error {

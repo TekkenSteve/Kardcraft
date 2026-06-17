@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"task-orchestrator/internal/repo"
 )
 
 type fakeOutcomeStore struct {
@@ -23,9 +21,6 @@ type fakeOutcomeStore struct {
 	streamIDs      []string
 	eventTypes     []string
 	payloads       []string
-	outboxChannels []string
-	outboxTypes    []string
-	outboxPayloads []map[string]any
 }
 
 func (f *fakeOutcomeStore) UpdateTaskFinalState(ctx context.Context, taskID string, status string, result any, errMsg string, completedAt time.Time) error {
@@ -62,14 +57,6 @@ func (f *fakeOutcomeStore) SaveWorkspace(ctx context.Context, sessionID string, 
 	f.calls = append(f.calls, "save_workspace")
 	f.workspace = workspace
 	return f.saveErr
-}
-
-func (f *fakeOutcomeStore) AppendWorkflowOutboxEvent(ctx context.Context, event repo.WorkflowOutboxEvent) error {
-	f.calls = append(f.calls, "append_outbox")
-	f.outboxChannels = append(f.outboxChannels, event.Channel)
-	f.outboxTypes = append(f.outboxTypes, event.EventType)
-	f.outboxPayloads = append(f.outboxPayloads, event.Payload)
-	return f.outboxErr
 }
 
 func persistInput(status string, finalCards []any) Input {
@@ -117,15 +104,15 @@ func TestProject_WorkspaceSaveFailureBlocksTerminal(t *testing.T) {
 	if err == nil {
 		t.Fatalf("expected workspace save error")
 	}
-	if containsStreamID(store.streamIDs, "terminal:t1:completed") || indexOf(store.outboxTypes, "WORKFLOW_COMPLETED") >= 0 {
-		t.Fatalf("terminal must not publish after workspace save failure, streamIDs=%v outbox=%v", store.streamIDs, store.outboxTypes)
+	if containsStreamID(store.streamIDs, "terminal:t1:completed") {
+		t.Fatalf("terminal must not publish after workspace save failure, streamIDs=%v", store.streamIDs)
 	}
 }
 
 func TestProject_WorkspaceEventPrecedesTerminalAndCarriesCards(t *testing.T) {
 	store := &fakeOutcomeStore{sessionID: "s1"}
 
-	err := New(store).Project(context.Background(), persistInput("completed", []any{
+	projection, err := New(store).ProjectWithEvents(context.Background(), persistInput("completed", []any{
 		map[string]any{"id": "c1", "front": "f", "back": "b", "model": "mcq"},
 	}))
 	if err != nil {
@@ -143,10 +130,11 @@ func TestProject_WorkspaceEventPrecedesTerminalAndCarriesCards(t *testing.T) {
 	if workspaceIndex >= terminalIndex {
 		t.Fatalf("expected WORKSPACE_UPDATED before terminal, eventTypes=%v streamIDs=%v", store.eventTypes, store.streamIDs)
 	}
-	workspaceOutboxIndex := indexOf(store.outboxTypes, "WORKSPACE_UPDATED")
-	terminalOutboxIndex := indexOf(store.outboxTypes, "WORKFLOW_COMPLETED")
-	if workspaceOutboxIndex < 0 || terminalOutboxIndex < 0 || workspaceOutboxIndex >= terminalOutboxIndex {
-		t.Fatalf("expected outbox workspace before terminal, got channels=%v types=%v", store.outboxChannels, store.outboxTypes)
+	if projection == nil || len(projection.Events) != 2 {
+		t.Fatalf("expected two projected events, got %#v", projection)
+	}
+	if projection.Events[0].EventType != "WORKSPACE_UPDATED" || projection.Events[1].EventType != "WORKFLOW_COMPLETED" {
+		t.Fatalf("expected projected workspace before terminal, got %#v", projection.Events)
 	}
 
 	var payload map[string]any

@@ -33,11 +33,28 @@ func (r *Runtime) StartAgentRun(ctx context.Context, req usecase.AgentRunRequest
 		IdempotencyKey: req.IdempotencyKey,
 		RequestedAt:    req.RequestedAt,
 		Metadata:       req.Metadata,
+		Backend: agentos.BackendRef{
+			Kind: agentos.BackendKind(req.Backend.Kind),
+			Name: req.Backend.Name,
+		},
+		Input: req.Input,
 	})
 	if err != nil {
 		return usecase.AgentRunStatus{}, err
 	}
 	return agentRunStatusFromAgentOS(status), nil
+}
+
+func (r *Runtime) SignalAgentRun(ctx context.Context, runID string, signal usecase.AgentSignal) error {
+	if r == nil || r.runtime == nil {
+		return fmt.Errorf("goagent runtime is required")
+	}
+	return r.runtime.Signal(ctx, runID, agentos.Signal{
+		Type:           agentos.SignalType(signal.Type),
+		IdempotencyKey: signal.IdempotencyKey,
+		Payload:        signal.Payload,
+		SentAt:         signal.SentAt,
+	})
 }
 
 func (r *Runtime) ControlAgentRun(ctx context.Context, runID string, op usecase.AgentControlOperation) error {

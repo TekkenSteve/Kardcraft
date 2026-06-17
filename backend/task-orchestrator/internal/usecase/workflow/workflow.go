@@ -42,10 +42,37 @@ func (s *UseCase) ResolveTaskSession(ctx context.Context, taskID string) (string
 }
 
 func (s *UseCase) QueryControlState(ctx context.Context, taskID string) (*usecase.WorkflowState, error) {
-	if !s.Enabled() {
-		return nil, fmt.Errorf("runtime unavailable")
+	if s == nil || s.store == nil {
+		return nil, fmt.Errorf("read model unavailable")
 	}
-	return s.runtime.QueryWorkflowState(ctx, taskID)
+	events, err := s.store.ListWorkflowEvents(ctx, taskID, 2000, 0)
+	if err != nil {
+		return nil, err
+	}
+	state := &usecase.WorkflowState{WorkflowID: taskID, Lifecycle: "running"}
+	for _, ev := range events {
+		switch ev.Type {
+		case usecase.EventWorkflowPaused:
+			state.Lifecycle = "paused"
+			state.IsPaused = true
+			state.PauseReason = stringPtrValue(ev.Message)
+			pausedAt := ev.Timestamp
+			state.PausedAt = &pausedAt
+		case usecase.EventWorkflowResumed:
+			state.Lifecycle = "running"
+			state.IsPaused = false
+			state.PauseReason = ""
+			state.PausedAt = nil
+		case usecase.EventWorkflowCancelled:
+			state.Lifecycle = "cancelled"
+			state.IsCancelled = true
+			state.CancelReason = stringPtrValue(ev.Message)
+			cancelledAt := ev.Timestamp
+			state.CancelledAt = &cancelledAt
+		}
+		state.LastUpdateTime = ev.Timestamp
+	}
+	return state, nil
 }
 
 func (s *UseCase) CancelWorkflow(ctx context.Context, workflowID, reason string) error {
@@ -81,4 +108,11 @@ func (s *UseCase) ListHistory(ctx context.Context, workflowID string) ([]usecase
 		})
 	}
 	return out, nil
+}
+
+func stringPtrValue(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
 }

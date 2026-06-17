@@ -5,6 +5,7 @@ import "time"
 const (
 	TaskTypeMain         = "main"
 	TaskTypeCardTemplate = "card_template"
+	AgentSignalUserMessage = "user.message"
 )
 
 type CreateTaskResult struct {
@@ -28,6 +29,26 @@ type SessionControlResult struct {
 	TaskState           string
 	SessionControlState string
 	Accepted            bool
+}
+
+type SessionMessageCommand struct {
+	SessionID      string
+	UserID         string
+	Content        string
+	Attachments    []map[string]any
+	FileIDs        []string
+	Context        map[string]any
+	ContextEnvelope map[string]any
+	IdempotencyKey string
+	Metadata       map[string]any
+	SentAt         time.Time
+}
+
+type SessionMessageResult struct {
+	SessionID      string
+	ActiveTaskID   string
+	IdempotencyKey string
+	SentAt         time.Time
 }
 
 type SessionTask struct {

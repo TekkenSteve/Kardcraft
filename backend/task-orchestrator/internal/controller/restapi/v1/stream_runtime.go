@@ -16,6 +16,14 @@ func (s *Server) appendTimeline(workflowID, sessionID, eventType, message string
 }
 
 func (s *Server) appendTimelineWithStreamID(workflowID, sessionID, eventType, message, streamID string, payload any) {
+	s.appendTimelineWithOptions(workflowID, sessionID, eventType, message, streamID, payload, true)
+}
+
+func (s *Server) appendTimelineTransient(workflowID, sessionID, eventType, message, streamID string, payload any) {
+	s.appendTimelineWithOptions(workflowID, sessionID, eventType, message, streamID, payload, false)
+}
+
+func (s *Server) appendTimelineWithOptions(workflowID, sessionID, eventType, message, streamID string, payload any, persist bool) {
 	if strings.TrimSpace(streamID) == "" {
 		streamID = fmt.Sprintf("%d", time.Now().UTC().UnixNano())
 	}
@@ -109,7 +117,7 @@ func (s *Server) appendTimelineWithStreamID(workflowID, sessionID, eventType, me
 	if b, err := json.Marshal(envelope); err == nil {
 		payloadText = string(b)
 	}
-	if s.readModel != nil && sessionID != "" {
+	if persist && s.readModel != nil && sessionID != "" {
 		_ = s.readModel.InsertEvent(
 			context.Background(),
 			sessionID,

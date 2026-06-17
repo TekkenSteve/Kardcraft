@@ -19,6 +19,7 @@ type SessionsDeps struct {
 	CommandService    usecase.Command
 	IsTemporalEnabled func() bool
 
+	ActiveTaskCode string
 	AuthzDeniedCode string
 }
 
@@ -77,6 +78,8 @@ func NewSessionsRouter(deps SessionsDeps) http.HandlerFunc {
 		}
 		suffix := parts[1]
 		switch suffix {
+		case "messages":
+			handleSessionMessages(w, r, sessionID, deps)
 		case "conversation":
 			handleSessionConversation(w, r, sessionID, deps)
 		case "timeline":

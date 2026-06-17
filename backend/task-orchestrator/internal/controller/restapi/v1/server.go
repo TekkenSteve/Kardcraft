@@ -14,11 +14,13 @@ import (
 	"task-orchestrator/internal/controller/restapi/middleware"
 	"task-orchestrator/internal/entity"
 	"task-orchestrator/internal/usecase"
+	"task-orchestrator/internal/usecase/outcomeprojector"
 )
 
 const maxTimelineEventsInMemory = 500
 
 type SessionLifecycleStore interface {
+	outcomeprojector.Store
 	Ready() bool
 	StartLifecycle(ctx context.Context)
 	Close()

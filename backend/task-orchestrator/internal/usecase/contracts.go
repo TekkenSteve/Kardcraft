@@ -24,6 +24,7 @@ type (
 
 	Command interface {
 		CreateTaskInSession(context.Context, CreateTaskCommand) (*CreateTaskResult, string, error)
+		SendMessageToSession(context.Context, SessionMessageCommand) (*SessionMessageResult, error)
 		ControlSession(context.Context, SessionControlCommand) (*SessionControlResult, error)
 	}
 
@@ -76,23 +77,16 @@ type (
 
 	AgentRuntime interface {
 		StartAgentRun(ctx context.Context, req AgentRunRequest) (AgentRunStatus, error)
+		SignalAgentRun(ctx context.Context, runID string, signal AgentSignal) error
 		ControlAgentRun(ctx context.Context, runID string, op AgentControlOperation) error
 		SubscribeAgentEvents(ctx context.Context, scope AgentEventScope) (AgentEventSubscription, error)
-	}
-
-	CommandRuntime interface {
-		StartTaskWorkflow(ctx context.Context, cmd CreateTaskCommand) (string, error)
-		SignalWorkflow(ctx context.Context, taskID, signalName string, signal ControlSignal) error
-		CancelWorkflow(ctx context.Context, taskID string) error
 	}
 
 	WorkflowRuntime interface {
 		Enabled() bool
 		DescribeWorkflow(ctx context.Context, workflowID, runID string) (*WorkflowDescription, error)
 		GetWorkflowResult(ctx context.Context, workflowID, runID string) (any, error)
-		SignalWorkflow(ctx context.Context, workflowID, signalName string, signal ControlSignal) error
 		CancelWorkflow(ctx context.Context, workflowID string) error
-		QueryWorkflowState(ctx context.Context, workflowID string) (*WorkflowState, error)
 		ListWorkflowHistory(ctx context.Context, workflowID string) ([]WorkflowHistoryEvent, error)
 	}
 )
@@ -140,6 +134,8 @@ type AgentRunRequest struct {
 	IdempotencyKey string
 	RequestedAt    time.Time
 	Metadata       map[string]string
+	Backend        AgentBackendRef
+	Input          map[string]any
 }
 
 type AgentRunStatus struct {
@@ -148,6 +144,18 @@ type AgentRunStatus struct {
 	Step           int32
 	Reason         string
 	UpdatedAt      time.Time
+}
+
+type AgentBackendRef struct {
+	Kind string
+	Name string
+}
+
+type AgentSignal struct {
+	Type           string
+	IdempotencyKey string
+	Payload        map[string]any
+	SentAt         time.Time
 }
 
 type AgentMessage struct {

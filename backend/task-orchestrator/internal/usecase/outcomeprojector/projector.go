@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"task-orchestrator/internal/repo"
+	"task-orchestrator/internal/usecase"
 	outcomemodel "task-orchestrator/internal/usecase/outcome"
 )
 
@@ -30,7 +30,22 @@ type Store interface {
 	InsertEvent(ctx context.Context, sessionID, taskID, workflowID, eventType, message, payload, streamID string, ts time.Time) error
 	LoadWorkspace(ctx context.Context, sessionID string) (map[string]any, error)
 	SaveWorkspace(ctx context.Context, sessionID string, workspace map[string]any) error
-	AppendWorkflowOutboxEvent(ctx context.Context, event repo.WorkflowOutboxEvent) error
+}
+
+type ProjectedEvent struct {
+	SessionID  string
+	TaskID     string
+	WorkflowID string
+	RunID      string
+	EventType  string
+	Message    string
+	StreamID   string
+	Payload    map[string]any
+	OccurredAt time.Time
+}
+
+type Projection struct {
+	Events []ProjectedEvent
 }
 
 type Projector struct {
@@ -42,12 +57,18 @@ func New(store Store) *Projector {
 }
 
 func (p *Projector) Project(ctx context.Context, in Input) error {
+	_, err := p.ProjectWithEvents(ctx, in)
+	return err
+}
+
+func (p *Projector) ProjectWithEvents(ctx context.Context, in Input) (*Projection, error) {
 	if p == nil || p.store == nil {
-		return fmt.Errorf("session store not configured")
+		return nil, fmt.Errorf("session store not configured")
 	}
+	projection := &Projection{}
 	taskID := strings.TrimSpace(in.TaskID)
 	if taskID == "" {
-		return fmt.Errorf("task_id is required")
+		return nil, fmt.Errorf("task_id is required")
 	}
 	status := strings.TrimSpace(strings.ToLower(in.Status))
 	if status == "" {
@@ -57,7 +78,7 @@ func (p *Projector) Project(ctx context.Context, in Input) error {
 	if err != nil {
 		if status == "completed" {
 			log.Printf("metric=outcome_decode_failure task_id=%s workflow_id=%s status=%s err=%v", taskID, in.WorkflowID, status, err)
-			return fmt.Errorf("decode task outcome: %w", err)
+			return nil, fmt.Errorf("decode task outcome: %w", err)
 		}
 		taskOutcome = outcomemodel.TaskOutcome{
 			SchemaVersion: outcomemodel.TaskOutcomeSchema,
@@ -87,7 +108,7 @@ func (p *Projector) Project(ctx context.Context, in Input) error {
 
 	if err := p.store.UpdateTaskFinalState(ctx, taskID, taskOutcome.Status, taskOutcome.ToMap(), in.Error, in.CompletedAt); err != nil {
 		log.Printf("metric=outcome_persist_critical_failure task_id=%s workflow_id=%s err=%v", taskID, taskOutcome.WorkflowID, err)
-		return err
+		return nil, err
 	}
 
 	sessionID, _ := p.store.GetTaskSession(ctx, taskID)
@@ -95,26 +116,26 @@ func (p *Projector) Project(ctx context.Context, in Input) error {
 		sessionID = strings.TrimSpace(taskOutcome.SessionID)
 	}
 	if strings.TrimSpace(sessionID) == "" {
-		return nil
+		return projection, nil
 	}
 	workflowID := strings.TrimSpace(taskOutcome.WorkflowID)
 	runID := strings.TrimSpace(in.RunID)
 	if runID == "" {
-		return fmt.Errorf("run_id is required")
+		return nil, fmt.Errorf("run_id is required")
 	}
 	correlationID := strings.TrimSpace(in.CorrelationID)
 	if correlationID == "" && taskOutcome.Metadata != nil {
 		correlationID = strings.TrimSpace(outcomemodel.AsString(taskOutcome.Metadata["request_id"]))
 	}
 	if correlationID == "" {
-		return fmt.Errorf("correlation_id is required")
+		return nil, fmt.Errorf("correlation_id is required")
 	}
 
-	eventType := "WORKFLOW_COMPLETED"
+	eventType := usecase.EventWorkflowCompleted
 	if taskOutcome.Status == "failed" {
-		eventType = "WORKFLOW_FAILED"
+		eventType = usecase.EventWorkflowFailed
 	} else if taskOutcome.Status == "cancelled" {
-		eventType = "WORKFLOW_CANCELLED"
+		eventType = usecase.EventWorkflowCancelled
 	}
 	msg := strings.TrimSpace(in.TerminalNote)
 	if msg == "" {
@@ -122,9 +143,9 @@ func (p *Projector) Project(ctx context.Context, in Input) error {
 	}
 	if msg == "" {
 		switch eventType {
-		case "WORKFLOW_COMPLETED":
+		case usecase.EventWorkflowCompleted:
 			msg = "Workflow completed"
-		case "WORKFLOW_FAILED":
+		case usecase.EventWorkflowFailed:
 			msg = firstNonEmpty(strings.TrimSpace(in.Error), "Workflow failed")
 		default:
 			msg = "Workflow cancelled"
@@ -166,8 +187,9 @@ func (p *Projector) Project(ctx context.Context, in Input) error {
 			}
 			if err := p.store.SaveWorkspace(ctx, sessionID, workspace); err != nil {
 				log.Printf("metric=projection_critical_failure type=workspace task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
-				return err
+				return nil, err
 			} else {
+				workspaceStreamID := fmt.Sprintf("workspace:%s:%d", taskID, nextVersion)
 				workspacePayload, _ := json.Marshal(map[string]any{
 					"session_id":     sessionID,
 					"workspace_id":   sessionID,
@@ -193,33 +215,30 @@ func (p *Projector) Project(ctx context.Context, in Input) error {
 					"cards":          cards,
 					"message":        "Workspace updated",
 				}
-				if err := p.store.AppendWorkflowOutboxEvent(ctx, repo.WorkflowOutboxEvent{
-					TaskID:     taskID,
-					SessionID:  sessionID,
-					UserID:     taskOutcome.UserID,
-					WorkflowID: workflowID,
-					RunID:      runID,
-					EventType:  "WORKSPACE_UPDATED",
-					Channel:    "progress",
-					Payload:    workspaceEventPayload,
-					OccurredAt: now,
-				}); err != nil {
-					log.Printf("metric=projection_critical_failure type=workspace_outbox task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
-					return err
-				}
 				if err := p.store.InsertEvent(
 					ctx,
 					sessionID,
 					taskID,
 					workflowID,
-					"WORKSPACE_UPDATED",
+					usecase.EventWorkspaceUpdated,
 					"Workspace updated",
 					string(workspacePayload),
-					fmt.Sprintf("workspace:%s:%d", taskID, nextVersion),
+					workspaceStreamID,
 					now,
 				); err != nil {
 					log.Printf("metric=projection_failure type=workspace_event task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
 				}
+				projection.Events = append(projection.Events, ProjectedEvent{
+					SessionID:  sessionID,
+					TaskID:     taskID,
+					WorkflowID: workflowID,
+					RunID:      runID,
+					EventType:  usecase.EventWorkspaceUpdated,
+					Message:    "Workspace updated",
+					StreamID:   workspaceStreamID,
+					Payload:    workspaceEventPayload,
+					OccurredAt: now,
+				})
 			}
 		}
 	}
@@ -234,20 +253,8 @@ func (p *Projector) Project(ctx context.Context, in Input) error {
 		"status":         taskOutcome.Status,
 		"message":        msg,
 	}
-	if err := p.store.AppendWorkflowOutboxEvent(ctx, repo.WorkflowOutboxEvent{
-		TaskID:     taskID,
-		SessionID:  sessionID,
-		UserID:     taskOutcome.UserID,
-		WorkflowID: workflowID,
-		RunID:      runID,
-		EventType:  eventType,
-		Channel:    "terminal",
-		Payload:    terminalPayload,
-		OccurredAt: time.Now().UTC(),
-	}); err != nil {
-		log.Printf("metric=projection_critical_failure type=terminal_outbox task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
-		return err
-	}
+	terminalAt := time.Now().UTC()
+	terminalStreamID := "terminal:" + taskID + ":" + taskOutcome.Status
 
 	if err := p.store.InsertEvent(
 		ctx,
@@ -257,13 +264,24 @@ func (p *Projector) Project(ctx context.Context, in Input) error {
 		eventType,
 		msg,
 		"",
-		"terminal:"+taskID+":"+taskOutcome.Status,
-		time.Now().UTC(),
+		terminalStreamID,
+		terminalAt,
 	); err != nil {
 		log.Printf("metric=projection_failure type=terminal_event task_id=%s workflow_id=%s err=%v", taskID, workflowID, err)
 	}
+	projection.Events = append(projection.Events, ProjectedEvent{
+		SessionID:  sessionID,
+		TaskID:     taskID,
+		WorkflowID: workflowID,
+		RunID:      runID,
+		EventType:  eventType,
+		Message:    msg,
+		StreamID:   terminalStreamID,
+		Payload:    terminalPayload,
+		OccurredAt: terminalAt,
+	})
 
-	return nil
+	return projection, nil
 }
 
 func workspaceVersion(workspace map[string]any) int {

@@ -21,7 +21,7 @@ import (
 
 func TestHandleCreateTaskBoundaries(t *testing.T) {
 	t.Run("success", func(t *testing.T) {
-		s := newCommandTestServer(newFakeCommandStore(), &fakeCommandRuntime{runID: "run-1"}, true)
+		s := newCommandTestServer(newFakeCommandStore(), nil, true)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{"query":"hello","context":{"template_id":"tpl-1"}}
@@ -39,7 +39,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		store := newFakeCommandStore()
 		store.inserted = false
 		store.sessionTasks = []usecase.SessionTask{{TaskID: "active-1", Status: "running"}}
-		s := newCommandTestServer(store, &fakeCommandRuntime{runID: "run-1"}, true)
+		s := newCommandTestServer(store, nil, true)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{"query":"hello","context":{"template_id":"tpl-1"}}
@@ -54,7 +54,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 	})
 
 	t.Run("runtime unavailable", func(t *testing.T) {
-		s := newCommandTestServer(newFakeCommandStore(), &fakeCommandRuntime{runID: "run-1"}, false)
+		s := newCommandTestServer(newFakeCommandStore(), nil, false)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{"query":"hello","context":{"template_id":"tpl-1"}}
@@ -70,7 +70,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 
 	t.Run("main task without template and without resolved default returns 400", func(t *testing.T) {
 		readStore := &fakeReadModelStore{ready: true}
-		s := newCommandTestServerWithReadStore(newFakeCommandStore(), &fakeCommandRuntime{runID: "run-no-default"}, true, readStore)
+		s := newCommandTestServerWithReadStore(newFakeCommandStore(), nil, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{"query":"hello"}
@@ -95,8 +95,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 				DefaultTemplateVersion: 7,
 			},
 		}
-		runtime := &fakeCommandRuntime{runID: "run-with-default"}
-		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), nil, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{"query":"hello"}
@@ -116,15 +115,98 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if got := contextPayload["template_id"]; got != "tpl-default" {
 			t.Fatalf("expected template_id resolved to tpl-default, got %q", got)
 		}
-		if got := contextPayload["template_version"]; got != float64(7) {
+		if got := contextPayload["template_version"]; got != 7 {
 			t.Fatalf("expected template_version resolved to 7, got %#v", got)
+		}
+	})
+
+	t.Run("main task starts through agent workflow AgentOS backend", func(t *testing.T) {
+		readStore := &fakeReadModelStore{ready: true}
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), nil, true, readStore)
+		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
+			"task_type":"main",
+			"input":{"query":"hello","context":{"template_id":"tpl-1"}}
+		}`)
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		if executor.lastReq == nil {
+			t.Fatal("expected agent runtime request")
+		}
+		if executor.lastReq.Backend.Kind != "temporal_external" || executor.lastReq.Backend.Name != "kardcraft-agent-workflow" {
+			t.Fatalf("expected agent workflow backend, got %#v", executor.lastReq.Backend)
+		}
+		if executor.lastReq.Input["task_type"] != usecase.TaskTypeMain {
+			t.Fatalf("expected structured task input, got %#v", executor.lastReq.Input)
+		}
+	})
+
+	t.Run("card template task starts through agent workflow AgentOS backend", func(t *testing.T) {
+		readStore := &fakeReadModelStore{ready: true}
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), nil, true, readStore)
+		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
+			"task_type":"card_template",
+			"input":{"template_id":"tpl-source","variables":{"front":"Q"}}
+		}`)
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		if executor.lastReq == nil {
+			t.Fatal("expected agent runtime request")
+		}
+		if executor.lastReq.Backend.Kind != "temporal_external" || executor.lastReq.Backend.Name != "kardcraft-agent-workflow" {
+			t.Fatalf("expected agent workflow backend, got %#v", executor.lastReq.Backend)
+		}
+		if executor.lastReq.Input["template_id"] != "tpl-source" {
+			t.Fatalf("expected template_id in structured input, got %#v", executor.lastReq.Input)
+		}
+	})
+
+	t.Run("session message signals active AgentOS run", func(t *testing.T) {
+		store := newFakeCommandStore()
+		store.sessionTasks = []usecase.SessionTask{{TaskID: "active-1", Status: "running", TaskType: usecase.TaskTypeMain}}
+		readStore := &fakeReadModelStore{ready: true}
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(store, nil, true, readStore)
+		req := newJSONRequest(http.MethodPost, "/api/v1/sessions/s1/messages", `{
+			"content":"continue",
+			"idempotency_key":"msg-1"
+		}`)
+		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+		rr := httptest.NewRecorder()
+
+		s.Handler().ServeHTTP(rr, req)
+		if rr.Code != http.StatusAccepted {
+			t.Fatalf("expected 202, got %d body=%s", rr.Code, rr.Body.String())
+		}
+		if executor.lastSignal == nil {
+			t.Fatal("expected agent signal")
+		}
+		if executor.lastSignalRunID != "active-1" {
+			t.Fatalf("expected signal to active-1, got %s", executor.lastSignalRunID)
+		}
+		if executor.lastSignal.Type != usecase.AgentSignalUserMessage {
+			t.Fatalf("expected user.message signal, got %s", executor.lastSignal.Type)
+		}
+		if got := executor.lastSignal.Payload["content"]; got != "continue" {
+			t.Fatalf("expected content payload, got %#v", got)
+		}
+		if len(readStore.insertedEvents) != 1 || readStore.insertedEvents[0].taskID != "active-1" {
+			t.Fatalf("expected persisted active task message event, got %#v", readStore.insertedEvents)
 		}
 	})
 
 	t.Run("persistence failure", func(t *testing.T) {
 		store := newFakeCommandStore()
 		store.upsertErr = errors.New("db down")
-		s := newCommandTestServer(store, &fakeCommandRuntime{runID: "run-1"}, true)
+		s := newCommandTestServer(store, nil, true)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{"query":"hello","context":{"template_id":"tpl-1"}}
@@ -143,7 +225,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read tasks_handler.go: %v", err)
 		}
-		if strings.Contains(string(data), "internal/controller/temporal") {
+		if strings.Contains(string(data), "internal/controller/"+"temporal") {
 			t.Fatalf("tasks handler leaks runtime DTO import")
 		}
 	})
@@ -160,8 +242,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 				{TaskID: &taskID, Payload: &payload, Timestamp: time.Now().UTC()},
 			},
 		}
-		runtime := &fakeCommandRuntime{runID: "run-2"}
-		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), nil, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{"query":"hello","context":{"template_id":"tpl-1"}}
@@ -174,12 +255,12 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
 		}
 		agentInput := decodeAgentTaskInput(t, executor)
-		fileIDs, ok := agentInput["file_ids"].([]any)
-		if !ok || len(fileIDs) != 1 || fileIDs[0] != "file_hist_1" {
+		fileIDs := testStringSlice(agentInput["file_ids"])
+		if len(fileIDs) != 1 || fileIDs[0] != "file_hist_1" {
 			t.Fatalf("expected inherited file_ids to include file_hist_1, got %#v", agentInput["file_ids"])
 		}
-		effectiveFileIDs, ok := agentInput["effective_file_ids"].([]any)
-		if !ok || len(effectiveFileIDs) != 1 || effectiveFileIDs[0] != "file_hist_1" {
+		effectiveFileIDs := testStringSlice(agentInput["effective_file_ids"])
+		if len(effectiveFileIDs) != 1 || effectiveFileIDs[0] != "file_hist_1" {
 			t.Fatalf("expected effective_file_ids to include file_hist_1, got %#v", agentInput["effective_file_ids"])
 		}
 	})
@@ -196,8 +277,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 				{TaskID: &taskID, Payload: &payload, Timestamp: time.Now().UTC()},
 			},
 		}
-		runtime := &fakeCommandRuntime{runID: "run-explicit"}
-		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), nil, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{
@@ -215,8 +295,8 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
 		}
 		agentInput := decodeAgentTaskInput(t, executor)
-		effectiveFileIDs, ok := agentInput["effective_file_ids"].([]any)
-		if !ok || len(effectiveFileIDs) != 1 || effectiveFileIDs[0] != "file_explicit_1" {
+		effectiveFileIDs := testStringSlice(agentInput["effective_file_ids"])
+		if len(effectiveFileIDs) != 1 || effectiveFileIDs[0] != "file_explicit_1" {
 			t.Fatalf("expected explicit-only effective_file_ids, got %#v", agentInput["effective_file_ids"])
 		}
 		contextEnvelope, ok := agentInput["context_envelope"].(map[string]any)
@@ -244,8 +324,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 				{TaskID: &taskID, Payload: &payload, Timestamp: time.Now().UTC()},
 			},
 		}
-		runtime := &fakeCommandRuntime{runID: "run-exclude"}
-		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), nil, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{
@@ -263,8 +342,8 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 			t.Fatalf("expected 201, got %d body=%s", rr.Code, rr.Body.String())
 		}
 		agentInput := decodeAgentTaskInput(t, executor)
-		effectiveFileIDs, ok := agentInput["effective_file_ids"].([]any)
-		if !ok || len(effectiveFileIDs) != 1 || effectiveFileIDs[0] != "file_hist_2" {
+		effectiveFileIDs := testStringSlice(agentInput["effective_file_ids"])
+		if len(effectiveFileIDs) != 1 || effectiveFileIDs[0] != "file_hist_2" {
 			t.Fatalf("expected exclude result [file_hist_2], got %#v", agentInput["effective_file_ids"])
 		}
 	})
@@ -288,8 +367,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 				},
 			},
 		}
-		runtime := &fakeCommandRuntime{runID: "run-envelope"}
-		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), nil, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{
@@ -317,15 +395,15 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if !ok {
 			t.Fatalf("expected artifacts section, got %#v", contextEnvelope["artifacts"])
 		}
-		files, ok := artifacts["files"].([]any)
-		if !ok {
+		files := testMapSlice(artifacts["files"])
+		if files == nil {
 			t.Fatalf("expected artifacts.files []map[string]any, got %#v", artifacts["files"])
 		}
 		if len(files) != 1 {
 			t.Fatalf("expected one artifact file, got %#v", files)
 		}
-		firstFile, ok := files[0].(map[string]any)
-		if !ok || firstFile["file_id"] != "file_hist_9" {
+		firstFile := files[0]
+		if firstFile["file_id"] != "file_hist_9" {
 			t.Fatalf("expected file_hist_9 in artifacts.files, got %#v", files)
 		}
 		response := map[string]any{}
@@ -340,8 +418,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 
 	t.Run("context_envelope compatibility normalizes malformed sections and preserves extensions", func(t *testing.T) {
 		readStore := &fakeReadModelStore{ready: true}
-		runtime := &fakeCommandRuntime{runID: "run-compat"}
-		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), nil, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{
@@ -392,8 +469,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 				"cards":      []any{},
 			},
 		}
-		runtime := &fakeCommandRuntime{runID: "run-lifecycle"}
-		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), runtime, true, readStore)
+		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), nil, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{"query":"hello","context":{"template_id":"tpl-1"}}
@@ -425,8 +501,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 
 	t.Run("planner trace is persisted at task entry decision points", func(t *testing.T) {
 		readStore := &fakeReadModelStore{ready: true}
-		runtime := &fakeCommandRuntime{runID: "run-trace"}
-		s := newCommandTestServerWithReadStore(newFakeCommandStore(), runtime, true, readStore)
+		s := newCommandTestServerWithReadStore(newFakeCommandStore(), nil, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
 			"task_type":"main",
 			"input":{
@@ -462,7 +537,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 }
 
 func TestHandleSessionControlRoutesRemoved(t *testing.T) {
-	s := newCommandTestServer(newFakeCommandStore(), &fakeCommandRuntime{}, true)
+	s := newCommandTestServer(newFakeCommandStore(), nil, true)
 	req := newJSONRequest(http.MethodPost, "/api/v1/sessions/s1/pause", `{"reason":"manual"}`)
 	req.Header.Set("Idempotency-Key", "k1")
 	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
@@ -476,7 +551,7 @@ func TestHandleSessionControlRoutesRemoved(t *testing.T) {
 
 func TestHandleTaskControlRequiresIdempotencyKey(t *testing.T) {
 	store := newFakeCommandStore()
-	s := newCommandTestServer(store, &fakeCommandRuntime{}, true)
+	s := newCommandTestServer(store, nil, true)
 	req := newJSONRequest(http.MethodPost, "/api/v1/tasks/task-1/pause", `{"reason":"manual"}`)
 	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
 	rr := httptest.NewRecorder()
@@ -494,7 +569,7 @@ func TestHandleTaskControlRequiresIdempotencyKey(t *testing.T) {
 func TestHandleTaskControlTimelineIsIdempotentByStreamID(t *testing.T) {
 	store := newFakeCommandStore()
 	readStore := &fakeReadModelStore{ready: true}
-	s := newCommandTestServerWithReadStore(store, &fakeCommandRuntime{}, true, readStore)
+	s := newCommandTestServerWithReadStore(store, nil, true, readStore)
 
 	makePauseRequest := func() *httptest.ResponseRecorder {
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks/task-1/pause", `{"reason":"manual"}`)
@@ -517,7 +592,7 @@ func TestHandleTaskControlTimelineIsIdempotentByStreamID(t *testing.T) {
 	pausedEvents := 0
 	streamIDs := map[string]struct{}{}
 	for _, ev := range readStore.insertedEvents {
-		if ev.eventType != "workflow.paused" {
+		if ev.eventType != usecase.EventWorkflowPaused {
 			continue
 		}
 		pausedEvents++
@@ -525,7 +600,7 @@ func TestHandleTaskControlTimelineIsIdempotentByStreamID(t *testing.T) {
 	}
 
 	if pausedEvents != 1 {
-		t.Fatalf("expected exactly 1 persisted workflow.paused event, got %d", pausedEvents)
+		t.Fatalf("expected exactly 1 persisted %s event, got %d", usecase.EventWorkflowPaused, pausedEvents)
 	}
 	if len(streamIDs) != 1 {
 		t.Fatalf("expected stable deterministic stream_id, got %d unique IDs", len(streamIDs))
@@ -550,7 +625,7 @@ func TestHandleTaskPlannerTrace(t *testing.T) {
 			},
 		},
 	}
-	s := newCommandTestServerWithReadStore(newFakeCommandStore(), &fakeCommandRuntime{}, true, readStore)
+	s := newCommandTestServerWithReadStore(newFakeCommandStore(), nil, true, readStore)
 	req := newJSONRequest(http.MethodGet, "/api/v1/tasks/task-trace-1/planner-trace", "")
 	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
 	rr := httptest.NewRecorder()
@@ -572,17 +647,17 @@ func TestHandleTaskPlannerTrace(t *testing.T) {
 	}
 }
 
-func newCommandTestServer(store *fakeCommandStore, runtime *fakeCommandRuntime, temporalEnabled bool) *Server {
-	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, runtime, temporalEnabled, nil)
+func newCommandTestServer(store *fakeCommandStore, _ any, temporalEnabled bool) *Server {
+	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, nil, temporalEnabled, nil)
 	return s
 }
 
-func newCommandTestServerWithReadStore(store *fakeCommandStore, runtime *fakeCommandRuntime, temporalEnabled bool, readStore *fakeReadModelStore) *Server {
-	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, runtime, temporalEnabled, readStore)
+func newCommandTestServerWithReadStore(store *fakeCommandStore, _ any, temporalEnabled bool, readStore *fakeReadModelStore) *Server {
+	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, nil, temporalEnabled, readStore)
 	return s
 }
 
-func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, runtime *fakeCommandRuntime, temporalEnabled bool, readStore *fakeReadModelStore) (*Server, *fakeAgentExecutor) {
+func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, _ any, temporalEnabled bool, readStore *fakeReadModelStore) (*Server, *fakeAgentExecutor) {
 	if readStore == nil {
 		readStore = &fakeReadModelStore{ready: true}
 	}
@@ -590,7 +665,7 @@ func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, runti
 	publisher := memory.NewInMemoryEventPublisher()
 	taskService := task.New(taskRepo, publisher, nil)
 	agentExecutor := &fakeAgentExecutor{runID: "agent-run-1"}
-	commandService := command.New(taskService, store, agentExecutor, runtime)
+	commandService := command.New(taskService, store, agentExecutor)
 
 	enabled := &fakeWorkflowRuntime{enabled: temporalEnabled}
 	readModel := readmodel.New(readStore)
@@ -624,11 +699,52 @@ func decodeAgentTaskInput(t *testing.T, executor *fakeAgentExecutor) map[string]
 	if executor.lastReq == nil {
 		t.Fatalf("expected agent executor request")
 	}
+	if executor.lastReq.Input != nil {
+		return executor.lastReq.Input
+	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(executor.lastReq.UserMessage), &payload); err != nil {
 		t.Fatalf("decode agent user message: %v; body=%s", err, executor.lastReq.UserMessage)
 	}
 	return payload
+}
+
+func testStringSlice(value any) []string {
+	switch typed := value.(type) {
+	case []string:
+		return typed
+	case []any:
+		out := make([]string, 0, len(typed))
+		for _, item := range typed {
+			text, ok := item.(string)
+			if !ok {
+				return nil
+			}
+			out = append(out, text)
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func testMapSlice(value any) []map[string]any {
+	switch typed := value.(type) {
+	case []map[string]any:
+		return typed
+	case []any:
+		out := make([]map[string]any, 0, len(typed))
+		for _, item := range typed {
+			row, ok := item.(map[string]any)
+			if !ok {
+				return nil
+			}
+			out = append(out, row)
+		}
+		return out
+	default:
+		return nil
+	}
 }
 
 type fakeCommandStore struct {
@@ -662,18 +778,12 @@ func (f *fakeCommandStore) EnsureSessionAccess(ctx context.Context, sessionID, u
 	return nil
 }
 
-type fakeCommandRuntime struct {
-	runID     string
-	startErr  error
-	signalErr error
-	cancelErr error
-	lastCmd   usecase.CreateTaskCommand
-}
-
 type fakeAgentExecutor struct {
-	runID   string
-	lastReq *usecase.AgentRunRequest
-	lastOp  usecase.AgentControlOperation
+	runID           string
+	lastReq         *usecase.AgentRunRequest
+	lastOp          usecase.AgentControlOperation
+	lastSignalRunID string
+	lastSignal      *usecase.AgentSignal
 }
 
 func (f *fakeAgentExecutor) StartAgentRun(ctx context.Context, req usecase.AgentRunRequest) (usecase.AgentRunStatus, error) {
@@ -690,25 +800,14 @@ func (f *fakeAgentExecutor) ControlAgentRun(ctx context.Context, runID string, o
 	return nil
 }
 
-func (f *fakeAgentExecutor) SubscribeAgentEvents(ctx context.Context, scope usecase.AgentEventScope) (usecase.AgentEventSubscription, error) {
-	return nil, errors.New("not implemented")
+func (f *fakeAgentExecutor) SignalAgentRun(ctx context.Context, runID string, signal usecase.AgentSignal) error {
+	f.lastSignalRunID = runID
+	f.lastSignal = &signal
+	return nil
 }
 
-func (f *fakeCommandRuntime) StartTaskWorkflow(ctx context.Context, cmd usecase.CreateTaskCommand) (string, error) {
-	f.lastCmd = cmd
-	if f.startErr != nil {
-		return "", f.startErr
-	}
-	if f.runID == "" {
-		return "run-default", nil
-	}
-	return f.runID, nil
-}
-func (f *fakeCommandRuntime) SignalWorkflow(ctx context.Context, taskID, signalName string, signal usecase.ControlSignal) error {
-	return f.signalErr
-}
-func (f *fakeCommandRuntime) CancelWorkflow(ctx context.Context, taskID string) error {
-	return f.cancelErr
+func (f *fakeAgentExecutor) SubscribeAgentEvents(ctx context.Context, scope usecase.AgentEventScope) (usecase.AgentEventSubscription, error) {
+	return nil, errors.New("not implemented")
 }
 
 type fakeWorkflowRuntime struct {
@@ -732,17 +831,11 @@ func (f *fakeWorkflowRuntime) DescribeWorkflow(ctx context.Context, workflowID, 
 func (f *fakeWorkflowRuntime) GetWorkflowResult(ctx context.Context, workflowID, runID string) (any, error) {
 	return nil, errors.New("not implemented")
 }
-func (f *fakeWorkflowRuntime) QueryWorkflowState(ctx context.Context, workflowID string) (*usecase.WorkflowState, error) {
-	return nil, errors.New("not implemented")
-}
 func (f *fakeWorkflowRuntime) CancelWorkflow(ctx context.Context, workflowID string) error {
 	return nil
 }
 func (f *fakeWorkflowRuntime) ListWorkflowHistory(ctx context.Context, workflowID string) ([]usecase.WorkflowHistoryEvent, error) {
 	return nil, nil
-}
-func (f *fakeWorkflowRuntime) SignalWorkflow(ctx context.Context, taskID, signalName string, signal usecase.ControlSignal) error {
-	return nil
 }
 
 type fakeReadModelStore struct {
@@ -752,6 +845,7 @@ type fakeReadModelStore struct {
 	workspace      map[string]any
 	workflowEvents []usecase.EventRow
 	insertedEvents []capturedEventInsert
+	statusUpdates  []capturedStatusUpdate
 
 	resolvedDefaultTemplate *usecase.TemplateCatalogRow
 	resolvedDefaultErr      error
@@ -766,6 +860,12 @@ type capturedEventInsert struct {
 	payload   string
 	streamID  string
 	ts        time.Time
+}
+
+type capturedStatusUpdate struct {
+	taskID string
+	status string
+	errMsg string
 }
 
 func (f *fakeReadModelStore) Ready() bool { return f.ready }
@@ -806,6 +906,7 @@ func (f *fakeReadModelStore) GetTaskSession(ctx context.Context, taskID string) 
 	return "s1", nil
 }
 func (f *fakeReadModelStore) UpdateTaskStatus(ctx context.Context, taskID, status, errMsg string) error {
+	f.statusUpdates = append(f.statusUpdates, capturedStatusUpdate{taskID: taskID, status: status, errMsg: errMsg})
 	return nil
 }
 func (f *fakeReadModelStore) GetTaskUsageSummaryMapBySession(ctx context.Context, sessionID, userID string) (map[string]usecase.TaskUsageSummary, error) {

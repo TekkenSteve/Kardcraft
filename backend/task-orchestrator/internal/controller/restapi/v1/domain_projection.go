@@ -44,13 +44,13 @@ func ProjectDomainEvents(events []entity.DomainEvent, deps DomainProjectionDeps)
 				_ = deps.ReadModel.UpdateTaskStatus(context.Background(), workflowID, "running", "")
 			}
 			deps.EnsureWorkflowStreamReader(workflowID)
-			deps.AppendTimeline(workflowID, sessionID, "WORKFLOW_STARTED", "Workflow started", runtimePayload)
+			deps.AppendTimeline(workflowID, sessionID, usecase.EventWorkflowStarted, "Workflow started", runtimePayload)
 		case entity.EventTypeTaskCompleted:
 			if deps.ReadModel != nil {
 				_ = deps.ReadModel.UpdateTaskStatus(context.Background(), workflowID, "completed", "")
 			}
-			deps.AppendTimeline(workflowID, sessionID, "WORKFLOW_COMPLETED", "Workflow completed", runtimePayload)
-			deps.AppendTimeline(workflowID, sessionID, "done", "Stream end", runtimePayload)
+			deps.AppendTimeline(workflowID, sessionID, usecase.EventWorkflowCompleted, "Workflow completed", runtimePayload)
+			deps.AppendTimeline(workflowID, sessionID, usecase.EventDone, "Stream end", runtimePayload)
 			deps.StopWorkflowStreamReader(workflowID)
 		case entity.EventTypeTaskFailed:
 			reason := "Task failed"
@@ -60,7 +60,7 @@ func ProjectDomainEvents(events []entity.DomainEvent, deps DomainProjectionDeps)
 			if deps.ReadModel != nil {
 				_ = deps.ReadModel.UpdateTaskStatus(context.Background(), workflowID, "failed", reason)
 			}
-			deps.AppendTimeline(workflowID, sessionID, "WORKFLOW_FAILED", reason, runtimePayload)
+			deps.AppendTimeline(workflowID, sessionID, usecase.EventWorkflowFailed, reason, runtimePayload)
 			deps.StopWorkflowStreamReader(workflowID)
 		case entity.EventTypeTaskPaused:
 			reason := "Task paused"
@@ -70,7 +70,7 @@ func ProjectDomainEvents(events []entity.DomainEvent, deps DomainProjectionDeps)
 			if deps.ReadModel != nil {
 				_ = deps.ReadModel.UpdateTaskStatus(context.Background(), workflowID, "paused", "")
 			}
-			deps.AppendTimeline(workflowID, sessionID, "workflow.paused", reason, runtimePayload)
+			deps.AppendTimeline(workflowID, sessionID, usecase.EventWorkflowPaused, reason, runtimePayload)
 		case entity.EventTypeTaskResumed:
 			reason := "Task resumed"
 			if typed, ok := ev.(entity.TaskResumed); ok && typed.Reason() != "" {
@@ -79,7 +79,7 @@ func ProjectDomainEvents(events []entity.DomainEvent, deps DomainProjectionDeps)
 			if deps.ReadModel != nil {
 				_ = deps.ReadModel.UpdateTaskStatus(context.Background(), workflowID, "running", "")
 			}
-			deps.AppendTimeline(workflowID, sessionID, "workflow.resumed", reason, runtimePayload)
+			deps.AppendTimeline(workflowID, sessionID, usecase.EventWorkflowResumed, reason, runtimePayload)
 		case entity.EventTypeTaskCancelled:
 			reason := "Task cancelled"
 			if typed, ok := ev.(entity.TaskCancelled); ok && typed.Reason() != "" {
@@ -88,7 +88,7 @@ func ProjectDomainEvents(events []entity.DomainEvent, deps DomainProjectionDeps)
 			if deps.ReadModel != nil {
 				_ = deps.ReadModel.UpdateTaskStatus(context.Background(), workflowID, "cancelled", reason)
 			}
-			deps.AppendTimeline(workflowID, sessionID, "workflow.cancelled", reason, runtimePayload)
+			deps.AppendTimeline(workflowID, sessionID, usecase.EventWorkflowCancelled, reason, runtimePayload)
 			deps.StopWorkflowStreamReader(workflowID)
 		}
 	}

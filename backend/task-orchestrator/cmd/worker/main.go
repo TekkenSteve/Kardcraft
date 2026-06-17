@@ -12,11 +12,8 @@ import (
 	agentostemporal "github.com/TekkenSteve/GoAgent/agentos/temporal"
 	gosdk "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/worker"
-	"go.temporal.io/sdk/workflow"
 
-	"task-orchestrator/internal/controller/temporal"
 	"task-orchestrator/internal/repo/persistent"
-	"task-orchestrator/internal/usecase"
 )
 
 func main() {
@@ -44,7 +41,6 @@ func main() {
 	defer c.Close()
 
 	w := worker.New(c, taskQueue, worker.Options{})
-	w.RegisterWorkflowWithOptions(temporal.TaskWorkflow, workflow.RegisterOptions{Name: usecase.TaskWorkflowName})
 	storeCfg := persistent.SessionStoreConfigFromEnv()
 	redisURL, err := storeCfg.RedisURL()
 	if err != nil {
@@ -53,10 +49,6 @@ func main() {
 	if redisURL == "" {
 		log.Fatal("REDIS_HOST is required for task worker")
 	}
-
-	sessionStore := persistent.NewSessionStore(context.Background(), storeCfg)
-	temporal.ConfigureTaskPersistenceStore(sessionStore)
-	w.RegisterActivity(temporal.PersistTaskOutcomeActivity)
 
 	llmConfigPath := strings.TrimSpace(os.Getenv("GOAGENT_LLM_CONFIG_PATH"))
 	if llmConfigPath == "" {

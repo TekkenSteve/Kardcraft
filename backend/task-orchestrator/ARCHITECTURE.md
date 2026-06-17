@@ -31,8 +31,8 @@ internal/
     command_service.go # Session/task command orchestration
   controller/restapi/v1/
     server.go         # HTTP transport adapter and route wiring
-  controller/temporal/workflows/
-    task_workflow.go  # Temporal workflow adapter for card_template tasks
+  adapter/goagent/
+    runtime.go        # AgentOS control-plane runtime adapter
   repo/
     persistent/       # Persistence adapters (in-memory/DB)
     redis/            # Redis adapters

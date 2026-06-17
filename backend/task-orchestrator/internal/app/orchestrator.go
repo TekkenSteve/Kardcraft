@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TekkenSteve/GoAgent/agentos"
 	agentostemporal "github.com/TekkenSteve/GoAgent/agentos/temporal"
 	tclient "go.temporal.io/sdk/client"
 
@@ -60,7 +61,23 @@ func NewOrchestratorFromEnv() *restapi.Server {
 		goagentRuntime, err := agentostemporal.NewRuntimeWithClient(context.Background(), agentostemporal.RuntimeConfig{
 			TemporalTaskQueue: taskQueue,
 			RedisURL:          redisURLFromConfig(storeCfg),
-		}, temporalClient)
+			TemporalExternalBackends: []agentostemporal.ExternalBackendConfig{
+				{
+					Name:         "kardcraft-agent-workflow",
+					TaskQueue:    requiredEnv("AGENT_WORKFLOW_TASK_QUEUE"),
+					WorkflowType: requiredEnv("AGENT_WORKFLOW_TYPE"),
+					QueryType:    "agentos_status",
+					Signals: agentostemporal.ExternalSignalNames{
+						Pause:  "pause",
+						Resume: "resume",
+						Cancel: "cancel",
+						Defaults: map[agentos.SignalType]string{
+							agentos.SignalUserMessage: "user_input",
+						},
+					},
+				},
+			},
+		}, temporalClient, agentostemporal.WithRunBackendIndex(goagentadapter.NewRunBackendIndex(persistent.NewAgentOSRunIndex(sessionStore))))
 		if err != nil {
 			log.Fatalf("failed to create GoAgent runtime: %v", err)
 		}
@@ -69,7 +86,6 @@ func NewOrchestratorFromEnv() *restapi.Server {
 			taskService,
 			restapi.NewCommandSessionStore(sessionStore),
 			agentRuntime,
-			restapi.NewTemporalCommandRuntime(temporalClient, taskQueue),
 		)
 	}
 
@@ -115,4 +131,12 @@ func defaultPortFromEnv() int {
 		return 50050
 	}
 	return port
+}
+
+func requiredEnv(key string) string {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		log.Fatalf("%s is required", key)
+	}
+	return value
 }

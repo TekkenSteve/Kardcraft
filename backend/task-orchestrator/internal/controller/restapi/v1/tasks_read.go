@@ -228,17 +228,17 @@ func controlTimelineEvent(action, reason string) (string, string) {
 		if normalizedReason == "" {
 			normalizedReason = "Task paused"
 		}
-		return "workflow.paused", normalizedReason
+		return usecase.EventWorkflowPaused, normalizedReason
 	case "resume":
 		if normalizedReason == "" {
 			normalizedReason = "Task resumed"
 		}
-		return "workflow.resumed", normalizedReason
+		return usecase.EventWorkflowResumed, normalizedReason
 	case "cancel":
 		if normalizedReason == "" {
 			normalizedReason = "Task cancelled"
 		}
-		return "workflow.cancelled", normalizedReason
+		return usecase.EventWorkflowCancelled, normalizedReason
 	default:
 		return "", ""
 	}

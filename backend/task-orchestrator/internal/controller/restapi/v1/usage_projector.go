@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"task-orchestrator/internal/usecase"
 	"time"
+
+	"task-orchestrator/internal/usecase"
 )
 
 type InsertUsageFunc func(ctx context.Context, row usecase.UsageLedgerRow) (bool, error)
@@ -45,7 +46,7 @@ func (p *UsageProjector) Project(ctx context.Context, ev NormalizedEvent) {
 	if p == nil || p.insertUsage == nil {
 		return
 	}
-	if !strings.EqualFold(strings.TrimSpace(ev.EventType), "LLM_USAGE_RECORDED") {
+	if !strings.EqualFold(strings.TrimSpace(ev.EventType), usecase.EventLLMUsageRecorded) {
 		return
 	}
 	row, ok, reason := BuildUsageLedgerRow(ev.Payload, ev.WorkflowID, ev.TaskID, ev.SessionID)

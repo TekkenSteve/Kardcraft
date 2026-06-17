@@ -3,7 +3,6 @@ package repo
 
 import (
 	"context"
-	"time"
 
 	"task-orchestrator/internal/entity"
 )
@@ -25,15 +24,18 @@ type (
 		Publish(ctx context.Context, events []entity.DomainEvent) error
 	}
 
-	WorkflowOutboxEvent struct {
-		TaskID     string
-		SessionID  string
-		UserID     string
-		WorkflowID string
-		RunID      string
-		EventType  string
-		Channel    string
-		Payload    map[string]any
-		OccurredAt time.Time
+	AgentRunRoute struct {
+		RunID          string
+		ThreadID       string
+		AccountID      string
+		ProjectID      string
+		BackendKind    string
+		BackendName    string
+		LifecycleState string
+	}
+
+	AgentRunRouteStore interface {
+		BindAgentRunRoute(ctx context.Context, route AgentRunRoute) error
+		ResolveAgentRunRoute(ctx context.Context, runID string) (AgentRunRoute, bool, error)
 	}
 )

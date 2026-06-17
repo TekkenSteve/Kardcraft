@@ -53,6 +53,19 @@ func (s *Server) registerTaskRoutes() {
 		},
 		AppendTimeline: s.appendTimeline,
 	}))
+	s.mux.HandleFunc("/api/v1/agentos/runs/", NewAgentOSEventsHandler(AgentOSEventsDeps{
+		WriteJSON:     writeJSON,
+		WriteAPIError: writeAPIError,
+		ReadModel:    s.readModel,
+		OutcomeStore: s.sessionStore,
+		AppendTimeline: func(workflowID, sessionID, eventType, message, streamID string, payload any, persist bool) {
+			if persist {
+				s.appendTimelineWithStreamID(workflowID, sessionID, eventType, message, streamID, payload)
+				return
+			}
+			s.appendTimelineTransient(workflowID, sessionID, eventType, message, streamID, payload)
+		},
+	}))
 
 	s.mux.HandleFunc("/api/v1/stream/sse", NewSSEHandler(SSEDeps{
 		WriteAPIError: writeAPIError,
@@ -121,6 +134,7 @@ func (s *Server) registerSessionAndTemplateRoutes() {
 		WorkflowSvc:       s.workflowSvc,
 		CommandService:    s.commandService,
 		IsTemporalEnabled: s.isTemporalEnabled,
+		ActiveTaskCode:   errCodeActiveTaskExists,
 		AuthzDeniedCode:   errCodeAuthzDenied,
 	}
 	s.mux.HandleFunc("/api/v1/sessions", NewSessionsHandler(sessionsDeps))

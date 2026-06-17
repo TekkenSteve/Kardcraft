@@ -7,7 +7,6 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	tclient "go.temporal.io/sdk/client"
 
-	tasktemporal "task-orchestrator/internal/controller/temporal"
 	"task-orchestrator/internal/usecase"
 )
 
@@ -51,50 +50,8 @@ func (r temporalWorkflowRuntime) GetWorkflowResult(ctx context.Context, workflow
 	return result, nil
 }
 
-func (r temporalWorkflowRuntime) SignalWorkflow(ctx context.Context, workflowID, command string, signal usecase.ControlSignal) error {
-	payload := map[string]any{
-		"command":    command,
-		"reason":     signal.Reason,
-		"request_by": signal.RequestBy,
-		"timestamp":  signal.Timestamp,
-	}
-	return r.client.SignalWorkflow(ctx, workflowID, "", tasktemporal.CommandSignalName, payload)
-}
-
 func (r temporalWorkflowRuntime) CancelWorkflow(ctx context.Context, workflowID string) error {
 	return r.client.CancelWorkflow(ctx, workflowID, "")
-}
-
-func (r temporalWorkflowRuntime) QueryWorkflowState(ctx context.Context, workflowID string) (*usecase.WorkflowState, error) {
-	queryResp, err := r.client.QueryWorkflow(ctx, workflowID, "", tasktemporal.QueryRunStatus)
-	if err != nil {
-		return nil, err
-	}
-	var rs tasktemporal.RunStatus
-	if err := queryResp.Get(&rs); err != nil {
-		return nil, err
-	}
-	isPaused := rs.LifecycleState == "paused"
-	isCancelled := rs.LifecycleState == tasktemporal.LifecycleStateCanceled
-	var pausedAt *time.Time
-	if isPaused && !rs.UpdatedAt.IsZero() {
-		t := rs.UpdatedAt.UTC()
-		pausedAt = &t
-	}
-	return &usecase.WorkflowState{
-		IsPaused:     isPaused,
-		IsCancelled:  isCancelled,
-		PausedAt:     pausedAt,
-		PauseReason:  mapReason(isPaused, rs.Reason),
-		CancelReason: mapReason(isCancelled, rs.Reason),
-	}, nil
-}
-
-func mapReason(active bool, reason string) string {
-	if active {
-		return reason
-	}
-	return ""
 }
 
 func (r temporalWorkflowRuntime) ListWorkflowHistory(ctx context.Context, workflowID string) ([]usecase.WorkflowHistoryEvent, error) {
