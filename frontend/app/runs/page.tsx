@@ -313,14 +313,14 @@ export default function RunsPage() {
                                                                 <Tooltip>
                                                                     <TooltipTrigger asChild>
                                                                         <div className={`mt-1.5 size-2 rounded-full shrink-0 ${
-                                                                            isRunning ? "bg-blue-500 animate-pulse" : 
+                                                                            isRunning ? "bg-blue-500 animate-pulse" :
                                                                             isActive ? "bg-emerald-500" : "bg-gray-300"
                                                                         }`} />
                                                                     </TooltipTrigger>
                                                                     <TooltipContent suppressHydrationWarning>
-                                                                        <p suppressHydrationWarning>{isRunning 
-                                                                            ? t("runs.running") 
-                                                                            : isActive 
+                                                                        <p suppressHydrationWarning>{isRunning
+                                                                            ? t("runs.running")
+                                                                            : isActive
                                                                                 ? t("runs.active", { when: session.last_activity_at ? new Date(session.last_activity_at).toLocaleString() : t("runs.recently") })
                                                                                 : t("runs.inactive")}</p>
                                                                     </TooltipContent>

@@ -58,12 +58,16 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	var commandSvc usecase.Command
 	var agentRuntime usecase.AgentRuntime
 	if temporalClient != nil {
+		agentWorkflowBackend := usecase.AgentBackendRef{
+			Kind: requiredEnv("AGENT_WORKFLOW_BACKEND_KIND"),
+			Name: requiredEnv("AGENT_WORKFLOW_BACKEND_NAME"),
+		}
 		goagentRuntime, err := agentostemporal.NewRuntimeWithClient(context.Background(), agentostemporal.RuntimeConfig{
 			TemporalTaskQueue: taskQueue,
 			RedisURL:          redisURLFromConfig(storeCfg),
 			TemporalExternalBackends: []agentostemporal.ExternalBackendConfig{
 				{
-					Name:         "kardcraft-agent-workflow",
+					Name:         agentWorkflowBackend.Name,
 					TaskQueue:    requiredEnv("AGENT_WORKFLOW_TASK_QUEUE"),
 					WorkflowType: requiredEnv("AGENT_WORKFLOW_TYPE"),
 					QueryType:    "agentos_status",
@@ -82,11 +86,15 @@ func NewOrchestratorFromEnv() *restapi.Server {
 			log.Fatalf("failed to create GoAgent runtime: %v", err)
 		}
 		agentRuntime = goagentadapter.NewRuntime(goagentRuntime)
-		commandSvc = command.New(
+		commandSvc, err = command.New(
 			taskService,
 			restapi.NewCommandSessionStore(sessionStore),
 			agentRuntime,
+			agentWorkflowBackend,
 		)
+		if err != nil {
+			log.Fatalf("failed to create command usecase: %v", err)
+		}
 	}
 
 	closeFuncs := make([]func(), 0, 2)

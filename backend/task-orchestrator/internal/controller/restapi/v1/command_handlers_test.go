@@ -137,7 +137,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if executor.lastReq == nil {
 			t.Fatal("expected agent runtime request")
 		}
-		if executor.lastReq.Backend.Kind != "temporal_external" || executor.lastReq.Backend.Name != "kardcraft-agent-workflow" {
+		if executor.lastReq.Backend != testAgentBackend() {
 			t.Fatalf("expected agent workflow backend, got %#v", executor.lastReq.Backend)
 		}
 		if executor.lastReq.Input["task_type"] != usecase.TaskTypeMain {
@@ -162,7 +162,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if executor.lastReq == nil {
 			t.Fatal("expected agent runtime request")
 		}
-		if executor.lastReq.Backend.Kind != "temporal_external" || executor.lastReq.Backend.Name != "kardcraft-agent-workflow" {
+		if executor.lastReq.Backend != testAgentBackend() {
 			t.Fatalf("expected agent workflow backend, got %#v", executor.lastReq.Backend)
 		}
 		if executor.lastReq.Input["template_id"] != "tpl-source" {
@@ -665,7 +665,10 @@ func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, _ any
 	publisher := memory.NewInMemoryEventPublisher()
 	taskService := task.New(taskRepo, publisher, nil)
 	agentExecutor := &fakeAgentExecutor{runID: "agent-run-1"}
-	commandService := command.New(taskService, store, agentExecutor)
+	commandService, err := command.New(taskService, store, agentExecutor, testAgentBackend())
+	if err != nil {
+		panic(err)
+	}
 
 	enabled := &fakeWorkflowRuntime{enabled: temporalEnabled}
 	readModel := readmodel.New(readStore)
@@ -686,6 +689,10 @@ func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, _ any
 	}
 	s.registerRoutes()
 	return s, agentExecutor
+}
+
+func testAgentBackend() usecase.AgentBackendRef {
+	return usecase.AgentBackendRef{Kind: "temporal_external", Name: "kardcraft-agent-workflow"}
 }
 
 func newJSONRequest(method, path, body string) *http.Request {

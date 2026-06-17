@@ -17,19 +17,11 @@ type UseCase struct {
 	now          func() time.Time
 }
 
-func New(tasks usecase.Task, store usecase.CommandSessionStore, agentRuntime usecase.AgentRuntime) *UseCase {
-	return NewWithBackend(tasks, store, agentRuntime, DefaultBackend())
-}
-
-func NewWithBackend(tasks usecase.Task, store usecase.CommandSessionStore, agentRuntime usecase.AgentRuntime, backend usecase.AgentBackendRef) *UseCase {
+func New(tasks usecase.Task, store usecase.CommandSessionStore, agentRuntime usecase.AgentRuntime, backend usecase.AgentBackendRef) (*UseCase, error) {
 	if strings.TrimSpace(backend.Kind) == "" || strings.TrimSpace(backend.Name) == "" {
-		backend = DefaultBackend()
+		return nil, fmt.Errorf("agent backend kind and name are required")
 	}
-	return &UseCase{tasks: tasks, store: store, agentRuntime: agentRuntime, backend: backend, now: time.Now}
-}
-
-func DefaultBackend() usecase.AgentBackendRef {
-	return usecase.AgentBackendRef{Kind: "temporal_external", Name: "kardcraft-agent-workflow"}
+	return &UseCase{tasks: tasks, store: store, agentRuntime: agentRuntime, backend: backend, now: time.Now}, nil
 }
 
 func (s *UseCase) CreateTaskInSession(ctx context.Context, cmd usecase.CreateTaskCommand) (*usecase.CreateTaskResult, string, error) {
