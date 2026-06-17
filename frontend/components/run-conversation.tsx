@@ -186,15 +186,16 @@ function StatusIcon({ eventType }: { eventType?: string }) {
             return <FolderSync className="size-3.5 text-purple-500" />;
         case "workflow.pausing":
             return <Pause className="size-3.5 text-amber-500 animate-pulse" />;
-        case "workflow.paused":
+        case "WORKFLOW_PAUSED":
             return <Pause className="size-3.5 text-amber-500" />;
         case "workflow.resuming":
             return <Play className="size-3.5 text-green-500 animate-pulse" />;
-        case "workflow.resumed":
+        case "WORKFLOW_RESUMED":
             return <Play className="size-3.5 text-green-500" />;
         case "workflow.cancelling":
+        case "WORKFLOW_CANCELLING":
             return <CircleSlash className="size-3.5 text-red-500 animate-pulse" />;
-        case "workflow.cancelled":
+        case "WORKFLOW_CANCELLED":
             return <XCircle className="size-3.5 text-red-500" />;
         case "WORKFLOW_STARTED":
         default:

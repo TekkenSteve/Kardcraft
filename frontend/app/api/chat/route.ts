@@ -67,11 +67,8 @@ function toMessageText(payload: unknown): string {
 function isTerminalEvent(eventType: string): boolean {
   return (
     eventType === "WORKFLOW_COMPLETED" ||
-    eventType === "workflow.completed" ||
     eventType === "WORKFLOW_FAILED" ||
-    eventType === "workflow.failed" ||
     eventType === "WORKFLOW_CANCELLED" ||
-    eventType === "workflow.cancelled" ||
     eventType === "done" ||
     eventType === "STREAM_END"
   );
@@ -191,7 +188,7 @@ export async function POST(request: NextRequest): Promise<Response> {
             continue;
           }
 
-          if (eventType === "WORKFLOW_COMPLETED" || eventType === "workflow.completed") {
+          if (eventType === "WORKFLOW_COMPLETED") {
             const completed = toCompletedText(parsed.payload) || toMessageText(parsed.payload);
             const tail = computeCompletedTail(streamedAssistantText, completed);
             if (tail) {

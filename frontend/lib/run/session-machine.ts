@@ -88,9 +88,10 @@ const CONTROL_EVENT_KINDS = new Set<RunDomainEvent["kind"]>([
 const CONTROL_TIMELINE_TYPES = new Set<string>([
   "workflow.pausing",
   "workflow.resuming",
-  "workflow.paused",
-  "workflow.resumed",
+  "WORKFLOW_PAUSED",
+  "WORKFLOW_RESUMED",
   "workflow.cancelling",
+  "WORKFLOW_CANCELLING",
 ]);
 
 const TELEMETRY_TIMELINE_TYPES = new Set<string>([
@@ -530,9 +531,9 @@ const applyDeferredEvents = (context: SessionContext): Partial<SessionContext> =
 const terminalStatusFromEvents = (events: RunEvent[]): RunStatus | null => {
   for (let index = events.length - 1; index >= 0; index -= 1) {
     const type = String(events[index].type);
-    if (type === "WORKFLOW_COMPLETED" || type === "workflow.completed") return "completed";
-    if (type === "WORKFLOW_FAILED" || type === "workflow.failed" || type === "error") return "failed";
-    if (type === "WORKFLOW_CANCELLED" || type === "workflow.cancelled") return "cancelled";
+    if (type === "WORKFLOW_COMPLETED") return "completed";
+    if (type === "WORKFLOW_FAILED" || type === "error") return "failed";
+    if (type === "WORKFLOW_CANCELLED") return "cancelled";
   }
   return null;
 };
@@ -562,7 +563,7 @@ const latestStatusFromEvents = (
     if (CONTROL_TIMELINE_TYPES.has(type)) continue;
     if (TELEMETRY_TIMELINE_TYPES.has(type)) continue;
     if (ignoredTypes.has(type)) continue;
-    if (type === "WORKFLOW_COMPLETED" || type === "workflow.completed" || type === "WORKFLOW_FAILED" || type === "workflow.failed" || type === "workflow.cancelled") {
+    if (type === "WORKFLOW_COMPLETED" || type === "WORKFLOW_FAILED" || type === "WORKFLOW_CANCELLED") {
       return null;
     }
     const message = runEventMessage(event);
@@ -603,8 +604,8 @@ const deriveHydratedStatus = (context: SessionContext, state: HydratedState | nu
 
 const visibleHydratedEvents = (status: RunStatus, events: RunEvent[]): RunEvent[] => {
   if (status !== "paused") return events;
-  const lastPause = latestIndex(events, (event) => event.type === "workflow.paused");
-  const lastResume = latestIndex(events, (event) => event.type === "workflow.resumed");
+  const lastPause = latestIndex(events, (event) => event.type === "WORKFLOW_PAUSED");
+  const lastResume = latestIndex(events, (event) => event.type === "WORKFLOW_RESUMED");
   if (lastPause >= 0 && lastResume < lastPause) return events.slice(0, lastPause + 1);
   return events;
 };
@@ -856,7 +857,7 @@ export const createSessionMachine = (sessionId?: string) => {
                           workflowId: context.workflowId,
                           content: "Paused",
                           at,
-                          eventType: "workflow.paused",
+                          eventType: "WORKFLOW_PAUSED",
                         },
                       )
                     : removeEmptyAssistantPlaceholders(clearAssistantLoading(context.messages), context.workflowId),

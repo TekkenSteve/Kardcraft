@@ -16,6 +16,7 @@ import {
     importCardTemplate,
     listCardTemplates,
     precheckCardTemplate,
+    sendSessionMessage,
     setUserTemplatePreference,
     submitTask,
     validateCardTemplate,
@@ -381,7 +382,8 @@ export function ChatInput({
         if (!query.trim()) {
             return;
         }
-        if (selectedAgent === "normal" && !selectedTemplateId) {
+        const isFollowUpMessage = isTaskRunning && !!sessionId;
+        if (!isFollowUpMessage && selectedAgent === "normal" && !selectedTemplateId) {
             setError("Please select a card template before starting card generation.");
             return;
         }
@@ -394,7 +396,7 @@ export function ChatInput({
             if (selectedAgent !== "normal") {
                 commands.clearTemplatePreflight(sessionId ?? null);
             }
-            if (selectedAgent === "normal" && selectedTemplateId) {
+            if (!isFollowUpMessage && selectedAgent === "normal" && selectedTemplateId) {
                 const preflight = await runTemplatePreflight(selectedTemplateId, selectedTemplateVersion);
                 if (sessionId) {
                     try {
@@ -449,20 +451,49 @@ export function ChatInput({
                 throw new Error("检测到已选择文件，但文件上传未成功。请在附件面板查看错误并重试上传。");
             }
 
+            const attachments = uploadedFiles
+                .filter((file) => file.status === "uploaded" && !!file.serverFileId)
+                .map((file) => ({
+                    file_id: file.serverFileId as string,
+                    filename: file.name,
+                    size: file.size,
+                    mime_type: file.type,
+                }));
+
+            if (isFollowUpMessage && sessionId) {
+                const response = await sendSessionMessage({
+                    session_id: sessionId,
+                    content: query.trim(),
+                    file_ids: fileIdsToSubmit,
+                    attachments,
+                    context: Object.keys(context).length ? context : undefined,
+                });
+
+                setQuery("");
+                setUploadedFiles([]);
+                setIsFilePanelOpen(false);
+                fileUploadRef.current?.clearFiles();
+
+                onTaskCreated(
+                    response.active_task_id,
+                    query.trim(),
+                    response.session_id,
+                    attachments.map((item) => ({
+                        fileId: item.file_id,
+                        filename: item.filename,
+                        size: item.size,
+                        mimeType: item.mime_type,
+                    })),
+                );
+                return;
+            }
+
             if (fileIdsToSubmit.length > 0) {
                 console.info("[DIAG-1] before submitTaskWithFiles", {
                     currentWorkflowId,
                     sessionId,
                     query: query.trim(),
                 });
-                const attachments = uploadedFiles
-                    .filter((file) => file.status === "uploaded" && !!file.serverFileId)
-                    .map((file) => ({
-                        file_id: file.serverFileId as string,
-                        filename: file.name,
-                        size: file.size,
-                        mime_type: file.type,
-                    }));
 
                 // Use the new API for tasks with files
                 const response = await uploadAPI.submitTaskWithFiles({

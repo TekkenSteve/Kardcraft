@@ -91,9 +91,9 @@ describe("run domain event mapper", () => {
         expect(done.event.eventKind).toBe("done");
     });
 
-    it("keeps workflow.paused as a timeline record instead of control state", () => {
+    it("keeps WORKFLOW_PAUSED as a timeline record instead of control state", () => {
         const mapped = mapWireEventToDomainEvent({
-            eventType: "workflow.paused",
+            eventType: "WORKFLOW_PAUSED",
             payload: {
                 workflow_id: "wf-3",
                 run_id: "run-3",
@@ -106,7 +106,7 @@ describe("run domain event mapper", () => {
         expect(mapped.ok).toBe(true);
         if (!mapped.ok) return;
         expect(mapped.event.kind).toBe("timeline.event");
-        expect(mapped.event.eventKind).toBe("workflow.paused");
+        expect(mapped.event.eventKind).toBe("WORKFLOW_PAUSED");
     });
 
     it("keeps node lifecycle payload fields for timeline pairing", () => {
@@ -204,9 +204,9 @@ describe("run domain event mapper", () => {
         expect(cancellingProjected?.type).toBe("workflow.cancelling");
     });
 
-    it("maps workflow.cancelled to control.cancel.confirmed and projects back", () => {
+    it("maps WORKFLOW_CANCELLED to control.cancel.confirmed and projects back", () => {
         const mapped = mapWireEventToDomainEvent({
-            eventType: "workflow.cancelled",
+            eventType: "WORKFLOW_CANCELLED",
             payload: {
                 workflow_id: "wf-5",
                 run_id: "run-5",
@@ -222,26 +222,8 @@ describe("run domain event mapper", () => {
         expect(mapped.event.taskId).toBe("wf-5");
 
         const projected = projectDomainEventToRunEvent(mapped.event);
-        expect(projected?.type).toBe("workflow.cancelled");
+        expect(projected?.type).toBe("WORKFLOW_CANCELLED");
         expect(projected?.workflow_id).toBe("wf-5");
-    });
-
-    it("maps WORKFLOW_CANCELLED alias to control.cancel.confirmed", () => {
-        const mapped = mapWireEventToDomainEvent({
-            eventType: "WORKFLOW_CANCELLED",
-            payload: {
-                workflow_id: "wf-6",
-                run_id: "run-6",
-            },
-            fallbackWorkflowId: "wf-6",
-            at: "2026-04-21T00:00:00.000Z",
-            eventId: "evt-6",
-        });
-
-        expect(mapped.ok).toBe(true);
-        if (!mapped.ok) return;
-        expect(mapped.event.kind).toBe("control.cancel.confirmed");
-        expect(mapped.event.taskId).toBe("wf-6");
     });
 
     it("keeps future runtime events visible as timeline records", () => {

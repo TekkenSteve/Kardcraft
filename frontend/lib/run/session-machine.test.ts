@@ -152,7 +152,7 @@ describe('session machine event-driven flow', () => {
     expect(msg!.isGenerating).toBe(false);
   });
 
-  it('workflow.completed clears all streaming/generating flags', () => {
+  it('WORKFLOW_COMPLETED clears all streaming/generating flags', () => {
     const actor = createTestActor();
     actor.send({ type: 'START_WORKFLOW', workflowId: 'wf-1', query: 'hello' });
 
@@ -169,7 +169,7 @@ describe('session machine event-driven flow', () => {
     actor.send({
       type: 'SSE_ENVELOPE',
       envelope: makeEnvelope({
-        event_type: 'workflow.completed',
+        event_type: 'WORKFLOW_COMPLETED',
         workflow_id: 'wf-1',
         event_id: 'done-1',
         payload: {},
@@ -182,14 +182,14 @@ describe('session machine event-driven flow', () => {
     expect(ctx.messages.every(m => !m.isGenerating && !m.isStreaming)).toBe(true);
   });
 
-  it('workflow.completed removes an empty assistant placeholder when no final text exists', () => {
+  it('WORKFLOW_COMPLETED removes an empty assistant placeholder when no final text exists', () => {
     const actor = createTestActor();
     actor.send({ type: 'START_WORKFLOW', workflowId: 'wf-1', query: 'hello' });
 
     actor.send({
       type: 'SSE_ENVELOPE',
       envelope: makeEnvelope({
-        event_type: 'workflow.completed',
+        event_type: 'WORKFLOW_COMPLETED',
         workflow_id: 'wf-1',
         event_id: 'done-empty',
         payload: {},
@@ -235,7 +235,7 @@ describe('session machine event-driven flow', () => {
     actor.send({
       type: 'SSE_ENVELOPE',
       envelope: makeEnvelope({
-        event_type: 'workflow.completed',
+        event_type: 'WORKFLOW_COMPLETED',
         workflow_id: 'wf-1',
         run_id: 'run-1',
         event_id: 'done-after-progress',
@@ -285,14 +285,14 @@ describe('session machine event-driven flow', () => {
     expect(ctx.messages.some((message) => message.role === 'assistant' && message.content.trim().length === 0)).toBe(false);
   });
 
-  it('workflow.failed clears streaming flags and sets error', () => {
+  it('WORKFLOW_FAILED clears streaming flags and sets error', () => {
     const actor = createTestActor();
     actor.send({ type: 'START_WORKFLOW', workflowId: 'wf-1', query: 'hello' });
 
     actor.send({
       type: 'SSE_ENVELOPE',
       envelope: makeEnvelope({
-        event_type: 'workflow.failed',
+        event_type: 'WORKFLOW_FAILED',
         workflow_id: 'wf-1',
         event_id: 'fail-1',
         payload: { message: 'Something broke', code: 'INTERNAL' },
@@ -394,6 +394,27 @@ describe('session machine event-driven flow', () => {
     expect(ctx.status).toBe('completed');
     expect(ctx.cards).toHaveLength(1);
     expect(ctx.cards[0].card_id).toBe('card-1');
+  });
+
+  it('keeps AgentOS waiting input events as running status messages', () => {
+    const actor = createTestActor();
+    actor.send({ type: 'START_WORKFLOW', workflowId: 'wf-1', runId: 'run-1', query: 'hello' });
+
+    actor.send({
+      type: 'SSE_ENVELOPE',
+      envelope: makeEnvelope({
+        event_type: 'WORKFLOW_WAITING_INPUT',
+        workflow_id: 'wf-1',
+        run_id: 'run-1',
+        event_id: 'waiting-1',
+        payload: { message: 'Need input', run_id: 'run-1' },
+      }),
+    });
+
+    const ctx = getContext(actor);
+    expect(ctx.status).toBe('running');
+    expect(ctx.events.some((event) => event.type === 'WORKFLOW_WAITING_INPUT')).toBe(true);
+    expect(ctx.messages.some((message) => message.role === 'status' && message.content === 'Need input')).toBe(true);
   });
 
   it('cancel transitions to cancelled', () => {
@@ -548,7 +569,7 @@ describe('session machine event-driven flow', () => {
     expect(ctx.messages.find((message) => message.role === 'status')?.content).toBe('evidence_builder started');
   });
 
-  it('keeps workflow.paused timeline records from driving control state after resume', () => {
+  it('keeps WORKFLOW_PAUSED timeline records from driving control state after resume', () => {
     const actor = createTestActor();
     actor.send({ type: 'START_WORKFLOW', workflowId: 'wf-1', runId: 'run-1', query: 'hello' });
     actor.send({
@@ -569,7 +590,7 @@ describe('session machine event-driven flow', () => {
     actor.send({
       type: 'SSE_ENVELOPE',
       envelope: makeEnvelope({
-        event_type: 'workflow.paused',
+        event_type: 'WORKFLOW_PAUSED',
         workflow_id: 'wf-1',
         run_id: 'run-1',
         event_id: '102',
@@ -614,7 +635,7 @@ describe('session machine event-driven flow', () => {
     actor.send({
       type: 'SSE_ENVELOPE',
       envelope: makeEnvelope({
-        event_type: 'workflow.paused',
+        event_type: 'WORKFLOW_PAUSED',
         workflow_id: 'wf-1',
         run_id: 'run-1',
         event_id: '112',
@@ -629,7 +650,7 @@ describe('session machine event-driven flow', () => {
     actor.send({
       type: 'SSE_ENVELOPE',
       envelope: makeEnvelope({
-        event_type: 'workflow.resumed',
+        event_type: 'WORKFLOW_RESUMED',
         workflow_id: 'wf-1',
         run_id: 'run-1',
         event_id: '113',
@@ -690,7 +711,7 @@ describe('session machine event-driven flow', () => {
       messages: [{ id: 'user-1', role: 'user', content: 'hello' }],
       events: [
         { id: 100, type: 'NODE_STARTED', workflow_id: 'wf-1', run_id: 'run-1', stream_id: 'e-100', message: 'card_scope_planner started' },
-        { id: 101, type: 'workflow.paused', workflow_id: 'wf-1', run_id: 'run-1', stream_id: 'e-101', message: 'Paused' },
+        { id: 101, type: 'WORKFLOW_PAUSED', workflow_id: 'wf-1', run_id: 'run-1', stream_id: 'e-101', message: 'Paused' },
       ],
       cards: [],
       state: { active_task_id: 'wf-1', task_state: 'PAUSED', session_control_state: 'ACTIVE_PAUSED' },
@@ -704,7 +725,7 @@ describe('session machine event-driven flow', () => {
       messages: [{ id: 'user-1', role: 'user', content: 'hello' }],
       events: [
         { id: 100, type: 'NODE_STARTED', workflow_id: 'wf-1', run_id: 'run-1', stream_id: 'e-100', message: 'card_scope_planner started' },
-        { id: 101, type: 'workflow.paused', workflow_id: 'wf-1', run_id: 'run-1', stream_id: 'e-101', message: 'Paused' },
+        { id: 101, type: 'WORKFLOW_PAUSED', workflow_id: 'wf-1', run_id: 'run-1', stream_id: 'e-101', message: 'Paused' },
       ],
       cards: [],
       state: { active_task_id: 'wf-1', task_state: 'PAUSED', session_control_state: 'ACTIVE_PAUSED' },
@@ -724,7 +745,7 @@ describe('session machine event-driven flow', () => {
       messages: [{ id: 'user-1', role: 'user', content: 'hello' }],
       events: [
         { id: 1, type: 'NODE_STARTED', workflow_id: 'wf-1', run_id: 'run-1', stream_id: 'e-1', message: 'started' },
-        { id: 2, type: 'workflow.paused', workflow_id: 'wf-1', run_id: 'run-1', stream_id: 'e-2', message: 'paused' },
+        { id: 2, type: 'WORKFLOW_PAUSED', workflow_id: 'wf-1', run_id: 'run-1', stream_id: 'e-2', message: 'paused' },
         { id: 3, type: 'NODE_COMPLETED', workflow_id: 'wf-1', run_id: 'run-1', stream_id: 'e-3', message: 'should stay hidden' },
       ],
       cards: [],
@@ -785,7 +806,7 @@ describe('session machine event-driven flow', () => {
     actor.send({
       type: 'SSE_ENVELOPE',
       envelope: makeEnvelope({
-        event_type: 'workflow.cancelled',
+        event_type: 'WORKFLOW_CANCELLED',
         workflow_id: 'wf-1',
         event_id: 'cancel-1',
         payload: {},

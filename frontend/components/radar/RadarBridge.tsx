@@ -221,7 +221,7 @@ export function RadarBridge() {
       }
 
       // Terminal events: complete all remaining flights for this workflow
-      if (ev.type === "WORKFLOW_COMPLETED" || ev.type === "workflow.cancelled" || ev.type === "WORKFLOW_FAILED") {
+      if (ev.type === "WORKFLOW_COMPLETED" || ev.type === "WORKFLOW_CANCELLED" || ev.type === "WORKFLOW_FAILED") {
         const result = applyWorkflowTerminalTransition(radarStore, workflowId, tickRef.current, {
           schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
           clear: (handle) => window.clearTimeout(handle),
@@ -235,7 +235,7 @@ export function RadarBridge() {
       }
 
       // Pause event: stop all in-progress flights for that workflow.
-      if (ev.type === "workflow.paused") {
+      if (ev.type === "WORKFLOW_PAUSED") {
         const result = applyWorkflowPausedTransition(radarStore, workflowId, tickRef.current);
         tickRef.current = result.nextTick;
         continue;

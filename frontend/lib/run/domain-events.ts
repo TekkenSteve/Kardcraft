@@ -132,10 +132,10 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
         return { ok: false, reason: "invalid_payload", details: "missing run_id" };
     }
 
-    if (eventType === "WORKFLOW_STARTED" || eventType === "workflow.started") {
+    if (eventType === "WORKFLOW_STARTED") {
         return { ok: true, event: { kind: "workflow.started", workflowId, sessionId, at, runId } };
     }
-    if (eventType === "WORKFLOW_COMPLETED" || eventType === "workflow.completed") {
+    if (eventType === "WORKFLOW_COMPLETED") {
         return {
             ok: true,
             event: {
@@ -166,7 +166,7 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
             },
         };
     }
-    if (eventType === "WORKFLOW_FAILED" || eventType === "workflow.failed" || eventType === "error") {
+    if (eventType === "WORKFLOW_FAILED" || eventType === "error") {
         const message = asString(payload.message) || "workflow failed";
         const reasonCode = asString(payload.code) || asString(payload.error_code) || "INTERNAL";
         return {
@@ -258,7 +258,7 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
             },
         };
     }
-    if (eventType === "workflow.cancelled" || eventType === "WORKFLOW_CANCELLED") {
+    if (eventType === "WORKFLOW_CANCELLED") {
         return { ok: true, event: { kind: "control.cancel.confirmed", taskId: workflowId, sessionId, at, runId } };
     }
 
@@ -304,10 +304,7 @@ const EVENT_TYPES: EventType[] = [
     "WORKFLOW_FAILED",
     "workflow.pausing",
     "workflow.resuming",
-    "workflow.paused",
-    "workflow.resumed",
     "workflow.cancelling",
-    "workflow.cancelled",
     "ROLE_ASSIGNED",
     "TEAM_RECRUITED",
     "TEAM_RETIRED",
@@ -317,7 +314,13 @@ const EVENT_TYPES: EventType[] = [
     "TOOL_INVOKED",
     "TOOL_OBSERVATION",
     "WORKFLOW_STARTED",
+    "WORKFLOW_PROGRESS",
+    "WORKFLOW_WAITING_INPUT",
+    "WORKFLOW_PAUSED",
+    "WORKFLOW_RESUMED",
+    "WORKFLOW_CANCELLING",
     "WORKFLOW_COMPLETED",
+    "WORKFLOW_CANCELLED",
     "AGENT_STARTED",
     "AGENT_COMPLETED",
     "AGENT_THINKING",
@@ -408,7 +411,7 @@ export function projectDomainEventToRunEvent(event: RunDomainEvent): RunEvent | 
         } as RunEvent;
     }
     if (event.kind === "control.cancel.confirmed") {
-        return { type: "workflow.cancelled", workflow_id: event.taskId, run_id: event.runId || undefined, timestamp: event.at };
+        return { type: "WORKFLOW_CANCELLED", workflow_id: event.taskId, run_id: event.runId || undefined, timestamp: event.at };
     }
     if (event.kind === "control.rejected") {
         return {

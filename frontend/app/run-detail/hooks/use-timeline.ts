@@ -63,7 +63,7 @@ const RUNNING_EVENT_TYPES = new Set<string>([
 ]);
 
 const PAUSED_EVENT_TYPES = new Set<string>([
-    "workflow.paused",
+    "WORKFLOW_PAUSED",
 ]);
 
 const COMPLETED_EVENT_TYPES = new Set<string>([
@@ -80,7 +80,7 @@ const COMPLETED_EVENT_TYPES = new Set<string>([
 const TERMINAL_EVENT_TYPES = new Set<string>([
     "WORKFLOW_COMPLETED",
     "WORKFLOW_FAILED",
-    "workflow.cancelled",
+    "WORKFLOW_CANCELLED",
     "done",
     "STREAM_END",
 ]);
@@ -196,7 +196,7 @@ export function useTimeline({
 
     const getEventStatus = useCallback((eventType: string): "completed" | "running" | "failed" | "cancelled" | "paused" | "pending" => {
         if (FAILED_EVENT_TYPES.has(eventType)) return "failed";
-        if (eventType === "workflow.cancelled") return "cancelled";
+        if (eventType === "WORKFLOW_CANCELLED") return "cancelled";
         if (PAUSED_EVENT_TYPES.has(eventType)) return "paused";
         if (RUNNING_EVENT_TYPES.has(eventType)) return "running";
         if (COMPLETED_EVENT_TYPES.has(eventType)) return "completed";
@@ -271,10 +271,10 @@ export function useTimeline({
             "MESSAGE_RECEIVED": t("runDetail.timelineEvents.messageReceived"),
             "WORKSPACE_UPDATED": t("runDetail.timelineEvents.workspaceUpdated"),
             "STATUS_UPDATE": t("runDetail.timelineEvents.statusUpdate"),
-            "workflow.paused": t("runDetail.timelineEvents.workflowPaused"),
+            "WORKFLOW_PAUSED": t("runDetail.timelineEvents.workflowPaused"),
             "workflow.resuming": t("runDetail.timelineEvents.workflowResuming"),
-            "workflow.resumed": t("runDetail.timelineEvents.workflowResumed"),
-            "workflow.cancelled": t("runDetail.timelineEvents.workflowCancelled"),
+            "WORKFLOW_RESUMED": t("runDetail.timelineEvents.workflowResumed"),
+            "WORKFLOW_CANCELLED": t("runDetail.timelineEvents.workflowCancelled"),
             "WORKFLOW_PROGRESS": t("runDetail.timelineEvents.workflowProgress"),
             "NODE_STARTED": "Node started",
             "NODE_COMPLETED": "Node completed",
@@ -308,7 +308,7 @@ export function useTimeline({
         runEvents.forEach((event) => {
             if (!TERMINAL_EVENT_TYPES.has(event.type)) return;
             const nextStatus: "completed" | "failed" | "cancelled" =
-                event.type === "workflow.cancelled"
+                event.type === "WORKFLOW_CANCELLED"
                     ? "cancelled"
                     : event.type === "WORKFLOW_FAILED"
                         ? "failed"

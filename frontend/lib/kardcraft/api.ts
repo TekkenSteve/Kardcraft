@@ -54,6 +54,32 @@ export interface TaskSubmitResponse {
     session_id?: string;
 }
 
+export interface SessionMessageAttachment {
+    file_id: string;
+    filename: string;
+    size: number;
+    mime_type: string;
+}
+
+export interface SendSessionMessageRequest {
+    session_id: string;
+    content: string;
+    file_ids?: string[];
+    attachments?: SessionMessageAttachment[];
+    context?: Record<string, unknown>;
+    context_envelope?: Record<string, unknown>;
+    metadata?: Record<string, unknown>;
+    idempotency_key?: string;
+}
+
+export interface SendSessionMessageResponse {
+    session_id: string;
+    active_task_id: string;
+    idempotency_key: string;
+    sent_at: string;
+    stream_id: string;
+}
+
 export type TaskStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 const TASK_STATUS_MAP: Record<string, TaskStatus> = {
@@ -160,6 +186,29 @@ export async function submitTask(request: TaskSubmitRequest): Promise<TaskSubmit
     } finally {
         clearTimeout(timeout);
     }
+}
+
+export async function sendSessionMessage(request: SendSessionMessageRequest): Promise<SendSessionMessageResponse> {
+    const response = await fetch(apiUrl(`/api/v1/sessions/${encodeURIComponent(request.session_id)}/messages`), {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json",
+            ...getAuthHeaders(),
+        },
+        credentials: "include",
+        body: JSON.stringify({
+            content: request.content,
+            file_ids: request.file_ids,
+            attachments: request.attachments,
+            context: request.context,
+            context_envelope: request.context_envelope,
+            metadata: request.metadata,
+            idempotency_key: request.idempotency_key,
+        }),
+    });
+
+    await assertApiOk(response, "Failed to send message");
+    return response.json();
 }
 
 export async function getTask(taskId: string): Promise<TaskDetailResponse> {

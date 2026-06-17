@@ -9,10 +9,7 @@ export type EventType =
     | "WORKFLOW_FAILED"
     | "workflow.pausing"
     | "workflow.resuming"
-    | "workflow.paused"
-    | "workflow.resumed"
     | "workflow.cancelling"
-    | "workflow.cancelled"
     | "ROLE_ASSIGNED"
     | "TEAM_RECRUITED"
     | "TEAM_RETIRED"
@@ -22,7 +19,13 @@ export type EventType =
     | "TOOL_INVOKED"
     | "TOOL_OBSERVATION"
     | "WORKFLOW_STARTED"
+    | "WORKFLOW_PROGRESS"
+    | "WORKFLOW_WAITING_INPUT"
+    | "WORKFLOW_PAUSED"
+    | "WORKFLOW_RESUMED"
+    | "WORKFLOW_CANCELLING"
     | "WORKFLOW_COMPLETED"
+    | "WORKFLOW_CANCELLED"
     | "AGENT_STARTED"
     | "AGENT_COMPLETED"
     | "AGENT_THINKING"
@@ -129,6 +132,18 @@ export interface ToolObservationEvent extends BaseEvent {
 export interface WorkflowStartedEvent extends BaseEvent {
     type: "WORKFLOW_STARTED";
     message?: string;
+}
+
+export interface WorkflowProgressEvent extends BaseEvent {
+    type: "WORKFLOW_PROGRESS";
+    message?: string;
+    payload?: Record<string, unknown>;
+}
+
+export interface WorkflowWaitingInputEvent extends BaseEvent {
+    type: "WORKFLOW_WAITING_INPUT";
+    message?: string;
+    payload?: Record<string, unknown>;
 }
 
 export interface WorkflowCompletedEvent extends BaseEvent {
@@ -310,28 +325,30 @@ export interface WorkflowResumingEvent extends BaseEvent {
 }
 
 export interface WorkflowPausedEvent extends BaseEvent {
-    type: "workflow.paused";
+    type: "WORKFLOW_PAUSED";
     checkpoint?: string;
     message?: string;
 }
 
 export interface WorkflowResumedEvent extends BaseEvent {
-    type: "workflow.resumed";
+    type: "WORKFLOW_RESUMED";
     message?: string;
 }
 
 export interface WorkflowCancellingEvent extends BaseEvent {
-    type: "workflow.cancelling";
+    type: "workflow.cancelling" | "WORKFLOW_CANCELLING";
     message?: string;
 }
 
 export interface WorkflowCancelledEvent extends BaseEvent {
-    type: "workflow.cancelled";
+    type: "WORKFLOW_CANCELLED";
     message?: string;
 }
 
 export type RunEvent =
     | WorkflowStartedEvent
+    | WorkflowProgressEvent
+    | WorkflowWaitingInputEvent
     | WorkflowCompletedEvent
     | WorkflowFailedEvent
     | WorkflowPausingEvent
