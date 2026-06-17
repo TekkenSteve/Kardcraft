@@ -257,6 +257,46 @@ class WorkflowManager:
             )
         return preview
 
+    async def _build_graph(self, workflow_type: str):
+        return await asyncio.to_thread(self._get_graph, workflow_type)
+
+    def _main_graph_context(
+        self,
+        workflow_type: str,
+        input_data: Dict[str, Any],
+        *,
+        phase: str,
+        task_id: str,
+    ) -> Optional[MainGraphContext]:
+        if workflow_type != "main":
+            return None
+
+        input_payload = input_data.get("input")
+        if not isinstance(input_payload, dict):
+            input_payload = {}
+        input_context = input_payload.get("context")
+        if not isinstance(input_context, dict):
+            input_context = {}
+        history = input_data.get("conversation_history") or []
+
+        context = MainGraphContext(
+            user_id=str(input_data.get("user_id") or ""),
+            session_id=str(input_data.get("session_id") or ""),
+            workspace_id=str(input_data.get("workspace_id") or ""),
+            input_context=input_context,
+            conversation_history=history,
+        )
+        logger.debug(
+            "main workflow context history",
+            phase=phase,
+            task_id=task_id,
+            session_id=input_data.get("session_id") or "default",
+            user_id=input_data.get("user_id") or "unknown",
+            history_count=len(context.conversation_history or []),
+            history_preview=self._history_preview(context.conversation_history),
+        )
+        return context
+
     async def _publish_node_update_progress(
         self,
         *,
@@ -285,6 +325,115 @@ class WorkflowManager:
             }
         )
 
+    async def _publish_update_progress(
+        self,
+        event: Any,
+        *,
+        workspace_id: Optional[str],
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]],
+        control_gate: Optional[Callable[[], Awaitable[None]]],
+    ) -> None:
+        if progress_callback is None:
+            return
+        if not isinstance(event, dict):
+            await progress_callback(
+                {
+                    "type": "WORKFLOW_PROGRESS",
+                    "payload": event,
+                    "workspace_id": workspace_id,
+                }
+            )
+            return
+
+        for node_name, node_output in event.items():
+            if control_gate:
+                await control_gate()
+            await self._publish_node_update_progress(
+                node_name=node_name,
+                node_output=node_output,
+                workspace_id=workspace_id,
+                progress_callback=progress_callback,
+            )
+
+    async def _stream_graph(
+        self,
+        graph: Any,
+        *,
+        input_data: Dict[str, Any],
+        config: Dict[str, Any],
+        main_graph_context: Optional[MainGraphContext],
+        workspace_id: Optional[str],
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]],
+        control_gate: Optional[Callable[[], Awaitable[None]]],
+    ) -> Dict[str, Any]:
+        if control_gate:
+            await control_gate()
+
+        astream_kwargs: Dict[str, Any] = {
+            "input": input_data,
+            "config": config,
+            "stream_mode": ["updates", "values"],
+        }
+        if main_graph_context is not None:
+            astream_kwargs["context"] = main_graph_context
+
+        value_events: list[Dict[str, Any]] = []
+        async for mode, event in graph.astream(**astream_kwargs):
+            if control_gate:
+                await control_gate()
+            if mode == "updates":
+                await self._publish_update_progress(
+                    event,
+                    workspace_id=workspace_id,
+                    progress_callback=progress_callback,
+                    control_gate=control_gate,
+                )
+            elif mode == "values":
+                value_events.append(event)
+        return value_events[-1] if value_events else {}
+
+    async def _run_graph(
+        self,
+        *,
+        workflow_type: str,
+        task_id: str,
+        input_data: Dict[str, Any],
+        timeout: int,
+        phase: str,
+        timeout_message: str,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]],
+        control_gate: Optional[Callable[[], Awaitable[None]]],
+    ) -> WorkflowResult:
+        start_time = time.time()
+        try:
+            graph = await self._build_graph(workflow_type)
+            final_state = await asyncio.wait_for(
+                self._stream_graph(
+                    graph,
+                    input_data=input_data,
+                    config={"configurable": {"thread_id": task_id}},
+                    main_graph_context=self._main_graph_context(
+                        workflow_type,
+                        input_data,
+                        phase=phase,
+                        task_id=task_id,
+                    ),
+                    workspace_id=input_data.get("workspace_id"),
+                    progress_callback=progress_callback,
+                    control_gate=control_gate,
+                ),
+                timeout=timeout,
+            )
+            return WorkflowResult(
+                result=final_state,
+                checkpoint_id=task_id,
+                execution_time_ms=(time.time() - start_time) * 1000,
+            )
+        except asyncio.TimeoutError:
+            raise WorkflowTimeoutError(timeout_message)
+        except Exception as e:
+            raise WorkflowExecutionError(str(e)) from e
+
     async def execute(
         self,
         workflow_type: str,
@@ -297,104 +446,19 @@ class WorkflowManager:
         Execute a workflow.
         """
         task_id = input_data.get("task_id", str(uuid.uuid4()))
-        user_id = input_data.get("user_id", "unknown")
 
         logger.info(f"Manager executing workflow: type={workflow_type}, task={task_id}")
 
-        start_time = time.time()
-
-        try:
-            # Get graph WITHOUT passing workspace (to avoid serialization issues)
-            # The workspace will be retrieved inside each node when needed
-            graph = self._get_graph(workflow_type)
-
-            # Configure LangGraph with thread_id for checkpointing
-            config = {"configurable": {"thread_id": task_id}}
-
-            main_graph_context: Optional[MainGraphContext] = None
-            if workflow_type == "main":
-                input_payload = input_data.get("input") or {}
-                main_graph_context = MainGraphContext(
-                    user_id=input_data.get("user_id", ""),
-                    session_id=input_data.get("session_id", ""),
-                    workspace_id=input_data.get("workspace_id", ""),
-                    input_context=input_payload.get("context",[]),
-                    conversation_history=input_data.get("conversation_history") or [],
-                )
-                logger.debug(
-                    "main workflow context history",
-                    phase="execute",
-                    task_id=task_id,
-                    session_id=input_data.get("session_id") or "default",
-                    user_id=input_data.get("user_id") or "unknown",
-                    history_count=len(main_graph_context.conversation_history or []),
-                    history_preview=self._history_preview(main_graph_context.conversation_history),
-                )
-
-            value_events = []
-            workspace_id = input_data.get("workspace_id")
-
-            # Run with streaming and timeout
-            async def run_graph():
-                if control_gate:
-                    await control_gate()
-                # Stream both granular node updates (for progress) and full values (for final result).
-                astream_kwargs: Dict[str, Any] = {
-                    "input": input_data,
-                    "config": config,
-                    "stream_mode": ["updates", "values"],
-                }
-                if main_graph_context is not None:
-                    astream_kwargs["context"] = main_graph_context
-
-                async for mode, event in graph.astream(**astream_kwargs):
-                    if control_gate:
-                        await control_gate()
-                    if mode == "updates":
-                        if progress_callback:
-                            if isinstance(event, dict):
-                                for node_name, node_output in event.items():
-                                    if control_gate:
-                                        await control_gate()
-                                    await self._publish_node_update_progress(
-                                        node_name=node_name,
-                                        node_output=node_output,
-                                        workspace_id=workspace_id,
-                                        progress_callback=progress_callback,
-                                    )
-                            else:
-                                await progress_callback(
-                                    {
-                                        "type": "WORKFLOW_PROGRESS",
-                                        "payload": event,
-                                        "workspace_id": workspace_id,
-                                    }
-                                )
-                        continue
-
-                    if mode == "values":
-                        if control_gate:
-                            await control_gate()
-                        value_events.append(event)
-                return value_events[-1] if value_events else {}
-
-            final_state = await asyncio.wait_for(run_graph(), timeout=timeout)
-
-            execution_time_ms = (time.time() - start_time) * 1000
-
-            # Extract checkpoint ID if available (usually thread_id + step)
-            # For now returning thread_id as the main identifier
-
-            return WorkflowResult(
-                result=final_state,
-                checkpoint_id=task_id,  # Simplified for now, LangGraph uses thread_id
-                execution_time_ms=execution_time_ms,
-            )
-
-        except asyncio.TimeoutError:
-            raise WorkflowTimeoutError("Workflow execution timeout")
-        except Exception as e:
-            raise WorkflowExecutionError(str(e)) from e
+        return await self._run_graph(
+            workflow_type=workflow_type,
+            task_id=task_id,
+            input_data=input_data,
+            timeout=timeout,
+            phase="execute",
+            timeout_message="Workflow execution timeout",
+            progress_callback=progress_callback,
+            control_gate=control_gate,
+        )
 
     async def resume(
         self,
@@ -414,95 +478,21 @@ class WorkflowManager:
 
         # Retrieve state/metadata would happen here in a full impl
 
-        user_id = "unknown"
-        if additional_input and "user_id" in additional_input:
-            user_id = additional_input["user_id"]
-
-
-        graph = self._get_graph(workflow_type)
-        config = {"configurable": {"thread_id": task_id}}
-
-        main_graph_context: Optional[MainGraphContext] = None
         if workflow_type == "main":
             additional_input = self._normalize_main_resume_input(additional_input)
-            input_payload = additional_input.get("input") or {}
-            main_graph_context = MainGraphContext(
-                user_id=additional_input.get("user_id"),
-                session_id=additional_input.get("session_id"),
-                workspace_id=additional_input.get("workspace_id"),
-                input_context=input_payload.get("context"),
-                conversation_history=additional_input.get("conversation_history") or [],
-            )
-            logger.debug(
-                "main workflow context history",
-                phase="resume",
-                task_id=task_id,
-                session_id=additional_input.get("session_id") or "default",
-                user_id=additional_input.get("user_id") or "unknown",
-                history_count=len(main_graph_context.conversation_history or []),
-                history_preview=self._history_preview(main_graph_context.conversation_history),
-            )
+        else:
+            additional_input = dict(additional_input or {})
 
-        start_time = time.time()
-        try:
-            value_events = []
-            workspace_id = (additional_input or {}).get("workspace_id")
-
-            async def run_resume():
-                if control_gate:
-                    await control_gate()
-                astream_kwargs: Dict[str, Any] = {
-                    "input": additional_input,
-                    "config": config,
-                    "stream_mode": ["updates", "values"],
-                }
-                if main_graph_context is not None:
-                    astream_kwargs["context"] = main_graph_context
-
-                async for mode, event in graph.astream(**astream_kwargs):
-                    if control_gate:
-                        await control_gate()
-                    if mode == "updates":
-                        if progress_callback:
-                            if isinstance(event, dict):
-                                for node_name, node_output in event.items():
-                                    if control_gate:
-                                        await control_gate()
-                                    await self._publish_node_update_progress(
-                                        node_name=node_name,
-                                        node_output=node_output,
-                                        workspace_id=workspace_id,
-                                        progress_callback=progress_callback,
-                                    )
-                            else:
-                                await progress_callback(
-                                    {
-                                        "type": "WORKFLOW_PROGRESS",
-                                        "payload": event,
-                                        "workspace_id": workspace_id,
-                                    }
-                                )
-                        continue
-
-                    if mode == "values":
-                        if control_gate:
-                            await control_gate()
-                        value_events.append(event)
-                return value_events[-1] if value_events else {}
-
-            final_state = await asyncio.wait_for(run_resume(), timeout=timeout)
-
-            execution_time_ms = (time.time() - start_time) * 1000
-
-            return WorkflowResult(
-                result=final_state,
-                checkpoint_id=task_id,
-                execution_time_ms=execution_time_ms,
-            )
-        except asyncio.TimeoutError:
-            raise WorkflowTimeoutError("Resume timeout")
-        except Exception as e:
-            raise WorkflowExecutionError(str(e)) from e
+        return await self._run_graph(
+            workflow_type=workflow_type,
+            task_id=task_id,
+            input_data=additional_input,
+            timeout=timeout,
+            phase="resume",
+            timeout_message="Resume timeout",
+            progress_callback=progress_callback,
+            control_gate=control_gate,
+        )
 
     async def health_check(self) -> bool:
         return await self.checkpoint_saver.health_check()

@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 import pytest
 
@@ -62,6 +63,36 @@ async def test_execute_checks_control_gate_between_graph_events():
         "NODE_STARTED",
         "NODE_COMPLETED",
     ]
+
+
+@pytest.mark.asyncio
+async def test_execute_graph_construction_does_not_block_event_loop():
+    manager = WorkflowManager.__new__(WorkflowManager)
+
+    def build_graph(_workflow_type):
+        time.sleep(0.1)
+        return _FakeGraph()
+
+    manager._get_graph = build_graph
+    loop_ticked = asyncio.Event()
+
+    async def ticker():
+        await asyncio.sleep(0.02)
+        loop_ticked.set()
+
+    task = asyncio.create_task(
+        manager.execute(
+            workflow_type="main",
+            input_data={"task_id": "task-1", "user_id": "user-1", "workspace_id": "s1"},
+        )
+    )
+    ticker_task = asyncio.create_task(ticker())
+
+    await asyncio.wait_for(loop_ticked.wait(), timeout=1)
+    result = await task
+    await ticker_task
+
+    assert result.result["status"] == "success"
 
 
 @pytest.mark.asyncio
