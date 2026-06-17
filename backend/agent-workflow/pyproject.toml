@@ -77,9 +77,7 @@ dev = [
 ]
 
 [project.scripts]
-agent-workflow = "kardcraft.grpc.server:main"
 sandbox-broker = "kardcraft.sandbox_broker.server:main"
-workflow-event-projector = "kardcraft.temporal.event_projector:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

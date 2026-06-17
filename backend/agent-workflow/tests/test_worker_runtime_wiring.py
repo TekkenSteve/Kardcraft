@@ -34,6 +34,18 @@ def test_agent_activities_does_not_publish_success_terminal_before_persistence()
     assert "event_type=\"WORKFLOW_FAILED\" if status == \"failed\" else \"WORKFLOW_COMPLETED\"" not in success_paths
 
 
+def test_agent_workflow_uses_agentos_event_sink_not_outbox_projector():
+    paths = [
+        Path("backend/agent-workflow/src/kardcraft/temporal/worker.py"),
+        Path("backend/agent-workflow/src/kardcraft/temporal/activities/agent_activities.py"),
+    ]
+    text = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+    assert "AgentOSEventSink" in text
+    assert "Workflow" + "EventBus" not in text
+    assert "workflow_event_" + "outbox" not in text
+    assert "event_" + "projector" not in text
+
+
 def test_shell_uses_execution_port_engine():
     shell_path = Path("backend/agent-workflow/src/kardcraft/agent_skills/shell.py")
     text = shell_path.read_text(encoding="utf-8")

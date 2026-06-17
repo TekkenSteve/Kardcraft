@@ -17,14 +17,23 @@ from .exceptions import (
     WorkflowNotFoundError,
     WorkflowTimeoutError,
 )
-from .graphs.main_graph.builder import build_main_graph
 from .graphs.main_graph.state import Context as MainGraphContext
-from .graphs.card_template_graph.builder import build_card_template_graph
 
 # from .graphs.research_graph.builder import build_research_graph
 from ..services.redis import RedisClient
 from ..config import Config
 from ..utils.logger import logger
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        text = value.strip()
+        return [text] if text else []
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item or "").strip()]
 
 
 @dataclass
@@ -74,10 +83,14 @@ class WorkflowManager:
     def _get_graph(self, workflow_type: str):
         """Get or create graph for workflow type."""
         if workflow_type == "main":
+            from .graphs.main_graph.builder import build_main_graph
+
             return build_main_graph().with_config(
                 checkpointer=self.checkpoint_saver
             )
         elif workflow_type == "card_template":
+            from .graphs.card_template_graph.builder import build_card_template_graph
+
             return build_card_template_graph().with_config(
                 checkpointer=self.checkpoint_saver
             )
@@ -201,8 +214,12 @@ class WorkflowManager:
 
         if not str(normalized.get("user_input") or "").strip():
             normalized["user_input"] = str(input_payload.get("query") or "").strip()
-        if "file_ids" not in normalized:
-            normalized["file_ids"] = list(input_payload.get("file_ids") or [])
+        normalized["file_ids"] = _normalize_string_list(
+            normalized.get("file_ids", input_payload.get("file_ids"))
+        )
+        normalized["effective_file_ids"] = _normalize_string_list(
+            normalized.get("effective_file_ids", input_payload.get("effective_file_ids"))
+        )
         if "target_count" not in normalized:
             normalized["target_count"] = input_payload.get("target_count", 10)
         if "difficulty_level" not in normalized:

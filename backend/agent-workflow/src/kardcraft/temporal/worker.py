@@ -1,14 +1,15 @@
 import asyncio
+import os
 import signal
 from temporalio.client import Client
 from temporalio.worker import Worker
 from kardcraft.config import Config
 from kardcraft.env_bootstrap import bootstrap_root_env
 from kardcraft.temporal.activities.agent_activities import AgentActivities
+from kardcraft.temporal.agentos_event_activity import agentos_event_activities_from_env
+from kardcraft.temporal.agentos_workflow import KardcraftAgentOSWorkflow
 from kardcraft.workflow.manager import WorkflowManager
 from kardcraft.services.redis import redis as redis_client
-from kardcraft.services.process_lifecycle import ProcessLifecycleGate
-from kardcraft.services.workflow_event_bus import WorkflowEventBus
 from kardcraft.utils.logger import logger
 
 
@@ -32,6 +33,8 @@ async def main():
             "POSTGRES_USER",
             "POSTGRES_PASSWORD",
             "SANDBOX_BROKER_TARGET",
+            "AGENT_WORKFLOW_TASK_QUEUE",
+            "TASK_ORCHESTRATOR_BASE_URL",
         )
     )
 
@@ -40,10 +43,6 @@ async def main():
 
     # Initialize services
     logger.info("Initializing services for Temporal Worker...")
-
-    process_gate = ProcessLifecycleGate()
-    event_bus = WorkflowEventBus(process_gate=process_gate)
-    await event_bus.bootstrap()
 
     # Initialize Workflow Manager
     workflow_manager = WorkflowManager(
@@ -55,7 +54,6 @@ async def main():
     activities = AgentActivities(
         workflow_manager=workflow_manager,
         redis_client=redis_client,
-        event_bus=event_bus,
     )
 
     # Connect to Temporal Server
@@ -63,13 +61,13 @@ async def main():
     client = await Client.connect(config.temporal_endpoint)
 
     # Run Worker
-    task_queue = "agent-activities-queue"
+    task_queue = os.environ["AGENT_WORKFLOW_TASK_QUEUE"].strip()
 
     registered_activities = [
         activities.execute_agent_workflow,
         activities.resume_agent_workflow,
         activities.health_check_activity,
-        activities.publish_workflow_event,
+        agentos_event_activities_from_env().emit_agentos_event,
     ]
     logger.info(
         f"Registering {len(registered_activities)} activities: {[a.fn.__name__ if hasattr(a, 'fn') else str(a) for a in registered_activities]}"
@@ -78,6 +76,7 @@ async def main():
     worker = Worker(
         client,
         task_queue=task_queue,
+        workflows=[KardcraftAgentOSWorkflow],
         activities=registered_activities,
     )
 
@@ -102,7 +101,6 @@ async def main():
             return_when=asyncio.FIRST_COMPLETED,
         )
         if stop_event.is_set() and not worker_task.done():
-            await process_gate.begin_quiesce()
             await _shutdown_worker(worker, worker_task)
 
         if worker_task in done:
@@ -110,7 +108,6 @@ async def main():
             await worker_task
     except asyncio.CancelledError:
         logger.info("Worker main task cancelled")
-        await process_gate.begin_quiesce()
         if not worker_task.done():
             await _shutdown_worker(worker, worker_task)
         raise
@@ -123,12 +120,6 @@ async def main():
                 await stop_wait_task
             except asyncio.CancelledError:
                 pass
-
-        await process_gate.begin_draining()
-        drained = await process_gate.drain(timeout_s=10.0)
-        if not drained:
-            logger.warning("Timed out draining in-flight event writes before shutdown")
-        await process_gate.mark_stopped()
 
         logger.info("Shutting down services...")
         await redis_client.close()

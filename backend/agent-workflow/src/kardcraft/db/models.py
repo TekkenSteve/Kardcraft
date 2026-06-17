@@ -10,8 +10,6 @@ from sqlalchemy import (
     String,
     Text,
     Integer,
-    BigInteger,
-    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -252,77 +250,3 @@ class Media(Base):
 
     created_at = Column(DateTime, nullable=False, default=datetime.utcnow)
     deleted_at = Column(DateTime, nullable=True)
-
-
-class WorkflowEventOutbox(Base):
-    """
-    Durable outbox for workflow realtime events.
-    Events are persisted here first, then projected to Redis by a dedicated projector.
-    """
-
-    __tablename__ = "workflow_event_outbox"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    task_id = Column(String(128), nullable=False)
-    session_id = Column(String(128), nullable=True)
-    user_id = Column(String(128), nullable=True)
-    workflow_id = Column(String(256), nullable=False)
-    run_id = Column(String(128), nullable=False)
-    event_seq = Column(BigInteger, nullable=False)
-    event_type = Column(String(64), nullable=False)
-    channel = Column(String(32), nullable=False, default="timeline")
-    payload = Column(JSONB, nullable=False, default=dict)
-    occurred_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-    status = Column(String(32), nullable=False, default="pending")
-    projector_id = Column(String(128), nullable=True)
-    claimed_at = Column(DateTime, nullable=True)
-    projected_at = Column(DateTime, nullable=True)
-    attempt_count = Column(Integer, nullable=False, default=0)
-    last_error = Column(Text, nullable=True)
-
-    __table_args__ = (
-        UniqueConstraint("task_id", "event_seq", name="uq_outbox_task_seq"),
-        Index("idx_outbox_pending", "status", "id"),
-        Index("idx_outbox_task_seq", "task_id", "event_seq"),
-        CheckConstraint(
-            "status in ('pending', 'projecting', 'projected')",
-            name="ck_outbox_status",
-        ),
-    )
-
-
-class TaskLifecycleState(Base):
-    """
-    Task-level lifecycle and gating controls.
-    Used by event bus to enforce pause/cancel/shutdown publish semantics.
-    """
-
-    __tablename__ = "task_lifecycle_state"
-
-    task_id = Column(String(128), primary_key=True)
-    phase = Column(String(32), nullable=False, default="running")
-    accepting_progress = Column(Boolean, nullable=False, default=True)
-    accepting_usage = Column(Boolean, nullable=False, default=True)
-    terminal_event_emitted = Column(Boolean, nullable=False, default=False)
-    done_event_emitted = Column(Boolean, nullable=False, default=False)
-    updated_at = Column(
-        DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow
-    )
-
-    __table_args__ = (
-        CheckConstraint(
-            "phase in ('running', 'paused', 'cancelling', 'terminal')",
-            name="ck_task_lifecycle_phase",
-        ),
-    )
-
-
-class TaskEventSeq(Base):
-    """
-    Monotonic event sequence per task.
-    """
-
-    __tablename__ = "task_event_seq"
-
-    task_id = Column(String(128), primary_key=True)
-    next_seq = Column(BigInteger, nullable=False, default=0)
