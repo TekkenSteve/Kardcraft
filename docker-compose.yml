@@ -441,6 +441,8 @@ services:
       - POSTGRES_PASSWORD=postgres123
       - ENABLE_TEMPORAL=true
       - TEMPORAL_ENDPOINT=temporal:7233
+      - AGENT_WORKFLOW_TASK_QUEUE=${AGENT_WORKFLOW_TASK_QUEUE:?AGENT_WORKFLOW_TASK_QUEUE is required}
+      - AGENT_WORKFLOW_TYPE=${AGENT_WORKFLOW_TYPE:?AGENT_WORKFLOW_TYPE is required}
       - ANKI_RUNTIME_URL=http://anki-runtime:8012
     volumes:
       - ./backend/task-orchestrator/config.yaml:/app/config.yaml
@@ -463,7 +465,7 @@ services:
     networks:
       - kardcraft-network
 
-  # Temporal Go Worker - 执行 Go Workflows (TaskWorkflow)
+  # Temporal Go Worker - GoAgent native runtime worker
   go-worker:
     build:
       context: ./backend/task-orchestrator
@@ -507,7 +509,6 @@ services:
     build:
       context: ./backend/agent-workflow
       dockerfile: Dockerfile
-      cache_from: [ kardcraft/agent-workflow:cache ]
     container_name: kardcraft-agent-workflow
     env_file:
       - ${PWD}/.env.llm
@@ -527,6 +528,8 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres123
       - TEMPORAL_ENDPOINT=temporal:7233
+      - AGENT_WORKFLOW_TASK_QUEUE=${AGENT_WORKFLOW_TASK_QUEUE:?AGENT_WORKFLOW_TASK_QUEUE is required}
+      - TASK_ORCHESTRATOR_BASE_URL=${TASK_ORCHESTRATOR_BASE_URL:?TASK_ORCHESTRATOR_BASE_URL is required}
       - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin
@@ -557,37 +560,6 @@ services:
       anki-runtime:
         condition: service_healthy
       sandbox-broker:
-        condition: service_started
-    networks:
-      - kardcraft-network
-
-  # Workflow Event Projector (Postgres outbox -> Redis stream)
-  agent-workflow-projector:
-    image: kardcraft-agent-workflow
-    container_name: kardcraft-agent-workflow-projector
-    env_file:
-      - ${PWD}/.env.llm
-      - ${PWD}/.env.ragix
-    restart: always
-    command: [ "python", "-m", "kardcraft.temporal.event_projector" ]
-    environment:
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_DB=0
-      - REDIS_PASSWORD=redis123
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=kardcraft
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres123
-    depends_on:
-      redis:
-        condition: service_healthy
-      postgres:
-        condition: service_healthy
-      db-migrate:
-        condition: service_completed_successfully
-      agent-workflow:
         condition: service_started
     networks:
       - kardcraft-network

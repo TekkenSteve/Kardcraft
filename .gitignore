@@ -170,3 +170,13 @@ archive/
 worktrees/
 
 
+.codex/
+.opencode/
+docs/
+openspec/
+scripts/
+!backend/database/scripts/
+!backend/database/scripts/*.sh
+pkg/
+.opencode
+tmp/

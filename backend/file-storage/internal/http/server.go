@@ -163,9 +163,14 @@ func (s *Server) handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	chunk, err := io.ReadAll(r.Body)
+	const maxChunkSize = 10 << 20 // 10 MB
+	chunk, err := io.ReadAll(io.LimitReader(r.Body, maxChunkSize+1))
 	if err != nil {
 		http.Error(w, "failed to read chunk", http.StatusBadRequest)
+		return
+	}
+	if len(chunk) > maxChunkSize {
+		http.Error(w, "chunk too large", http.StatusRequestEntityTooLarge)
 		return
 	}
 
@@ -187,9 +192,9 @@ func (s *Server) handleUploadChunk(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok":       true,
+		"ok":        true,
 		"upload_id": uploadID,
-		"received": received,
+		"received":  received,
 	})
 }
 
@@ -262,6 +267,10 @@ func (s *Server) handleUploadStatus(w http.ResponseWriter, r *http.Request) {
 	uploadID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/v1/files/upload/status/"), "/")
 	s.uploadsMu.Lock()
 	session, ok := s.uploads[uploadID]
+	var received int
+	if ok {
+		received = len(session.Chunks)
+	}
 	s.uploadsMu.Unlock()
 	if !ok {
 		http.Error(w, "upload not found", http.StatusNotFound)
@@ -274,7 +283,7 @@ func (s *Server) handleUploadStatus(w http.ResponseWriter, r *http.Request) {
 		"status":      "initialized",
 		"file_name":   session.Filename,
 		"chunk_count": session.ChunkCount,
-		"received":    len(session.Chunks),
+		"received":    received,
 		"created_at":  session.CreatedAt.UTC().Format(time.RFC3339),
 	})
 }
