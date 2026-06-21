@@ -141,7 +141,8 @@ func handleTaskControl(w http.ResponseWriter, r *http.Request, taskID string, ac
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
+	idempotencyKey := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if idempotencyKey == "" {
 		deps.WriteAPIError(w, http.StatusBadRequest, deps.IdempotencyRequiredCode, "Idempotency-Key header is required", map[string]any{"task_id": taskID, "action": action})
 		return
 	}
@@ -163,11 +164,12 @@ func handleTaskControl(w http.ResponseWriter, r *http.Request, taskID string, ac
 		return
 	}
 	_, err = deps.CommandService.ControlSession(r.Context(), usecase.SessionControlCommand{
-		SessionID: sessionID,
-		TaskID:    taskID,
-		UserID:    userID,
-		Action:    action,
-		Reason:    req.Reason,
+		SessionID:      sessionID,
+		TaskID:         taskID,
+		UserID:         userID,
+		Action:         action,
+		Reason:         req.Reason,
+		IdempotencyKey: idempotencyKey,
 	})
 	if errors.Is(err, usecase.ErrInvalidTransition) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -177,7 +179,7 @@ func handleTaskControl(w http.ResponseWriter, r *http.Request, taskID string, ac
 		deps.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error(), "workflow_id": taskID})
 		return
 	}
-	appendControlTimelineEvent(r.Context(), taskID, action, req.Reason, userID, strings.TrimSpace(r.Header.Get("Idempotency-Key")), deps)
+	appendControlTimelineEvent(r.Context(), taskID, action, req.Reason, userID, idempotencyKey, deps)
 	deps.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":     true,
 		"message":     fmt.Sprintf("Task %s signal sent successfully", action),

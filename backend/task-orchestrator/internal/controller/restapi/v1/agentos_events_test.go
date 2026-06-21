@@ -22,7 +22,7 @@ func TestAgentOSEventsHandlerAppendsProgressEvent(t *testing.T) {
 	handler := NewAgentOSEventsHandler(AgentOSEventsDeps{
 		WriteJSON:     writeJSON,
 		WriteAPIError: writeAPIError,
-		ReadModel:    readStore,
+		ReadModel:     readStore,
 		AppendTimeline: func(workflowID, sessionID, eventType, message, streamID string, payload any, persist bool) {
 			appended.workflowID = workflowID
 			appended.sessionID = sessionID
@@ -73,7 +73,7 @@ func TestAgentOSEventsHandlerProjectsTerminalOutcome(t *testing.T) {
 	handler := NewAgentOSEventsHandler(AgentOSEventsDeps{
 		WriteJSON:     writeJSON,
 		WriteAPIError: writeAPIError,
-		ReadModel:    &fakeReadModelStore{ready: true},
+		ReadModel:     &fakeReadModelStore{ready: true},
 		OutcomeStore:  store,
 		AppendTimeline: func(workflowID, sessionID, eventType, message, streamID string, payload any, persist bool) {
 			appended.eventType = eventType
@@ -119,6 +119,61 @@ func TestAgentOSEventsHandlerProjectsTerminalOutcome(t *testing.T) {
 	}
 }
 
+func TestAgentOSEventsHandlerMapsStandardAgentOSEvents(t *testing.T) {
+	store := &fakeAgentOSOutcomeStore{sessionID: "s1"}
+	var appended struct {
+		eventType string
+		persist   bool
+	}
+	handler := NewAgentOSEventsHandler(AgentOSEventsDeps{
+		WriteJSON:     writeJSON,
+		WriteAPIError: writeAPIError,
+		ReadModel:     &fakeReadModelStore{ready: true},
+		OutcomeStore:  store,
+		AppendTimeline: func(workflowID, sessionID, eventType, message, streamID string, payload any, persist bool) {
+			appended.eventType = eventType
+			appended.persist = persist
+		},
+	})
+	req := newJSONRequest(http.MethodPost, "/api/v1/agentos/runs/run-standard/events", `{
+		"event_id":"evt-standard",
+		"run_id":"run-standard",
+		"thread_id":"s1",
+		"event_type":"run.completed",
+		"source":"kardcraft.agent_workflow",
+		"payload":{
+			"message":"Done",
+			"correlation_id":"corr-standard",
+			"task_outcome":{
+				"schema_version":"task-outcome",
+				"task_id":"run-standard",
+				"workflow_id":"run-standard",
+				"session_id":"s1",
+				"user_id":"u1",
+				"status":"completed",
+				"message":"Done",
+				"final_cards":[]
+			}
+		}
+	}`)
+	rr := httptest.NewRecorder()
+
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if store.updatedStatus != "completed" {
+		t.Fatalf("expected completed projection, got %q", store.updatedStatus)
+	}
+	if !containsString(store.eventTypes, "WORKFLOW_COMPLETED") {
+		t.Fatalf("expected mapped terminal event insert, got %v", store.eventTypes)
+	}
+	if appended.eventType != "WORKFLOW_COMPLETED" || appended.persist {
+		t.Fatalf("terminal timeline append should use mapped event and stay transient, got %#v", appended)
+	}
+}
+
 func TestAgentOSEventsHandlerRejectsMismatchedRunID(t *testing.T) {
 	handler := NewAgentOSEventsHandler(AgentOSEventsDeps{
 		WriteJSON:      writeJSON,
@@ -143,7 +198,7 @@ func TestAgentOSEventsHandlerRejectsMismatchedRunID(t *testing.T) {
 }
 
 type fakeAgentOSOutcomeStore struct {
-	sessionID      string
+	sessionID     string
 	updatedTaskID string
 	updatedStatus string
 	eventTypes    []string

@@ -3,9 +3,8 @@ module task-orchestrator
 go 1.26.2
 
 require (
-	github.com/TekkenSteve/GoAgent v0.0.0-20260522082532-a5d00a993f02
+	github.com/TekkenSteve/GoAgent v0.0.0-20260616160257-4ebd731266c8
 	github.com/jackc/pgx/v5 v5.9.1
-	github.com/maximhq/bifrost/core v1.5.10
 	github.com/redis/go-redis/v9 v9.18.0
 	go.temporal.io/api v1.62.3
 	go.temporal.io/sdk v1.41.0
@@ -16,6 +15,7 @@ require (
 replace github.com/TekkenSteve/GoAgent => ../../../GoAgent
 
 require (
+	cel.dev/expr v0.25.1 // indirect
 	cloud.google.com/go v0.123.0 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.20.0 // indirect
@@ -24,6 +24,7 @@ require (
 	github.com/AzureAD/microsoft-authentication-library-for-go v1.6.0 // indirect
 	github.com/Masterminds/squirrel v1.5.4 // indirect
 	github.com/andybalholm/brotli v1.2.1 // indirect
+	github.com/antlr4-go/antlr/v4 v4.13.1 // indirect
 	github.com/aws/aws-sdk-go-v2 v1.41.5 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.10 // indirect
 	github.com/aws/aws-sdk-go-v2/config v1.32.11 // indirect
@@ -58,6 +59,7 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang-jwt/jwt/v5 v5.3.0 // indirect
 	github.com/golang/mock v1.7.0-rc.1 // indirect
+	github.com/google/cel-go v0.28.1 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.2 // indirect
@@ -77,6 +79,7 @@ require (
 	github.com/mark3labs/mcp-go v0.52.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
+	github.com/maximhq/bifrost/core v1.5.10 // indirect
 	github.com/mitchellh/copystructure v1.2.0 // indirect
 	github.com/mitchellh/reflectwalk v1.0.2 // indirect
 	github.com/nexus-rpc/sdk-go v0.6.0 // indirect
@@ -102,6 +105,7 @@ require (
 	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/arch v0.23.0 // indirect
 	golang.org/x/crypto v0.49.0 // indirect
+	golang.org/x/exp v0.0.0-20250620022241-b7579e27df2b // indirect
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect

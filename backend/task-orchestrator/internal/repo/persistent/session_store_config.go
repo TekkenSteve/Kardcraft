@@ -198,7 +198,7 @@ func (s *SessionStore) validateRequiredSchema(ctx context.Context) error {
 
 	requiredVersion := strings.TrimSpace(os.Getenv("KC_REQUIRED_SCHEMA_VERSION"))
 	if requiredVersion == "" {
-		requiredVersion = "0001_initial_schema.sql"
+		requiredVersion = "0003_agentos_run_ownership.sql"
 	}
 	var applied int
 	if err := s.pg.QueryRow(ctx, `SELECT COUNT(*) FROM kc_schema_migrations WHERE version = $1`, requiredVersion).Scan(&applied); err != nil {

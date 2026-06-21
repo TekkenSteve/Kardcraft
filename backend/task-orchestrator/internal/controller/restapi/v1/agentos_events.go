@@ -70,6 +70,7 @@ func NewAgentOSEventsHandler(deps AgentOSEventsDeps) http.HandlerFunc {
 		if eventType == "" {
 			eventType = usecase.EventWorkflowProgress
 		}
+		eventType = kardcraftEventTypeFromAgentOS(eventType)
 		taskID := firstNonEmptyStringAny(ev.Payload["task_id"], ev.RunID)
 		workflowID := firstNonEmptyStringAny(ev.Payload["workflow_id"], taskID)
 		sessionID := firstNonEmptyStringAny(ev.Payload["session_id"], ev.ThreadID)

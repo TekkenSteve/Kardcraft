@@ -57,11 +57,17 @@ func (r *Runtime) SignalAgentRun(ctx context.Context, runID string, signal useca
 	})
 }
 
-func (r *Runtime) ControlAgentRun(ctx context.Context, runID string, op usecase.AgentControlOperation) error {
+func (r *Runtime) ControlAgentRun(ctx context.Context, runID string, control usecase.AgentControlRequest) error {
 	if r == nil || r.runtime == nil {
 		return fmt.Errorf("goagent runtime is required")
 	}
-	return r.runtime.Control(ctx, runID, agentos.ControlOperation(op))
+	return r.runtime.Control(ctx, runID, agentos.ControlRequest{
+		Operation:      agentos.ControlOperation(control.Operation),
+		IdempotencyKey: control.IdempotencyKey,
+		RequestedAt:    control.RequestedAt,
+		ActorID:        control.ActorID,
+		Metadata:       control.Metadata,
+	})
 }
 
 func (r *Runtime) SubscribeAgentEvents(ctx context.Context, scope usecase.AgentEventScope) (usecase.AgentEventSubscription, error) {
@@ -87,10 +93,18 @@ func (r *Runtime) Close() error {
 }
 
 func agentRunStatusFromAgentOS(status agentos.RunStatus) usecase.AgentRunStatus {
+	var progress *usecase.AgentRunProgress
+	if status.Progress != nil {
+		progress = &usecase.AgentRunProgress{
+			Current: status.Progress.Current,
+			Total:   status.Progress.Total,
+			Label:   status.Progress.Label,
+		}
+	}
 	return usecase.AgentRunStatus{
 		RunID:          status.RunID,
 		LifecycleState: status.LifecycleState,
-		Step:           status.Step,
+		Progress:       progress,
 		Reason:         status.Reason,
 		UpdatedAt:      status.UpdatedAt,
 	}
@@ -107,7 +121,7 @@ func (s *subscription) Events() <-chan usecase.AgentRuntimeEvent {
 		for event := range s.sub.Events() {
 			out <- usecase.AgentRuntimeEvent{
 				EventID:   event.EventID,
-				EventType: event.EventType,
+				EventType: string(event.EventType),
 				RunID:     event.RunID,
 				ThreadID:  event.ThreadID,
 				Sequence:  event.Sequence,

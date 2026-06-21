@@ -79,6 +79,7 @@ func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskComma
 		RunID:          cmd.TaskID,
 		ThreadID:       cmd.SessionID,
 		AccountID:      cmd.UserID,
+		ProjectID:      cmd.SessionID,
 		ModelRef:       modelRef,
 		SystemPrompt:   systemPromptFromCommand(cmd),
 		UserMessage:    strings.TrimSpace(cmd.Input.Query),
@@ -198,21 +199,25 @@ func (s *UseCase) ControlSession(ctx context.Context, cmd usecase.SessionControl
 		RequestBy: cmd.UserID,
 		Timestamp: s.now().UTC(),
 	}
+	idempotencyKey := strings.TrimSpace(cmd.IdempotencyKey)
+	if idempotencyKey == "" {
+		return nil, fmt.Errorf("idempotency key is required")
+	}
 	switch action {
 	case "pause":
-		if err := s.controlWorkflow(ctx, taskID, taskType, usecase.AgentControlPause, signalPayload); err != nil {
+		if err := s.controlWorkflow(ctx, taskID, taskType, usecase.AgentControlPause, idempotencyKey, signalPayload); err != nil {
 			return nil, err
 		}
 		_ = s.store.UpdateTaskStatus(ctx, taskID, "paused", "")
 		state = "PAUSED"
 	case "resume":
-		if err := s.controlWorkflow(ctx, taskID, taskType, usecase.AgentControlResume, signalPayload); err != nil {
+		if err := s.controlWorkflow(ctx, taskID, taskType, usecase.AgentControlResume, idempotencyKey, signalPayload); err != nil {
 			return nil, err
 		}
 		_ = s.store.UpdateTaskStatus(ctx, taskID, "running", "")
 		state = "RUNNING"
 	case "cancel":
-		if err := s.controlWorkflow(ctx, taskID, taskType, usecase.AgentControlCancel, signalPayload); err != nil {
+		if err := s.controlWorkflow(ctx, taskID, taskType, usecase.AgentControlCancel, idempotencyKey, signalPayload); err != nil {
 			return nil, err
 		}
 		state = "TERMINATING"
@@ -229,12 +234,20 @@ func (s *UseCase) ControlSession(ctx context.Context, cmd usecase.SessionControl
 	}, nil
 }
 
-func (s *UseCase) controlWorkflow(ctx context.Context, taskID, taskType string, op usecase.AgentControlOperation, signal usecase.ControlSignal) error {
+func (s *UseCase) controlWorkflow(ctx context.Context, taskID, taskType string, op usecase.AgentControlOperation, idempotencyKey string, signal usecase.ControlSignal) error {
 	if s.agentRuntime == nil {
 		return fmt.Errorf("agent runtime is required for task control")
 	}
 	_ = taskType
-	return s.agentRuntime.ControlAgentRun(ctx, taskID, op)
+	return s.agentRuntime.ControlAgentRun(ctx, taskID, usecase.AgentControlRequest{
+		Operation:      op,
+		IdempotencyKey: idempotencyKey,
+		RequestedAt:    signal.Timestamp,
+		ActorID:        strings.TrimSpace(signal.RequestBy),
+		Metadata: map[string]string{
+			"reason": strings.TrimSpace(signal.Reason),
+		},
+	})
 }
 
 func validateTransition(action, state string) error {

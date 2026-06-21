@@ -78,7 +78,7 @@ type (
 	AgentRuntime interface {
 		StartAgentRun(ctx context.Context, req AgentRunRequest) (AgentRunStatus, error)
 		SignalAgentRun(ctx context.Context, runID string, signal AgentSignal) error
-		ControlAgentRun(ctx context.Context, runID string, op AgentControlOperation) error
+		ControlAgentRun(ctx context.Context, runID string, control AgentControlRequest) error
 		SubscribeAgentEvents(ctx context.Context, scope AgentEventScope) (AgentEventSubscription, error)
 	}
 
@@ -122,6 +122,14 @@ const (
 	AgentControlCancel AgentControlOperation = "cancel"
 )
 
+type AgentControlRequest struct {
+	Operation      AgentControlOperation
+	IdempotencyKey string
+	RequestedAt    time.Time
+	ActorID        string
+	Metadata       map[string]string
+}
+
 type AgentRunRequest struct {
 	RunID          string
 	ThreadID       string
@@ -141,9 +149,15 @@ type AgentRunRequest struct {
 type AgentRunStatus struct {
 	RunID          string
 	LifecycleState string
-	Step           int32
+	Progress       *AgentRunProgress
 	Reason         string
 	UpdatedAt      time.Time
+}
+
+type AgentRunProgress struct {
+	Current int32
+	Total   int32
+	Label   string
 }
 
 type AgentBackendRef struct {

@@ -3,6 +3,7 @@ package repo
 
 import (
 	"context"
+	"time"
 
 	"task-orchestrator/internal/entity"
 )
@@ -26,16 +27,22 @@ type (
 
 	AgentRunRoute struct {
 		RunID          string
+		PlanID         string
+		NodeID         string
 		ThreadID       string
 		AccountID      string
 		ProjectID      string
 		BackendKind    string
 		BackendName    string
+		IdempotencyKey string
 		LifecycleState string
+		CreatedAt      time.Time
+		UpdatedAt      time.Time
 	}
 
 	AgentRunRouteStore interface {
 		BindAgentRunRoute(ctx context.Context, route AgentRunRoute) error
 		ResolveAgentRunRoute(ctx context.Context, runID string) (AgentRunRoute, bool, error)
+		GetAgentRunRoute(ctx context.Context, runID string) (AgentRunRoute, bool, error)
 	}
 )

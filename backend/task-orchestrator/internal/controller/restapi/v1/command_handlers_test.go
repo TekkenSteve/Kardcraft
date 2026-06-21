@@ -607,6 +607,37 @@ func TestHandleTaskControlTimelineIsIdempotentByStreamID(t *testing.T) {
 	}
 }
 
+func TestHandleTaskControlPassesControlRequestToAgentRuntime(t *testing.T) {
+	store := newFakeCommandStore()
+	readStore := &fakeReadModelStore{ready: true}
+	s, executor := newCommandTestServerWithReadStoreAndExecutor(store, nil, true, readStore)
+	req := newJSONRequest(http.MethodPost, "/api/v1/tasks/task-1/pause", `{"reason":"manual"}`)
+	req.Header.Set("Idempotency-Key", "control-key-1")
+	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	if executor.lastControl == nil {
+		t.Fatal("expected agent control request")
+	}
+	if executor.lastControl.Operation != usecase.AgentControlPause {
+		t.Fatalf("expected pause operation, got %q", executor.lastControl.Operation)
+	}
+	if executor.lastControl.IdempotencyKey != "control-key-1" {
+		t.Fatalf("expected control idempotency key, got %q", executor.lastControl.IdempotencyKey)
+	}
+	if executor.lastControl.ActorID != "u1" {
+		t.Fatalf("expected actor u1, got %q", executor.lastControl.ActorID)
+	}
+	if executor.lastControl.Metadata["reason"] != "manual" {
+		t.Fatalf("expected reason metadata, got %#v", executor.lastControl.Metadata)
+	}
+}
+
 func TestHandleTaskPlannerTrace(t *testing.T) {
 	taskID := "task-trace-1"
 	streamID := "planner_trace:task-trace-1:001"
@@ -788,7 +819,7 @@ func (f *fakeCommandStore) EnsureSessionAccess(ctx context.Context, sessionID, u
 type fakeAgentExecutor struct {
 	runID           string
 	lastReq         *usecase.AgentRunRequest
-	lastOp          usecase.AgentControlOperation
+	lastControl     *usecase.AgentControlRequest
 	lastSignalRunID string
 	lastSignal      *usecase.AgentSignal
 }
@@ -802,8 +833,8 @@ func (f *fakeAgentExecutor) StartAgentRun(ctx context.Context, req usecase.Agent
 	return usecase.AgentRunStatus{RunID: runID, LifecycleState: "created", UpdatedAt: time.Now().UTC()}, nil
 }
 
-func (f *fakeAgentExecutor) ControlAgentRun(ctx context.Context, runID string, op usecase.AgentControlOperation) error {
-	f.lastOp = op
+func (f *fakeAgentExecutor) ControlAgentRun(ctx context.Context, runID string, control usecase.AgentControlRequest) error {
+	f.lastControl = &control
 	return nil
 }
 

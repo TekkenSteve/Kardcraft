@@ -377,6 +377,7 @@ func (s *Server) subscribeAgentStream(ctx context.Context, workflowID string) {
 			if eventType == "" {
 				eventType = "WORKFLOW_PROGRESS"
 			}
+			eventType = kardcraftEventTypeFromAgentOS(eventType)
 			if evSessionID == "" {
 				evSessionID = sessionID
 			}

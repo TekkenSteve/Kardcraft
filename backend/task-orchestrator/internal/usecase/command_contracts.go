@@ -3,8 +3,8 @@ package usecase
 import "time"
 
 const (
-	TaskTypeMain         = "main"
-	TaskTypeCardTemplate = "card_template"
+	TaskTypeMain           = "main"
+	TaskTypeCardTemplate   = "card_template"
 	AgentSignalUserMessage = "user.message"
 )
 
@@ -16,11 +16,12 @@ type CreateTaskResult struct {
 }
 
 type SessionControlCommand struct {
-	SessionID string
-	TaskID    string
-	UserID    string
-	Action    string
-	Reason    string
+	SessionID      string
+	TaskID         string
+	UserID         string
+	Action         string
+	Reason         string
+	IdempotencyKey string
 }
 
 type SessionControlResult struct {
@@ -32,16 +33,16 @@ type SessionControlResult struct {
 }
 
 type SessionMessageCommand struct {
-	SessionID      string
-	UserID         string
-	Content        string
-	Attachments    []map[string]any
-	FileIDs        []string
-	Context        map[string]any
+	SessionID       string
+	UserID          string
+	Content         string
+	Attachments     []map[string]any
+	FileIDs         []string
+	Context         map[string]any
 	ContextEnvelope map[string]any
-	IdempotencyKey string
-	Metadata       map[string]any
-	SentAt         time.Time
+	IdempotencyKey  string
+	Metadata        map[string]any
+	SentAt          time.Time
 }
 
 type SessionMessageResult struct {
