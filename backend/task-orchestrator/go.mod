@@ -3,7 +3,7 @@ module task-orchestrator
 go 1.26.2
 
 require (
-	github.com/TekkenSteve/GoAgent v0.0.0-20260616160257-4ebd731266c8
+	github.com/TekkenSteve/GoAgent v0.0.0-20260708130355-53a9c91f11aa
 	github.com/jackc/pgx/v5 v5.9.1
 	github.com/redis/go-redis/v9 v9.18.0
 	go.temporal.io/api v1.62.3
@@ -11,8 +11,6 @@ require (
 	google.golang.org/grpc v1.80.0
 	google.golang.org/protobuf v1.36.11
 )
-
-replace github.com/TekkenSteve/GoAgent => ../../../GoAgent
 
 require (
 	cel.dev/expr v0.25.1 // indirect
