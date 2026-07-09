@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TekkenSteve/GoAgent/agentos"
 	agentostemporal "github.com/TekkenSteve/GoAgent/agentos/temporal"
 	tclient "go.temporal.io/sdk/client"
 
 	goagentadapter "task-orchestrator/internal/adapter/goagent"
+	agentosconfig "task-orchestrator/internal/app/agentos"
 	"task-orchestrator/internal/controller/restapi"
 	"task-orchestrator/internal/repo/memory"
 	"task-orchestrator/internal/repo/persistent"
@@ -28,11 +28,6 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	storeCfg := persistent.SessionStoreConfigFromEnv()
 	sessionStore := persistent.NewSessionStore(context.Background(), storeCfg)
 	readModelStore := persistent.NewUsecaseReadModelStore(sessionStore)
-
-	taskQueue := strings.TrimSpace(os.Getenv("TASK_QUEUE"))
-	if taskQueue == "" {
-		taskQueue = "task-workflow-queue"
-	}
 
 	var temporalClient tclient.Client
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("ENABLE_TEMPORAL")), "true") {
@@ -58,30 +53,16 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	var commandSvc usecase.Command
 	var agentRuntime usecase.AgentRuntime
 	if temporalClient != nil {
-		agentWorkflowBackend := usecase.AgentBackendRef{
-			Kind: requiredEnv("AGENT_WORKFLOW_BACKEND_KIND"),
-			Name: requiredEnv("AGENT_WORKFLOW_BACKEND_NAME"),
+		externalRuntime, err := agentosconfig.ExternalRuntimeConfigFromEnv(storeCfg)
+		if err != nil {
+			log.Fatalf("failed to configure GoAgent external runtime: %v", err)
 		}
-		goagentRuntime, err := agentostemporal.NewRuntimeWithClient(context.Background(), agentostemporal.RuntimeConfig{
-			TemporalTaskQueue: taskQueue,
-			RedisURL:          redisURLFromConfig(storeCfg),
-			TemporalExternalBackends: []agentostemporal.ExternalBackendConfig{
-				{
-					Name:         agentWorkflowBackend.Name,
-					TaskQueue:    requiredEnv("AGENT_WORKFLOW_TASK_QUEUE"),
-					WorkflowType: requiredEnv("AGENT_WORKFLOW_TYPE"),
-					QueryType:    "agentos_status",
-					Signals: agentostemporal.ExternalSignalNames{
-						Pause:  "pause",
-						Resume: "resume",
-						Cancel: "cancel",
-						Defaults: map[agentos.SignalType]string{
-							agentos.SignalUserMessage: "user_input",
-						},
-					},
-				},
-			},
-		}, temporalClient, agentostemporal.WithRunBackendIndex(goagentadapter.NewRunBackendIndex(persistent.NewAgentOSRunIndex(sessionStore))))
+		goagentRuntime, err := agentostemporal.NewRuntimeWithClient(
+			context.Background(),
+			&externalRuntime.Runtime,
+			temporalClient,
+			agentostemporal.WithRunBackendIndex(goagentadapter.NewRunBackendIndex(persistent.NewAgentOSRunIndex(sessionStore))),
+		)
 		if err != nil {
 			log.Fatalf("failed to create GoAgent runtime: %v", err)
 		}
@@ -90,7 +71,7 @@ func NewOrchestratorFromEnv() *restapi.Server {
 			taskService,
 			restapi.NewCommandSessionStore(sessionStore),
 			agentRuntime,
-			agentWorkflowBackend,
+			externalRuntime.Backend,
 		)
 		if err != nil {
 			log.Fatalf("failed to create command usecase: %v", err)
@@ -121,14 +102,6 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	return srv
 }
 
-func redisURLFromConfig(cfg persistent.SessionStoreConfig) string {
-	redisURL, err := cfg.RedisURL()
-	if err != nil {
-		log.Fatalf("invalid redis configuration: %v", err)
-	}
-	return redisURL
-}
-
 func defaultPortFromEnv() int {
 	raw := strings.TrimSpace(os.Getenv("PORT"))
 	if raw == "" {
@@ -139,12 +112,4 @@ func defaultPortFromEnv() int {
 		return 50050
 	}
 	return port
-}
-
-func requiredEnv(key string) string {
-	value := strings.TrimSpace(os.Getenv(key))
-	if value == "" {
-		log.Fatalf("%s is required", key)
-	}
-	return value
 }

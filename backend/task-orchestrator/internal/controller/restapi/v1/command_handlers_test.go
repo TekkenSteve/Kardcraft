@@ -723,7 +723,7 @@ func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, _ any
 }
 
 func testAgentBackend() usecase.AgentBackendRef {
-	return usecase.AgentBackendRef{Kind: "temporal_external", Name: "kardcraft-agent-workflow"}
+	return usecase.AgentBackendRef{Kind: "temporal_external", Name: "langgraph"}
 }
 
 func newJSONRequest(method, path, body string) *http.Request {

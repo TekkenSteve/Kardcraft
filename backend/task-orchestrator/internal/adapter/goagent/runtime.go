@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/TekkenSteve/GoAgent/agentos"
+	agentos "github.com/TekkenSteve/GoAgent/agentos/control"
+	agentoscore "github.com/TekkenSteve/GoAgent/agentos/core"
 
 	"task-orchestrator/internal/usecase"
 )
@@ -21,7 +22,7 @@ func (r *Runtime) StartAgentRun(ctx context.Context, req usecase.AgentRunRequest
 	if r == nil || r.runtime == nil {
 		return usecase.AgentRunStatus{}, fmt.Errorf("goagent runtime is required")
 	}
-	status, err := r.runtime.Start(ctx, agentos.RunSpec{
+	status, err := r.runtime.Start(ctx, &agentos.RunSpec{
 		RunID:          req.RunID,
 		ThreadID:       req.ThreadID,
 		AccountID:      req.AccountID,
@@ -49,8 +50,8 @@ func (r *Runtime) SignalAgentRun(ctx context.Context, runID string, signal useca
 	if r == nil || r.runtime == nil {
 		return fmt.Errorf("goagent runtime is required")
 	}
-	return r.runtime.Signal(ctx, runID, agentos.Signal{
-		Type:           agentos.SignalType(signal.Type),
+	return r.runtime.Signal(ctx, runID, &agentoscore.Signal{
+		Type:           agentoscore.SignalType(signal.Type),
 		IdempotencyKey: signal.IdempotencyKey,
 		Payload:        signal.Payload,
 		SentAt:         signal.SentAt,
@@ -61,8 +62,8 @@ func (r *Runtime) ControlAgentRun(ctx context.Context, runID string, control use
 	if r == nil || r.runtime == nil {
 		return fmt.Errorf("goagent runtime is required")
 	}
-	return r.runtime.Control(ctx, runID, agentos.ControlRequest{
-		Operation:      agentos.ControlOperation(control.Operation),
+	return r.runtime.Control(ctx, runID, &agentoscore.ControlRequest{
+		Operation:      agentoscore.ControlOperation(control.Operation),
 		IdempotencyKey: control.IdempotencyKey,
 		RequestedAt:    control.RequestedAt,
 		ActorID:        control.ActorID,
@@ -74,7 +75,7 @@ func (r *Runtime) SubscribeAgentEvents(ctx context.Context, scope usecase.AgentE
 	if r == nil || r.runtime == nil {
 		return nil, fmt.Errorf("goagent runtime is required")
 	}
-	sub, err := r.runtime.Subscribe(ctx, agentos.StreamScope{
+	sub, err := r.runtime.Subscribe(ctx, agentoscore.StreamScope{
 		RunID:         scope.RunID,
 		ThreadID:      scope.ThreadID,
 		AfterSequence: scope.AfterSequence,
@@ -111,7 +112,7 @@ func agentRunStatusFromAgentOS(status agentos.RunStatus) usecase.AgentRunStatus 
 }
 
 type subscription struct {
-	sub agentos.Subscription
+	sub agentoscore.Subscription
 }
 
 func (s *subscription) Events() <-chan usecase.AgentRuntimeEvent {

@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/TekkenSteve/GoAgent/agentos"
+	agentos "github.com/TekkenSteve/GoAgent/agentos/control"
+	agentoscore "github.com/TekkenSteve/GoAgent/agentos/core"
 
 	"task-orchestrator/internal/repo"
 )
@@ -18,22 +19,22 @@ func NewRunBackendIndex(store repo.AgentRunRouteStore) *RunBackendIndex {
 	return &RunBackendIndex{store: store}
 }
 
-func (i *RunBackendIndex) Bind(ctx context.Context, spec agentos.RunSpec, status agentos.RunStatus) error {
+func (i *RunBackendIndex) Bind(ctx context.Context, spec *agentos.RunSpec, status *agentos.RunStatus) error {
 	if i == nil || i.store == nil {
 		return fmt.Errorf("agentos run route store is required")
 	}
 	return i.store.BindAgentRunRoute(ctx, routeFromRunSpec("", "", spec, status))
 }
 
-func (i *RunBackendIndex) BindPlanNode(ctx context.Context, planID, nodeID string, spec agentos.RunSpec, status agentos.RunStatus) error {
+func (i *RunBackendIndex) BindPlanNode(ctx context.Context, planID, nodeID string, spec *agentos.RunSpec, status *agentos.RunStatus) error {
 	if i == nil || i.store == nil {
 		return fmt.Errorf("agentos run route store is required")
 	}
 	if strings.TrimSpace(planID) == "" {
-		return fmt.Errorf("%w: plan id is required", agentos.ErrInvalidRunPlan)
+		return fmt.Errorf("%w: plan id is required", agentoscore.ErrInvalidRunPlan)
 	}
 	if strings.TrimSpace(nodeID) == "" {
-		return fmt.Errorf("%w: node id is required", agentos.ErrInvalidRunPlan)
+		return fmt.Errorf("%w: node id is required", agentoscore.ErrInvalidRunPlan)
 	}
 	return i.store.BindAgentRunRoute(ctx, routeFromRunSpec(planID, nodeID, spec, status))
 }
@@ -58,7 +59,7 @@ func (i *RunBackendIndex) Resolve(ctx context.Context, runID string) (agentos.Ba
 		return agentos.BackendRef{}, err
 	}
 	if !ok {
-		return agentos.BackendRef{}, fmt.Errorf("%w: %s", agentos.ErrRunRouteNotFound, runID)
+		return agentos.BackendRef{}, fmt.Errorf("%w: %s", agentoscore.ErrRunRouteNotFound, runID)
 	}
 	return agentos.BackendRef{
 		Kind: agentos.BackendKind(route.BackendKind),
@@ -66,27 +67,29 @@ func (i *RunBackendIndex) Resolve(ctx context.Context, runID string) (agentos.Ba
 	}, nil
 }
 
-func routeFromRunSpec(planID, nodeID string, spec agentos.RunSpec, status agentos.RunStatus) repo.AgentRunRoute {
-	runID := strings.TrimSpace(status.RunID)
-	if runID == "" {
-		runID = strings.TrimSpace(spec.RunID)
+func routeFromRunSpec(planID, nodeID string, spec *agentos.RunSpec, status *agentos.RunStatus) repo.AgentRunRoute {
+	var route repo.AgentRunRoute
+	if spec != nil {
+		route.RunID = strings.TrimSpace(spec.RunID)
+		route.ThreadID = strings.TrimSpace(spec.ThreadID)
+		route.AccountID = strings.TrimSpace(spec.AccountID)
+		route.ProjectID = strings.TrimSpace(spec.ProjectID)
+		route.BackendKind = strings.TrimSpace(string(spec.Backend.Kind))
+		route.BackendName = strings.TrimSpace(spec.Backend.Name)
+		route.IdempotencyKey = strings.TrimSpace(spec.IdempotencyKey)
 	}
-	lifecycleState := strings.TrimSpace(status.LifecycleState)
-	if lifecycleState == "" {
-		lifecycleState = "created"
+	if status != nil {
+		if runID := strings.TrimSpace(status.RunID); runID != "" {
+			route.RunID = runID
+		}
+		route.LifecycleState = strings.TrimSpace(status.LifecycleState)
 	}
-	return repo.AgentRunRoute{
-		RunID:          runID,
-		PlanID:         strings.TrimSpace(planID),
-		NodeID:         strings.TrimSpace(nodeID),
-		ThreadID:       strings.TrimSpace(spec.ThreadID),
-		AccountID:      strings.TrimSpace(spec.AccountID),
-		ProjectID:      strings.TrimSpace(spec.ProjectID),
-		BackendKind:    strings.TrimSpace(string(spec.Backend.Kind)),
-		BackendName:    strings.TrimSpace(spec.Backend.Name),
-		IdempotencyKey: strings.TrimSpace(spec.IdempotencyKey),
-		LifecycleState: lifecycleState,
+	if route.LifecycleState == "" {
+		route.LifecycleState = "created"
 	}
+	route.PlanID = strings.TrimSpace(planID)
+	route.NodeID = strings.TrimSpace(nodeID)
+	return route
 }
 
 func ownershipFromRoute(route repo.AgentRunRoute) agentos.RunBackendOwnership {

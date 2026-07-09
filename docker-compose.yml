@@ -441,7 +441,6 @@ services:
       - POSTGRES_PASSWORD=postgres123
       - ENABLE_TEMPORAL=true
       - TEMPORAL_ENDPOINT=temporal:7233
-      - AGENT_WORKFLOW_BACKEND_KIND=${AGENT_WORKFLOW_BACKEND_KIND:?AGENT_WORKFLOW_BACKEND_KIND is required}
       - AGENT_WORKFLOW_BACKEND_NAME=${AGENT_WORKFLOW_BACKEND_NAME:?AGENT_WORKFLOW_BACKEND_NAME is required}
       - AGENT_WORKFLOW_TASK_QUEUE=${AGENT_WORKFLOW_TASK_QUEUE:?AGENT_WORKFLOW_TASK_QUEUE is required}
       - AGENT_WORKFLOW_TYPE=${AGENT_WORKFLOW_TYPE:?AGENT_WORKFLOW_TYPE is required}
@@ -464,44 +463,6 @@ services:
     # Distroless image has no shell/wget/curl; disable in-container healthcheck.
     healthcheck:
       disable: true
-    networks:
-      - kardcraft-network
-
-  # Temporal Go Worker - GoAgent native runtime worker
-  go-worker:
-    build:
-      context: ./backend/task-orchestrator
-      dockerfile: Dockerfile
-      additional_contexts:
-        goagent: ${GOAGENT_SOURCE_PATH:-../GoAgent}
-    container_name: kardcraft-go-worker
-    restart: always
-    command: [ "/app/task-worker" ]
-    env_file:
-      - ${PWD}/.env.llm
-    environment:
-      - TEMPORAL_ENDPOINT=temporal:7233
-      - TASK_QUEUE=task-workflow-queue # Go Worker Handle only Workflows
-      - REDIS_HOST=redis
-      - REDIS_PORT=6379
-      - REDIS_PASSWORD=redis123
-      - POSTGRES_HOST=postgres
-      - POSTGRES_PORT=5432
-      - POSTGRES_DB=kardcraft
-      - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=postgres123
-      - POSTGRES_SSLMODE=disable
-      - GOAGENT_LLM_CONFIG_PATH=/app/goagent-llm.yaml
-    volumes:
-      - ./backend/task-orchestrator/config.yaml:/app/config.yaml
-      - ${GOAGENT_LLM_CONFIG_HOST_PATH:?GOAGENT_LLM_CONFIG_HOST_PATH must point to a GoAgent LLM YAML config}:/app/goagent-llm.yaml:ro
-    depends_on:
-      temporal:
-        condition: service_started
-      redis:
-        condition: service_healthy
-      db-migrate:
-        condition: service_completed_successfully
     networks:
       - kardcraft-network
 
