@@ -46,6 +46,17 @@ func (r *Runtime) StartAgentRun(ctx context.Context, req usecase.AgentRunRequest
 	return agentRunStatusFromAgentOS(status), nil
 }
 
+func (r *Runtime) GetAgentRunStatus(ctx context.Context, runID string) (usecase.AgentRunStatus, error) {
+	if r == nil || r.runtime == nil {
+		return usecase.AgentRunStatus{}, fmt.Errorf("goagent runtime is required")
+	}
+	status, err := r.runtime.Status(ctx, runID)
+	if err != nil {
+		return usecase.AgentRunStatus{}, err
+	}
+	return agentRunStatusFromAgentOS(status), nil
+}
+
 func (r *Runtime) SignalAgentRun(ctx context.Context, runID string, signal usecase.AgentSignal) error {
 	if r == nil || r.runtime == nil {
 		return fmt.Errorf("goagent runtime is required")

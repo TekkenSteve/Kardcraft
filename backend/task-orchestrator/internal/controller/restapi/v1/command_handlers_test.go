@@ -16,7 +16,6 @@ import (
 	"task-orchestrator/internal/usecase/command"
 	"task-orchestrator/internal/usecase/readmodel"
 	"task-orchestrator/internal/usecase/task"
-	"task-orchestrator/internal/usecase/workflow"
 )
 
 func TestHandleCreateTaskBoundaries(t *testing.T) {
@@ -638,6 +637,61 @@ func TestHandleTaskControlPassesControlRequestToAgentRuntime(t *testing.T) {
 	}
 }
 
+func TestHandleGetTaskCombinesPersistentDataWithAgentRuntimeStatus(t *testing.T) {
+	startedAt := time.Date(2026, 7, 11, 8, 0, 0, 0, time.UTC)
+	completedAt := startedAt.Add(2 * time.Second)
+	durationMS := completedAt.Sub(startedAt).Milliseconds()
+	readStore := &fakeReadModelStore{
+		ready: true,
+		task: &usecase.TaskRow{
+			TaskID:      "task-1",
+			WorkflowID:  "task-1",
+			Query:       ptrString("generate cards"),
+			Status:      ptrString("running"),
+			TaskType:    ptrString(usecase.TaskTypeMain),
+			Result:      map[string]any{"cards": 2},
+			StartedAt:   &startedAt,
+			CompletedAt: &completedAt,
+			DurationMS:  &durationMS,
+		},
+	}
+	s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), nil, true, readStore)
+	executor.runStatus = usecase.AgentRunStatus{
+		RunID:          "agent-run-1",
+		LifecycleState: "completed",
+		UpdatedAt:      completedAt,
+	}
+	req := newJSONRequest(http.MethodGet, "/api/v1/tasks/task-1", "")
+	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
+	rr := httptest.NewRecorder()
+
+	s.Handler().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rr.Code, rr.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["status"] != "completed" {
+		t.Fatalf("expected AgentOS lifecycle status, got %#v", body["status"])
+	}
+	if body["run_id"] != "agent-run-1" {
+		t.Fatalf("expected AgentOS run ID, got %#v", body["run_id"])
+	}
+	if body["query"] != "generate cards" {
+		t.Fatalf("expected persisted query, got %#v", body["query"])
+	}
+	if body["duration_ms"] != float64(durationMS) {
+		t.Fatalf("expected persisted duration, got %#v", body["duration_ms"])
+	}
+	result, ok := body["result"].(map[string]any)
+	if !ok || result["cards"] != float64(2) {
+		t.Fatalf("expected persisted result, got %#v", body["result"])
+	}
+}
+
 func TestHandleTaskPlannerTrace(t *testing.T) {
 	taskID := "task-trace-1"
 	streamID := "planner_trace:task-trace-1:001"
@@ -678,17 +732,17 @@ func TestHandleTaskPlannerTrace(t *testing.T) {
 	}
 }
 
-func newCommandTestServer(store *fakeCommandStore, _ any, temporalEnabled bool) *Server {
-	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, nil, temporalEnabled, nil)
+func newCommandTestServer(store *fakeCommandStore, _ any, agentRuntimeAvailable bool) *Server {
+	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, nil, agentRuntimeAvailable, nil)
 	return s
 }
 
-func newCommandTestServerWithReadStore(store *fakeCommandStore, _ any, temporalEnabled bool, readStore *fakeReadModelStore) *Server {
-	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, nil, temporalEnabled, readStore)
+func newCommandTestServerWithReadStore(store *fakeCommandStore, _ any, agentRuntimeAvailable bool, readStore *fakeReadModelStore) *Server {
+	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, nil, agentRuntimeAvailable, readStore)
 	return s
 }
 
-func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, _ any, temporalEnabled bool, readStore *fakeReadModelStore) (*Server, *fakeAgentExecutor) {
+func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, _ any, agentRuntimeAvailable bool, readStore *fakeReadModelStore) (*Server, *fakeAgentExecutor) {
 	if readStore == nil {
 		readStore = &fakeReadModelStore{ready: true}
 	}
@@ -701,22 +755,22 @@ func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, _ any
 		panic(err)
 	}
 
-	enabled := &fakeWorkflowRuntime{enabled: temporalEnabled}
 	readModel := readmodel.New(readStore)
 	s := &Server{
 		mux:                     http.NewServeMux(),
 		taskService:             taskService,
 		commandService:          commandService,
 		readModel:               readModel,
-		workflowSvc:             workflow.New(enabled, &fakeReadModelStore{ready: true}),
 		defaultModelRef:         "test-model",
 		timelineByWorkflow:      make(map[string][]TimelineEvent),
-		uploads:                 make(map[string]*uploadState),
 		subscribers:             make(map[string]map[int]chan OutboundEvent),
 		streamReaders:           make(map[string]context.CancelFunc),
 		seenStreamIDs:           make(map[string]map[string]struct{}),
 		runSeqByRunID:           make(map[string]int64),
 		workflowRunByWorkflowID: make(map[string]string),
+	}
+	if agentRuntimeAvailable {
+		s.agentRuntime = agentExecutor
 	}
 	s.registerRoutes()
 	return s, agentExecutor
@@ -818,6 +872,7 @@ func (f *fakeCommandStore) EnsureSessionAccess(ctx context.Context, sessionID, u
 
 type fakeAgentExecutor struct {
 	runID           string
+	runStatus       usecase.AgentRunStatus
 	lastReq         *usecase.AgentRunRequest
 	lastControl     *usecase.AgentControlRequest
 	lastSignalRunID string
@@ -831,6 +886,16 @@ func (f *fakeAgentExecutor) StartAgentRun(ctx context.Context, req usecase.Agent
 		runID = req.RunID
 	}
 	return usecase.AgentRunStatus{RunID: runID, LifecycleState: "created", UpdatedAt: time.Now().UTC()}, nil
+}
+
+func (f *fakeAgentExecutor) GetAgentRunStatus(ctx context.Context, runID string) (usecase.AgentRunStatus, error) {
+	if strings.TrimSpace(runID) == "" {
+		return usecase.AgentRunStatus{}, errors.New("run ID is required")
+	}
+	if f.runStatus.RunID != "" {
+		return f.runStatus, nil
+	}
+	return usecase.AgentRunStatus{RunID: runID, LifecycleState: "running", UpdatedAt: time.Now().UTC()}, nil
 }
 
 func (f *fakeAgentExecutor) ControlAgentRun(ctx context.Context, runID string, control usecase.AgentControlRequest) error {
@@ -848,36 +913,9 @@ func (f *fakeAgentExecutor) SubscribeAgentEvents(ctx context.Context, scope usec
 	return nil, errors.New("not implemented")
 }
 
-type fakeWorkflowRuntime struct {
-	enabled bool
-}
-
-func (f *fakeWorkflowRuntime) Enabled() bool { return f.enabled }
-func (f *fakeWorkflowRuntime) DescribeWorkflow(ctx context.Context, workflowID, runID string) (*usecase.WorkflowDescription, error) {
-	resolvedRunID := strings.TrimSpace(runID)
-	if resolvedRunID == "" {
-		resolvedRunID = "run-test"
-	}
-	now := time.Now().UTC()
-	return &usecase.WorkflowDescription{
-		WorkflowID: workflowID,
-		RunID:      resolvedRunID,
-		Status:     "TASK_STATUS_RUNNING",
-		StartTime:  now,
-	}, nil
-}
-func (f *fakeWorkflowRuntime) GetWorkflowResult(ctx context.Context, workflowID, runID string) (any, error) {
-	return nil, errors.New("not implemented")
-}
-func (f *fakeWorkflowRuntime) CancelWorkflow(ctx context.Context, workflowID string) error {
-	return nil
-}
-func (f *fakeWorkflowRuntime) ListWorkflowHistory(ctx context.Context, workflowID string) ([]usecase.WorkflowHistoryEvent, error) {
-	return nil, nil
-}
-
 type fakeReadModelStore struct {
 	ready          bool
+	task           *usecase.TaskRow
 	sessionTasks   []usecase.TaskRow
 	sessionEvents  []usecase.EventRow
 	workspace      map[string]any
@@ -912,6 +950,12 @@ func (f *fakeReadModelStore) ListSessions(ctx context.Context, userID string, li
 }
 func (f *fakeReadModelStore) GetSession(ctx context.Context, sessionID, userID string) (*usecase.SessionRow, error) {
 	return &usecase.SessionRow{SessionID: sessionID, UserID: userID}, nil
+}
+func (f *fakeReadModelStore) GetTask(ctx context.Context, taskID, userID string) (*usecase.TaskRow, error) {
+	if f.task != nil {
+		return f.task, nil
+	}
+	return nil, errors.New("task not found")
 }
 func (f *fakeReadModelStore) UpdateSessionMeta(ctx context.Context, sessionID, userID string, title *string, pinned *bool) error {
 	return nil

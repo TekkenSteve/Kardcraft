@@ -40,6 +40,15 @@ func (s *UsecaseReadModelStore) GetSession(ctx context.Context, sessionID, userI
 	return &converted, nil
 }
 
+func (s *UsecaseReadModelStore) GetTask(ctx context.Context, taskID, userID string) (*usecase.TaskRow, error) {
+	row, err := s.store.GetTask(ctx, taskID, userID)
+	if err != nil || row == nil {
+		return nil, err
+	}
+	converted := convertTaskRow(*row)
+	return &converted, nil
+}
+
 func (s *UsecaseReadModelStore) UpdateSessionMeta(ctx context.Context, sessionID, userID string, title *string, pinned *bool) error {
 	return s.store.UpdateSessionMeta(ctx, sessionID, userID, title, pinned)
 }

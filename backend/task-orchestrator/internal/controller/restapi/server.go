@@ -16,7 +16,6 @@ type ServerDependencies struct {
 	TaskService     usecase.Task
 	CommandService  usecase.Command
 	ReadModel       usecase.ReadModel
-	WorkflowSvc     usecase.Workflow
 	SessionStore    v1.SessionLifecycleStore
 	DefaultModelRef string
 	AgentRuntime    usecase.AgentRuntime
@@ -31,7 +30,6 @@ func NewServer(port int, deps ServerDependencies) *Server {
 		TaskService:     deps.TaskService,
 		CommandService:  deps.CommandService,
 		ReadModel:       deps.ReadModel,
-		WorkflowSvc:     deps.WorkflowSvc,
 		SessionStore:    deps.SessionStore,
 		DefaultModelRef: deps.DefaultModelRef,
 		AgentRuntime:    deps.AgentRuntime,

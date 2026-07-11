@@ -22,6 +22,9 @@ func (s *UseCase) ListSessions(ctx context.Context, userID string, limit, offset
 func (s *UseCase) GetSession(ctx context.Context, sessionID, userID string) (*usecase.SessionRow, error) {
 	return s.store.GetSession(ctx, sessionID, userID)
 }
+func (s *UseCase) GetTask(ctx context.Context, taskID, userID string) (*usecase.TaskRow, error) {
+	return s.store.GetTask(ctx, taskID, userID)
+}
 func (s *UseCase) UpdateSessionMeta(ctx context.Context, sessionID, userID string, title *string, pinned *bool) error {
 	return s.store.UpdateSessionMeta(ctx, sessionID, userID, title, pinned)
 }

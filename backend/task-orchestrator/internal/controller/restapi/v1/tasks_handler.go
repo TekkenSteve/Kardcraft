@@ -16,10 +16,10 @@ type TasksDeps struct {
 	TaskService     usecase.Task
 	CommandService  usecase.Command
 	ReadModel       usecase.ReadModel
-	WorkflowSvc     usecase.Workflow
+	AgentRuntime    usecase.AgentRuntime
 	DefaultModelRef string
 
-	IsTemporalEnabled          func() bool
+	IsAgentRuntimeAvailable    func() bool
 	NextWorkflowID             func(taskType string) string
 	EnsureWorkflowStreamReader func(workflowID string)
 	AppendTimelineWithStreamID func(workflowID, sessionID, eventType, message, streamID string, payload any)

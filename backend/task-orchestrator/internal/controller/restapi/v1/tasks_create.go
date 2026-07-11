@@ -61,8 +61,8 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 			http.Error(w, "template_id is required", http.StatusBadRequest)
 			return
 		}
-		if !deps.IsTemporalEnabled() {
-			http.Error(w, "temporal not enabled", http.StatusServiceUnavailable)
+		if !deps.IsAgentRuntimeAvailable() {
+			http.Error(w, "agent runtime unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		if deps.ReadModel == nil || !deps.ReadModel.Ready() {
@@ -190,8 +190,8 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 	if taskQuery == "" && taskType == usecase.TaskTypeCardTemplate {
 		taskQuery = fmt.Sprintf("template:%s", strings.TrimSpace(req.Input.TemplateID))
 	}
-	if !deps.IsTemporalEnabled() {
-		http.Error(w, "temporal not enabled", http.StatusServiceUnavailable)
+	if !deps.IsAgentRuntimeAvailable() {
+		http.Error(w, "agent runtime unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if deps.ReadModel == nil || !deps.ReadModel.Ready() {

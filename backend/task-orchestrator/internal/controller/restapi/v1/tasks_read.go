@@ -78,41 +78,87 @@ func handleGetTask(w http.ResponseWriter, r *http.Request, taskID string, deps T
 		deps.WriteAPIError(w, http.StatusForbidden, deps.AuthzDeniedCode, "access denied for task resource", map[string]any{"task_id": taskID})
 		return
 	}
-	if deps.WorkflowSvc == nil || !deps.WorkflowSvc.Enabled() {
-		http.Error(w, "temporal not enabled", http.StatusServiceUnavailable)
+	if deps.ReadModel == nil || !deps.ReadModel.Ready() {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	desc, err := deps.WorkflowSvc.DescribeWorkflow(r.Context(), taskID, "")
+	if deps.AgentRuntime == nil {
+		http.Error(w, "agent runtime unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	task, err := deps.ReadModel.GetTask(r.Context(), taskID, userID)
 	if err != nil {
 		http.Error(w, "task not found", http.StatusNotFound)
 		return
 	}
+	status, err := deps.AgentRuntime.GetAgentRunStatus(r.Context(), taskID)
+	if err != nil {
+		http.Error(w, "failed to retrieve agent run status", http.StatusBadGateway)
+		return
+	}
 	sessionID := ""
-	if sid, err := deps.WorkflowSvc.ResolveTaskSession(r.Context(), taskID); err == nil {
+	if sid, err := deps.ReadModel.GetTaskSession(r.Context(), taskID); err == nil {
 		sessionID = sid
 	}
 	response := map[string]any{
-		"workflow_id": taskID,
-		"run_id":      desc.RunID,
+		"workflow_id": task.WorkflowID,
+		"run_id":      firstNonEmptyString(status.RunID, taskID),
 		"task_id":     taskID,
-		"task_type":   "main",
-		"query":       "",
-		"status":      desc.Status,
-		"created_at":  desc.StartTime.UTC().Format(time.RFC3339),
+		"task_type":   valueFromPtr(task.TaskType),
+		"query":       valueFromPtr(task.Query),
+		"status":      taskStatusFromAgentLifecycle(status.LifecycleState, valueFromPtr(task.Status)),
 		"session_id":  sessionID,
 		"metadata": map[string]any{
 			"task_context": map[string]any{},
 		},
 	}
-	if desc.CloseTime != nil {
-		response["finished_at"] = desc.CloseTime.UTC().Format(time.RFC3339)
+	if task.StartedAt != nil {
+		response["created_at"] = task.StartedAt.UTC().Format(time.RFC3339)
 	}
-	if desc.Status == "TASK_STATUS_COMPLETED" {
-		if result, err := deps.WorkflowSvc.GetWorkflowResult(r.Context(), taskID, desc.RunID); err == nil {
-			response["result"] = result
-		}
+	if task.CompletedAt != nil {
+		response["finished_at"] = task.CompletedAt.UTC().Format(time.RFC3339)
+	}
+	if task.Result != nil {
+		response["result"] = task.Result
+		response["final_output"] = task.Result
+	}
+	if task.Error != nil {
+		response["error_message"] = *task.Error
+	}
+	if task.DurationMS != nil {
+		response["duration_ms"] = *task.DurationMS
 	}
 	deps.WriteJSON(w, http.StatusOK, response)
+}
+
+func taskStatusFromAgentLifecycle(lifecycle, persisted string) string {
+	switch strings.ToLower(strings.TrimSpace(lifecycle)) {
+	case "completed", "succeeded":
+		return "completed"
+	case "failed":
+		return "failed"
+	case "cancelled", "canceled":
+		return "cancelled"
+	case "queued", "created", "pending":
+		return "queued"
+	case "running", "paused":
+		return "running"
+	}
+	switch strings.ToLower(strings.TrimSpace(persisted)) {
+	case "completed", "failed", "cancelled", "queued", "running":
+		return strings.ToLower(strings.TrimSpace(persisted))
+	default:
+		return "queued"
+	}
+}
+
+func firstNonEmptyString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func handleTaskControl(w http.ResponseWriter, r *http.Request, taskID string, action string, deps TasksDeps) {
@@ -154,11 +200,15 @@ func handleTaskControl(w http.ResponseWriter, r *http.Request, taskID string, ac
 		http.Error(w, "command service unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if deps.WorkflowSvc == nil || !deps.WorkflowSvc.Enabled() {
-		http.Error(w, "temporal not enabled", http.StatusServiceUnavailable)
+	if deps.AgentRuntime == nil {
+		http.Error(w, "agent runtime unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	sessionID, err := deps.WorkflowSvc.ResolveTaskSession(r.Context(), taskID)
+	if deps.ReadModel == nil || !deps.ReadModel.Ready() {
+		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	sessionID, err := deps.ReadModel.GetTaskSession(r.Context(), taskID)
 	if err != nil {
 		deps.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error(), "workflow_id": taskID})
 		return
@@ -202,9 +252,9 @@ func appendControlTimelineEvent(ctx context.Context, taskID, action, reason, req
 		}
 	}
 	runID := ""
-	if deps.WorkflowSvc != nil && deps.WorkflowSvc.Enabled() {
-		if desc, err := deps.WorkflowSvc.DescribeWorkflow(ctx, taskID, ""); err == nil {
-			runID = strings.TrimSpace(desc.RunID)
+	if deps.AgentRuntime != nil {
+		if status, err := deps.AgentRuntime.GetAgentRunStatus(ctx, taskID); err == nil {
+			runID = strings.TrimSpace(status.RunID)
 		}
 	}
 	streamID := deterministicControlStreamID(taskID, action, idempotencyKey)
@@ -310,24 +360,29 @@ func handleTaskPlannerTrace(w http.ResponseWriter, r *http.Request, taskID strin
 }
 
 func handleTaskControlState(w http.ResponseWriter, r *http.Request, taskID string, deps TasksDeps) {
-	if deps.WorkflowSvc == nil || !deps.WorkflowSvc.Enabled() {
-		http.Error(w, "temporal not enabled", http.StatusServiceUnavailable)
+	if deps.AgentRuntime == nil {
+		http.Error(w, "agent runtime unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	isPaused := false
-	isCancelled := false
+	status, err := deps.AgentRuntime.GetAgentRunStatus(r.Context(), taskID)
+	if err != nil {
+		http.Error(w, "failed to retrieve agent run status", http.StatusBadGateway)
+		return
+	}
+	lifecycle := strings.ToLower(strings.TrimSpace(status.LifecycleState))
+	isPaused := lifecycle == "paused"
+	isCancelled := lifecycle == "cancelled" || lifecycle == "canceled"
 	pausedAt := ""
+	if isPaused && !status.UpdatedAt.IsZero() {
+		pausedAt = status.UpdatedAt.UTC().Format(time.RFC3339)
+	}
 	pauseReason := ""
 	cancelReason := ""
-	st, err := deps.WorkflowSvc.QueryControlState(r.Context(), taskID)
-	if err == nil && st != nil {
-		isPaused = st.IsPaused
-		isCancelled = st.IsCancelled
-		if st.PausedAt != nil {
-			pausedAt = st.PausedAt.UTC().Format(time.RFC3339)
-		}
-		pauseReason = st.PauseReason
-		cancelReason = st.CancelReason
+	if isPaused {
+		pauseReason = status.Reason
+	}
+	if isCancelled {
+		cancelReason = status.Reason
 	}
 	userID := deps.UserID(r)
 	deps.WriteJSON(w, http.StatusOK, map[string]any{

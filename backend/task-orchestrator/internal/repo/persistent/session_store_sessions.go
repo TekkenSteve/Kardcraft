@@ -246,3 +246,33 @@ func (s *SessionStore) ListSessionTasks(ctx context.Context, sessionID, userID s
 	s.touchSessionActivity(ctx, sessionID, userID)
 	return tasks, nil
 }
+
+func (s *SessionStore) GetTask(ctx context.Context, taskID, userID string) (*TaskRow, error) {
+	if s == nil || s.pg == nil {
+		return nil, fmt.Errorf("postgres not configured")
+	}
+	row := TaskRow{}
+	err := s.pg.QueryRow(ctx, `
+        SELECT task_id, task_id AS workflow_id, query, status, task_type, result, error_message, created_at, completed_at
+        FROM kc_tasks
+        WHERE task_id = $1 AND user_id = $2
+    `, taskID, userID).Scan(
+		&row.TaskID,
+		&row.WorkflowID,
+		&row.Query,
+		&row.Status,
+		&row.TaskType,
+		&row.Result,
+		&row.Error,
+		&row.StartedAt,
+		&row.CompletedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	if row.StartedAt != nil && row.CompletedAt != nil {
+		duration := row.CompletedAt.Sub(*row.StartedAt).Milliseconds()
+		row.DurationMS = &duration
+	}
+	return &row, nil
+}

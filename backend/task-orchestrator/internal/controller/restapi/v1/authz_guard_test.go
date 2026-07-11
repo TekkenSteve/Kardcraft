@@ -42,57 +42,6 @@ func TestHandleGetTask_ReturnsAuthzDeniedWithoutOwnership(t *testing.T) {
 	}
 }
 
-func TestWorkflowStatus_ReturnsAuthzDeniedWithoutOwnership(t *testing.T) {
-	s := newAuthzRouteServer()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/status?workflow_id=wf-1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
-	rr := httptest.NewRecorder()
-
-	s.Handler().ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rr.Code)
-	}
-	payload := decodeAPIErrorBody(t, rr.Body.String())
-	if payload.Error.Code != errCodeAuthzDenied {
-		t.Fatalf("expected %s, got %s", errCodeAuthzDenied, payload.Error.Code)
-	}
-}
-
-func TestWorkflowCancel_ReturnsAuthzDeniedWithoutOwnership(t *testing.T) {
-	s := newAuthzRouteServer()
-	req := httptest.NewRequest(http.MethodPost, "/api/v1/workflows/cancel", strings.NewReader(`{"workflow_id":"wf-1","reason":"x"}`))
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
-	rr := httptest.NewRecorder()
-
-	s.Handler().ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rr.Code)
-	}
-	payload := decodeAPIErrorBody(t, rr.Body.String())
-	if payload.Error.Code != errCodeAuthzDenied {
-		t.Fatalf("expected %s, got %s", errCodeAuthzDenied, payload.Error.Code)
-	}
-}
-
-func TestWorkflowHistory_ReturnsAuthzDeniedWithoutOwnership(t *testing.T) {
-	s := newAuthzRouteServer()
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/workflows/history?workflow_id=wf-1", nil)
-	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
-	rr := httptest.NewRecorder()
-
-	s.Handler().ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rr.Code)
-	}
-	payload := decodeAPIErrorBody(t, rr.Body.String())
-	if payload.Error.Code != errCodeAuthzDenied {
-		t.Fatalf("expected %s, got %s", errCodeAuthzDenied, payload.Error.Code)
-	}
-}
-
 func TestTaskControl_ReturnsAuthzDeniedWithoutOwnership(t *testing.T) {
 	s := newAuthzRouteServer()
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/tasks/task-1/pause", strings.NewReader(`{"reason":"x"}`))

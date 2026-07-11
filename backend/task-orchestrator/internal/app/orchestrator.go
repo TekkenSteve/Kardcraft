@@ -21,7 +21,6 @@ import (
 	"task-orchestrator/internal/usecase/command"
 	"task-orchestrator/internal/usecase/readmodel"
 	"task-orchestrator/internal/usecase/task"
-	"task-orchestrator/internal/usecase/workflow"
 )
 
 func NewOrchestratorFromEnv() *restapi.Server {
@@ -48,8 +47,6 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	taskService := task.New(taskRepo, publisher, nil)
 
 	readModel := readmodel.New(readModelStore)
-	workflowSvc := workflow.New(restapi.NewTemporalWorkflowRuntime(temporalClient), readModelStore)
-
 	var commandSvc usecase.Command
 	var agentRuntime usecase.AgentRuntime
 	if temporalClient != nil {
@@ -92,7 +89,6 @@ func NewOrchestratorFromEnv() *restapi.Server {
 		TaskService:     taskService,
 		CommandService:  commandSvc,
 		ReadModel:       readModel,
-		WorkflowSvc:     workflowSvc,
 		SessionStore:    sessionStore,
 		DefaultModelRef: strings.TrimSpace(os.Getenv("GOAGENT_MODEL_REF")),
 		AgentRuntime:    agentRuntime,

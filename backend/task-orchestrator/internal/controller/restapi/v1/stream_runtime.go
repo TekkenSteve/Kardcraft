@@ -215,16 +215,16 @@ func (s *Server) resolveRunID(ctx context.Context, workflowID string, payload an
 	if runID != "" {
 		return runID
 	}
-	if s.workflowSvc == nil || !s.workflowSvc.Enabled() {
+	if s.agentRuntime == nil {
 		return ""
 	}
 	descCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	desc, err := s.workflowSvc.DescribeWorkflow(descCtx, workflowID, "")
-	if err != nil || desc == nil {
+	status, err := s.agentRuntime.GetAgentRunStatus(descCtx, workflowID)
+	if err != nil {
 		return ""
 	}
-	runID = strings.TrimSpace(desc.RunID)
+	runID = strings.TrimSpace(status.RunID)
 	if runID != "" {
 		s.bindWorkflowRunID(workflowID, runID)
 	}

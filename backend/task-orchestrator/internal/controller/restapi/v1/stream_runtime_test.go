@@ -166,7 +166,6 @@ func TestBuildUsageLedgerRowAcceptsUnknownFieldsForForwardCompatibility(t *testi
 func newTestServer() *Server {
 	return &Server{
 		timelineByWorkflow:      make(map[string][]TimelineEvent),
-		uploads:                 make(map[string]*uploadState),
 		subscribers:             make(map[string]map[int]chan OutboundEvent),
 		streamReaders:           make(map[string]context.CancelFunc),
 		seenStreamIDs:           make(map[string]map[string]struct{}),

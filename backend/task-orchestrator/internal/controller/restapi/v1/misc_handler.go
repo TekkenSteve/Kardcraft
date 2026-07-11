@@ -1,10 +1,8 @@
 package v1
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
-	"time"
 )
 
 type HealthDeps struct {
@@ -58,31 +56,6 @@ func NewRootHandler(deps RootDeps) http.HandlerFunc {
 			"port":    deps.Port,
 			"time":    deps.NowRFC3339(),
 			"status":  "running",
-		})
-	}
-}
-
-type AgentsDeps struct {
-	WriteJSON  func(w http.ResponseWriter, status int, v any)
-	NowRFC3339 func() string
-}
-
-func NewAgentsHandler(deps AgentsDeps) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodPost {
-			deps.WriteJSON(w, http.StatusOK, map[string]any{
-				"agent_id":   fmt.Sprintf("agent_%d", time.Now().UTC().Unix()),
-				"name":       "test-agent",
-				"status":     "AGENT_STATUS_ACTIVE",
-				"message":    "Agent created successfully",
-				"created_at": deps.NowRFC3339(),
-			})
-			return
-		}
-		deps.WriteJSON(w, http.StatusOK, map[string]any{
-			"agents":      []any{},
-			"total_count": 0,
-			"message":     "Agent service is running",
 		})
 	}
 }

@@ -14,13 +14,13 @@ import (
 )
 
 type SessionMessageHTTPBody struct {
-	Content        string         `json:"content"`
-	Attachments    []Attachment   `json:"attachments,omitempty"`
-	FileIDs        []string       `json:"file_ids,omitempty"`
-	Context        map[string]any `json:"context,omitempty"`
+	Content         string         `json:"content"`
+	Attachments     []Attachment   `json:"attachments,omitempty"`
+	FileIDs         []string       `json:"file_ids,omitempty"`
+	Context         map[string]any `json:"context,omitempty"`
 	ContextEnvelope map[string]any `json:"context_envelope,omitempty"`
-	Metadata       map[string]any `json:"metadata,omitempty"`
-	IdempotencyKey string         `json:"idempotency_key,omitempty"`
+	Metadata        map[string]any `json:"metadata,omitempty"`
+	IdempotencyKey  string         `json:"idempotency_key,omitempty"`
 }
 
 func handleSessionMessages(w http.ResponseWriter, r *http.Request, sessionID string, deps SessionsDeps) {
@@ -32,8 +32,8 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request, sessionID str
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	if !deps.IsTemporalEnabled() {
-		http.Error(w, "temporal not enabled", http.StatusServiceUnavailable)
+	if !deps.IsAgentRuntimeAvailable() {
+		http.Error(w, "agent runtime unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if deps.CommandService == nil {
@@ -70,16 +70,16 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request, sessionID str
 	req.ContextEnvelope["correlation_id"] = idempotencyKey
 	sentAt := time.Now().UTC()
 	result, err := deps.CommandService.SendMessageToSession(r.Context(), usecase.SessionMessageCommand{
-		SessionID:      sessionID,
-		UserID:         userID,
-		Content:        content,
-		Attachments:    attachments,
-		FileIDs:        fileIDs,
-		Context:        req.Context,
+		SessionID:       sessionID,
+		UserID:          userID,
+		Content:         content,
+		Attachments:     attachments,
+		FileIDs:         fileIDs,
+		Context:         req.Context,
 		ContextEnvelope: req.ContextEnvelope,
-		Metadata:       req.Metadata,
-		IdempotencyKey: idempotencyKey,
-		SentAt:         sentAt,
+		Metadata:        req.Metadata,
+		IdempotencyKey:  idempotencyKey,
+		SentAt:          sentAt,
 	})
 	if err != nil {
 		if errors.Is(err, usecase.ErrNoActiveTask) {

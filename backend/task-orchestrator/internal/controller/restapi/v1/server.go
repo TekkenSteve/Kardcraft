@@ -40,52 +40,6 @@ type TimelineEvent struct {
 	Payload    any    `json:"payload,omitempty"`
 }
 
-type ScheduleInfo struct {
-	ScheduleID        string         `json:"schedule_id"`
-	Name              string         `json:"name"`
-	Description       string         `json:"description,omitempty"`
-	CronExpression    string         `json:"cron_expression"`
-	Timezone          string         `json:"timezone"`
-	TaskQuery         string         `json:"task_query"`
-	TaskContext       map[string]any `json:"task_context,omitempty"`
-	Status            string         `json:"status"`
-	NextRunAt         string         `json:"next_run_at,omitempty"`
-	LastRunAt         string         `json:"last_run_at,omitempty"`
-	TotalRuns         int            `json:"total_runs"`
-	SuccessfulRuns    int            `json:"successful_runs"`
-	FailedRuns        int            `json:"failed_runs"`
-	MaxBudgetPerRunUS float64        `json:"max_budget_per_run_usd,omitempty"`
-	TimeoutSeconds    int            `json:"timeout_seconds,omitempty"`
-	CreatedAt         string         `json:"created_at"`
-}
-
-type ScheduleRun struct {
-	WorkflowID   string  `json:"workflow_id"`
-	Query        string  `json:"query"`
-	Status       string  `json:"status"`
-	Result       string  `json:"result,omitempty"`
-	ErrorMessage string  `json:"error_message,omitempty"`
-	ModelUsed    string  `json:"model_used,omitempty"`
-	Provider     string  `json:"provider,omitempty"`
-	TotalTokens  int     `json:"total_tokens"`
-	TotalCostUSD float64 `json:"total_cost_usd"`
-	DurationMS   int64   `json:"duration_ms,omitempty"`
-	TriggeredAt  string  `json:"triggered_at"`
-	StartedAt    string  `json:"started_at,omitempty"`
-	CompletedAt  string  `json:"completed_at,omitempty"`
-}
-
-type uploadState struct {
-	UploadID    string `json:"upload_id"`
-	Status      string `json:"status"`
-	FileName    string `json:"file_name"`
-	Chunks      int    `json:"chunks"`
-	Received    int    `json:"received"`
-	SessionID   string `json:"session_id,omitempty"`
-	CreatedAt   string `json:"created_at"`
-	CompletedAt string `json:"completed_at,omitempty"`
-}
-
 type Server struct {
 	port           int
 	httpServer     *http.Server
@@ -99,13 +53,11 @@ type Server struct {
 	taskService     usecase.Task
 	commandService  usecase.Command
 	readModel       usecase.ReadModel
-	workflowSvc     usecase.Workflow
 	sessionStore    SessionLifecycleStore
 	defaultModelRef string
 
 	mu                 sync.RWMutex
 	timelineByWorkflow map[string][]TimelineEvent
-	uploads            map[string]*uploadState
 
 	subscribers             map[string]map[int]chan OutboundEvent
 	streamReaders           map[string]context.CancelFunc
@@ -129,7 +81,6 @@ type ServerDependencies struct {
 	TaskService     usecase.Task
 	CommandService  usecase.Command
 	ReadModel       usecase.ReadModel
-	WorkflowSvc     usecase.Workflow
 	SessionStore    SessionLifecycleStore
 	DefaultModelRef string
 	AgentRuntime    usecase.AgentRuntime
@@ -159,11 +110,9 @@ func NewServer(port int, deps ServerDependencies) *Server {
 		taskService:             deps.TaskService,
 		commandService:          deps.CommandService,
 		readModel:               deps.ReadModel,
-		workflowSvc:             deps.WorkflowSvc,
 		sessionStore:            deps.SessionStore,
 		defaultModelRef:         strings.TrimSpace(deps.DefaultModelRef),
 		timelineByWorkflow:      make(map[string][]TimelineEvent),
-		uploads:                 make(map[string]*uploadState),
 		subscribers:             make(map[string]map[int]chan OutboundEvent),
 		streamReaders:           make(map[string]context.CancelFunc),
 		seenStreamIDs:           make(map[string]map[string]struct{}),
@@ -230,8 +179,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 func (s *Server) registerRoutes() {
 	s.registerTaskRoutes()
 	s.registerSessionAndTemplateRoutes()
-	s.registerWorkflowRoutes()
-	s.registerUploadRoutes()
 	s.registerMiscRoutes()
 }
 
@@ -247,8 +194,8 @@ func (s *Server) nextWorkflowID(taskType string) string {
 	return fmt.Sprintf("workflow_%s_%d", name, time.Now().UTC().UnixNano())
 }
 
-func (s *Server) isTemporalEnabled() bool {
-	return s.workflowSvc != nil && s.workflowSvc.Enabled()
+func (s *Server) isAgentRuntimeAvailable() bool {
+	return s.agentRuntime != nil
 }
 
 func (s *Server) authorizeTaskAccess(ctx context.Context, userID string, taskID string) bool {

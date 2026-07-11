@@ -12,7 +12,6 @@ This file tracks interface coverage for the DDD refactor of `backend/task-orches
 - `POST /api/v1/tasks/{task_id}/cancel`
 - `GET /api/v1/tasks/{task_id}/control-state`
 
-- `POST /api/v1/events`
 - `GET /api/v1/stream/sse`
 
 - `GET /api/v1/sessions`
@@ -46,19 +45,7 @@ This file tracks interface coverage for the DDD refactor of `backend/task-orches
 - `GET /api/v1/schedules/{schedule_id}/runs`
 
 - `POST /api/v1/cards/{session_id}/bulk`
-- `POST/DELETE /api/v1/cards/{session_id}/{card_id}/lock` (compat stub)
-- `POST /api/v1/cards/{session_id}/{card_id}/edit` (compat stub)
 
-- `GET /api/v1/workflows/status`
-- `POST /api/v1/workflows/cancel`
-- `GET /api/v1/workflows/history`
-
-- `POST /api/v1/files/upload/init`
-- `POST /api/v1/files/upload/chunk/{upload_id}/{chunk_number}`
-- `POST /api/v1/files/upload/complete/{upload_id}`
-- `GET /api/v1/files/upload/status/{upload_id}`
-
-- `GET/POST /api/agents`
 - `GET /health`
 - `GET /health/task-orchestrator`
 - `GET /`

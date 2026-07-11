@@ -32,6 +32,7 @@ type (
 		Ready() bool
 		ListSessions(ctx context.Context, userID string, limit, offset int) ([]SessionRow, int, error)
 		GetSession(ctx context.Context, sessionID, userID string) (*SessionRow, error)
+		GetTask(ctx context.Context, taskID, userID string) (*TaskRow, error)
 		UpdateSessionMeta(ctx context.Context, sessionID, userID string, title *string, pinned *bool) error
 		DeleteSession(ctx context.Context, sessionID, userID string) (int64, error)
 		ListSessionTasks(ctx context.Context, sessionID, userID string) ([]TaskRow, error)
@@ -53,16 +54,6 @@ type (
 		InsertLLMUsage(ctx context.Context, row UsageLedgerRow) (bool, error)
 	}
 
-	Workflow interface {
-		Enabled() bool
-		DescribeWorkflow(ctx context.Context, workflowID, runID string) (*WorkflowDescription, error)
-		GetWorkflowResult(ctx context.Context, workflowID, runID string) (any, error)
-		ResolveTaskSession(ctx context.Context, taskID string) (string, error)
-		QueryControlState(ctx context.Context, taskID string) (*WorkflowState, error)
-		CancelWorkflow(ctx context.Context, workflowID, reason string) error
-		ListHistory(ctx context.Context, workflowID string) ([]WorkflowHistoryEvent, error)
-	}
-
 	CommandSessionStore interface {
 		UpsertSession(ctx context.Context, sessionID, userID, latestQuery, latestStatus string) error
 		InsertTaskIfNoActive(ctx context.Context, taskID, sessionID, userID, taskType, status, query string) (bool, error)
@@ -77,17 +68,10 @@ type (
 
 	AgentRuntime interface {
 		StartAgentRun(ctx context.Context, req AgentRunRequest) (AgentRunStatus, error)
+		GetAgentRunStatus(ctx context.Context, runID string) (AgentRunStatus, error)
 		SignalAgentRun(ctx context.Context, runID string, signal AgentSignal) error
 		ControlAgentRun(ctx context.Context, runID string, control AgentControlRequest) error
 		SubscribeAgentEvents(ctx context.Context, scope AgentEventScope) (AgentEventSubscription, error)
-	}
-
-	WorkflowRuntime interface {
-		Enabled() bool
-		DescribeWorkflow(ctx context.Context, workflowID, runID string) (*WorkflowDescription, error)
-		GetWorkflowResult(ctx context.Context, workflowID, runID string) (any, error)
-		CancelWorkflow(ctx context.Context, workflowID string) error
-		ListWorkflowHistory(ctx context.Context, workflowID string) ([]WorkflowHistoryEvent, error)
 	}
 )
 
