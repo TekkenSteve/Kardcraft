@@ -3,10 +3,10 @@ module task-orchestrator
 go 1.26.2
 
 require (
-	github.com/TekkenSteve/GoAgent v0.0.0-20260708130355-53a9c91f11aa
+	github.com/TekkenSteve/GoAgent v0.0.0-20260712142951-d83ca55705dc
 	github.com/jackc/pgx/v5 v5.9.1
-	github.com/robfig/cron v1.2.0
 	github.com/redis/go-redis/v9 v9.18.0
+	github.com/robfig/cron v1.2.0
 	go.temporal.io/api v1.62.3
 	go.temporal.io/sdk v1.41.0
 	google.golang.org/grpc v1.80.0

@@ -34,13 +34,16 @@ func (s *UseCase) CreateTaskInSession(ctx context.Context, cmd usecase.CreateTas
 	}
 	if !inserted {
 		tasks, listErr := s.store.ListSessionTasks(ctx, cmd.SessionID, cmd.UserID)
-		activeTaskID := ""
-		if listErr == nil {
-			if taskID, ok := resolveActiveTaskID(tasks); ok {
-				activeTaskID = taskID
-			}
+		if listErr != nil {
+			return nil, "", listErr
 		}
-		return nil, activeTaskID, usecase.ErrActiveTaskExists
+		if existing, ok := findSessionTask(tasks, cmd.TaskID); ok {
+			return s.resumeTaskStart(ctx, cmd, existing)
+		}
+		if activeTaskID, ok := resolveActiveTaskID(tasks); ok {
+			return nil, activeTaskID, usecase.ErrActiveTaskExists
+		}
+		return nil, "", fmt.Errorf("task %q was not persisted after create conflict", cmd.TaskID)
 	}
 
 	_, err = s.tasks.CreateTask(ctx, usecase.CreateTaskInput{
@@ -55,6 +58,24 @@ func (s *UseCase) CreateTaskInSession(ctx context.Context, cmd usecase.CreateTas
 		return nil, "", err
 	}
 
+	return s.startTask(ctx, cmd)
+}
+
+func (s *UseCase) resumeTaskStart(ctx context.Context, cmd usecase.CreateTaskCommand, existing usecase.SessionTask) (*usecase.CreateTaskResult, string, error) {
+	switch strings.ToLower(strings.TrimSpace(existing.Status)) {
+	case "queued", "running", "paused":
+		return &usecase.CreateTaskResult{
+			WorkflowID: cmd.TaskID,
+			RunID:      cmd.TaskID,
+			Status:     existing.Status,
+			SessionID:  cmd.SessionID,
+		}, "", nil
+	default:
+		return s.startTask(ctx, cmd)
+	}
+}
+
+func (s *UseCase) startTask(ctx context.Context, cmd usecase.CreateTaskCommand) (*usecase.CreateTaskResult, string, error) {
 	runID, err := s.startWorkflow(ctx, cmd)
 	if err != nil {
 		_ = s.store.UpdateTaskStatus(ctx, cmd.TaskID, "failed", err.Error())
@@ -67,6 +88,16 @@ func (s *UseCase) CreateTaskInSession(ctx context.Context, cmd usecase.CreateTas
 		Status:     "pending",
 		SessionID:  cmd.SessionID,
 	}, "", nil
+}
+
+func findSessionTask(tasks []usecase.SessionTask, taskID string) (usecase.SessionTask, bool) {
+	for i := range tasks {
+		if tasks[i].TaskID == taskID {
+			return tasks[i], true
+		}
+	}
+
+	return usecase.SessionTask{}, false
 }
 
 func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskCommand) (string, error) {

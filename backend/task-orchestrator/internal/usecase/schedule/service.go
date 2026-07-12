@@ -3,6 +3,7 @@ package schedule
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"strings"
@@ -127,6 +128,22 @@ func (s *Service) Delete(ctx context.Context, scheduleID, userID string) error {
 	return err
 }
 
+// Reconcile projects the application-owned schedule declarations into the
+// trigger runtime. Apply semantics make this safe at every process start.
+func (s *Service) Reconcile(ctx context.Context) error {
+	rows, err := s.store.ListAllSchedules(ctx)
+	if err != nil {
+		return err
+	}
+	for i := range rows {
+		if err := s.runtime.Create(ctx, rows[i]); err != nil {
+			return fmt.Errorf("reconcile schedule %q: %w", rows[i].ScheduleID, err)
+		}
+	}
+
+	return nil
+}
+
 func (s *Service) Get(ctx context.Context, scheduleID, userID string) (*usecase.ScheduleRecord, error) {
 	return s.store.GetSchedule(ctx, scheduleID, userID)
 }
@@ -159,7 +176,7 @@ func scheduleRecord(userID, name, description, expression, timezone, query strin
 	if err != nil {
 		return usecase.ScheduleRecord{}, err
 	}
-	row := usecase.ScheduleRecord{ScheduleID: id, TemporalScheduleID: "kardcraft-" + id, UserID: strings.TrimSpace(userID), Name: strings.TrimSpace(name), Description: strings.TrimSpace(description), CronExpression: strings.TrimSpace(expression), Timezone: strings.TrimSpace(timezone), TaskQuery: strings.TrimSpace(query), Status: "active"}
+	row := usecase.ScheduleRecord{ScheduleID: id, UserID: strings.TrimSpace(userID), Name: strings.TrimSpace(name), Description: strings.TrimSpace(description), CronExpression: strings.TrimSpace(expression), Timezone: strings.TrimSpace(timezone), TaskQuery: strings.TrimSpace(query), Status: "active"}
 	if row.Timezone == "" {
 		row.Timezone = "UTC"
 	}
@@ -187,10 +204,17 @@ func newID(prefix string) (string, error) {
 	return prefix + hex.EncodeToString(b), nil
 }
 
-func (s *Service) Dispatch(ctx context.Context, scheduleID string) error {
-	row, err := s.store.GetScheduleByID(ctx, scheduleID)
+func (s *Service) Dispatch(ctx context.Context, delivery usecase.ScheduleDelivery) error {
+	if delivery.DeliveryID == "" || delivery.ScheduleID == "" || delivery.UserID == "" || delivery.ProjectID == "" || delivery.TriggeredAt.IsZero() {
+		return fmt.Errorf("schedule delivery is incomplete")
+	}
+
+	row, err := s.store.GetScheduleByID(ctx, delivery.ScheduleID)
 	if err != nil {
 		return err
+	}
+	if !matchesScheduleDelivery(*row, delivery) {
+		return fmt.Errorf("trigger delivery does not match schedule scope")
 	}
 	if row.Status != "active" {
 		return nil
@@ -198,15 +222,16 @@ func (s *Service) Dispatch(ctx context.Context, scheduleID string) error {
 	if s.command == nil || s.readModel == nil {
 		return fmt.Errorf("schedule dispatcher is not configured")
 	}
-	sessionID, err := newID("schedule_session_")
-	if err != nil {
-		return err
-	}
-	taskID, err := newID("workflow_schedule_")
-	if err != nil {
-		return err
-	}
-	if err := s.store.CreateScheduleRun(ctx, usecase.ScheduleRunRow{ScheduleID: row.ScheduleID, TaskID: taskID, SessionID: sessionID, Status: "dispatching", TriggeredAt: s.now().UTC()}); err != nil {
+	sessionID := deliveryScopedID("schedule_session_", delivery.DeliveryID)
+	taskID := deliveryScopedID("workflow_schedule_", delivery.DeliveryID)
+	if _, err := s.store.CreateScheduleRun(ctx, usecase.ScheduleRunRow{
+		DeliveryID:  delivery.DeliveryID,
+		ScheduleID:  row.ScheduleID,
+		TaskID:      taskID,
+		SessionID:   sessionID,
+		Status:      "dispatching",
+		TriggeredAt: delivery.TriggeredAt,
+	}); err != nil {
 		return err
 	}
 	template, err := s.readModel.GetResolvedDefaultTemplate(ctx, row.UserID)
@@ -216,12 +241,26 @@ func (s *Service) Dispatch(ctx context.Context, scheduleID string) error {
 	_, _, err = s.command.CreateTaskInSession(ctx, usecase.CreateTaskCommand{
 		TaskID: taskID, UserID: row.UserID, TaskType: usecase.TaskTypeMain, SessionID: sessionID, Query: row.TaskQuery,
 		Input:    usecase.AgentTaskInput{SessionID: sessionID, Query: row.TaskQuery, Context: usecase.TemplateContext{TemplateID: template.DefaultTemplateID, TemplateVersion: template.DefaultTemplateVersion}},
-		Metadata: usecase.CreateTaskMetadata{RequestID: "schedule:" + row.ScheduleID + ":" + taskID, Source: "schedule"},
+		Metadata: usecase.CreateTaskMetadata{RequestID: delivery.DeliveryID, Source: "schedule"},
 	})
 	if err != nil {
 		return s.failDispatch(ctx, taskID, err)
 	}
 	return nil
+}
+
+func matchesScheduleDelivery(row usecase.ScheduleRecord, delivery usecase.ScheduleDelivery) bool {
+	projectID := "schedule:" + row.ScheduleID
+
+	return delivery.ScheduleID == row.ScheduleID &&
+		delivery.UserID == row.UserID &&
+		delivery.ProjectID == projectID
+}
+
+func deliveryScopedID(prefix, deliveryID string) string {
+	digest := sha256.Sum256([]byte(deliveryID))
+
+	return prefix + hex.EncodeToString(digest[:16])
 }
 
 func (s *Service) failDispatch(ctx context.Context, taskID string, cause error) error {

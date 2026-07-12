@@ -9,11 +9,11 @@ import (
 	"strings"
 	"time"
 
+	agentosproc "github.com/TekkenSteve/GoAgent/agentos/process"
 	agentostemporal "github.com/TekkenSteve/GoAgent/agentos/temporal"
 	tclient "go.temporal.io/sdk/client"
 
 	goagentadapter "task-orchestrator/internal/adapter/goagent"
-	"task-orchestrator/internal/adapter/temporalschedule"
 	agentosconfig "task-orchestrator/internal/app/agentos"
 	"task-orchestrator/internal/controller/restapi"
 	"task-orchestrator/internal/repo/memory"
@@ -52,6 +52,7 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	var commandSvc usecase.Command
 	var agentRuntime usecase.AgentRuntime
 	var scheduleService *schedule.Service
+	var triggerDispatchQueue string
 	if temporalClient != nil {
 		externalRuntime, err := agentosconfig.ExternalRuntimeConfigFromEnv(storeCfg)
 		if err != nil {
@@ -66,6 +67,7 @@ func NewOrchestratorFromEnv() *restapi.Server {
 		if err != nil {
 			log.Fatalf("failed to create GoAgent runtime: %v", err)
 		}
+		triggerDispatchQueue = externalRuntime.Runtime.TemporalTaskQueues.PlanControl
 		agentRuntime = goagentadapter.NewRuntime(goagentRuntime)
 		commandSvc, err = command.New(
 			taskService,
@@ -86,16 +88,32 @@ func NewOrchestratorFromEnv() *restapi.Server {
 		closeFuncs = append(closeFuncs, func() { _ = closer.Close() })
 	}
 	if temporalClient != nil {
-		scheduleQueue := strings.TrimSpace(os.Getenv("KARDCRAFT_SCHEDULE_TASK_QUEUE"))
-		if scheduleQueue == "" {
-			log.Fatal("KARDCRAFT_SCHEDULE_TASK_QUEUE is required when Temporal is enabled")
+		scheduleTriggerConfig, err := agentosconfig.ScheduleTriggerConfigFromEnv()
+		if err != nil {
+			log.Fatalf("failed to configure Kardcraft schedule trigger: %v", err)
 		}
-		scheduleService = schedule.New(sessionStore, temporalschedule.New(temporalClient, scheduleQueue), commandSvc, readModel)
-		stopWorker, err := temporalschedule.StartWorker(temporalClient, scheduleQueue, func(ctx context.Context, input temporalschedule.DispatchInput) error {
-			return scheduleService.Dispatch(ctx, input.ScheduleID)
+		triggerRuntime, err := agentostemporal.NewTriggerRuntime(temporalClient, triggerDispatchQueue)
+		if err != nil {
+			log.Fatalf("failed to create GoAgent trigger runtime: %v", err)
+		}
+		scheduleRuntime, err := goagentadapter.NewScheduleTriggerRuntime(triggerRuntime, goagentadapter.ScheduleTriggerRuntimeConfig(scheduleTriggerConfig))
+		if err != nil {
+			log.Fatalf("failed to create Kardcraft schedule trigger adapter: %v", err)
+		}
+		scheduleService = schedule.New(sessionStore, scheduleRuntime, commandSvc, readModel)
+		if err := scheduleService.Reconcile(context.Background()); err != nil {
+			log.Fatalf("failed to reconcile Kardcraft schedules into GoAgent: %v", err)
+		}
+		stopWorker, err := agentostemporal.StartTriggerWorker(temporalClient, triggerDispatchQueue, func(ctx context.Context, delivery agentosproc.TriggerDelivery) error {
+			scheduleDelivery, err := goagentadapter.ScheduleDeliveryFromTrigger(delivery)
+			if err != nil {
+				return err
+			}
+
+			return scheduleService.Dispatch(ctx, scheduleDelivery)
 		})
 		if err != nil {
-			log.Fatalf("failed to start Temporal schedule worker: %v", err)
+			log.Fatalf("failed to start GoAgent trigger worker: %v", err)
 		}
 		closeFuncs = append(closeFuncs, stopWorker)
 	}

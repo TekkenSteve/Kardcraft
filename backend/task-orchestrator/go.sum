@@ -20,6 +20,8 @@ github.com/Masterminds/squirrel v1.5.4 h1:uUcX/aBc8O7Fg9kaISIUsHXdKuqehiXAMQTYX8
 github.com/Masterminds/squirrel v1.5.4/go.mod h1:NNaOrjSoIDfDA40n7sr2tPNZRfjzjA400rg+riTZj10=
 github.com/TekkenSteve/GoAgent v0.0.0-20260708130355-53a9c91f11aa h1:Y4gOr9jCaGlpVlIWCfvULLYcQjjIRPjlF/DQbTcRl0g=
 github.com/TekkenSteve/GoAgent v0.0.0-20260708130355-53a9c91f11aa/go.mod h1:pD+r5RLm3hWeyKeMP6vmEccZE64vAjhTp0NXt+0vGWI=
+github.com/TekkenSteve/GoAgent v0.0.0-20260712142951-d83ca55705dc h1:EL6Bhb9rUxwLXoTwmTHnRihtaRvSpt3aX5h011In8LI=
+github.com/TekkenSteve/GoAgent v0.0.0-20260712142951-d83ca55705dc/go.mod h1:dYrJF3IL6iYwW6lHrOOf7h5R/gzSkJUafFerdxG4ZXg=
 github.com/andybalholm/brotli v1.2.1 h1:R+f5xP285VArJDRgowrfb9DqL18yVK0gKAW/F+eTWro=
 github.com/andybalholm/brotli v1.2.1/go.mod h1:rzTDkvFWvIrjDXZHkuS16NPggd91W3kUSvPlQ1pLaKY=
 github.com/antlr4-go/antlr/v4 v4.13.1 h1:SqQKkuVZ+zWkMMNkjy5FZe5mr5WURWnlpmOuzYWrPrQ=

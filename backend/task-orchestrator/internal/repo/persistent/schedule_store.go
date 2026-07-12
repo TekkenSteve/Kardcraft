@@ -12,8 +12,8 @@ func (s *SessionStore) CreateSchedule(ctx context.Context, row usecase.ScheduleR
 	if s == nil || s.pg == nil {
 		return fmt.Errorf("postgres not configured")
 	}
-	_, err := s.pg.Exec(ctx, `INSERT INTO kc_schedules (schedule_id, temporal_schedule_id, user_id, name, description, cron_expression, timezone, task_query, status) VALUES ($1,$2,$3,$4,NULLIF($5,''),$6,$7,$8,$9)`,
-		row.ScheduleID, row.TemporalScheduleID, row.UserID, row.Name, row.Description, row.CronExpression, row.Timezone, row.TaskQuery, row.Status)
+	_, err := s.pg.Exec(ctx, `INSERT INTO kc_schedules (schedule_id, user_id, name, description, cron_expression, timezone, task_query, status) VALUES ($1,$2,$3,NULLIF($4,''),$5,$6,$7,$8)`,
+		row.ScheduleID, row.UserID, row.Name, row.Description, row.CronExpression, row.Timezone, row.TaskQuery, row.Status)
 	return err
 }
 
@@ -23,7 +23,7 @@ func (s *SessionStore) GetSchedule(ctx context.Context, scheduleID, userID strin
 	}
 	return s.scanScheduleWithSummary(s.pg.QueryRow(ctx, `
 		SELECT
-			s.schedule_id, s.temporal_schedule_id, s.user_id, s.name, COALESCE(s.description,''),
+			s.schedule_id, s.user_id, s.name, COALESCE(s.description,''),
 			s.cron_expression, s.timezone, s.task_query, s.status,
 			COUNT(r.schedule_run_id) AS total_runs,
 			COUNT(r.schedule_run_id) FILTER (WHERE COALESCE(t.status, r.status) = 'completed') AS successful_runs,
@@ -41,14 +41,36 @@ func (s *SessionStore) GetScheduleByID(ctx context.Context, scheduleID string) (
 	if s == nil || s.pg == nil {
 		return nil, fmt.Errorf("postgres not configured")
 	}
-	return s.scanSchedule(s.pg.QueryRow(ctx, `SELECT schedule_id, temporal_schedule_id, user_id, name, COALESCE(description,''), cron_expression, timezone, task_query, status, created_at, updated_at FROM kc_schedules WHERE schedule_id=$1`, scheduleID))
+	return s.scanSchedule(s.pg.QueryRow(ctx, `SELECT schedule_id, user_id, name, COALESCE(description,''), cron_expression, timezone, task_query, status, created_at, updated_at FROM kc_schedules WHERE schedule_id=$1`, scheduleID))
+}
+
+func (s *SessionStore) ListAllSchedules(ctx context.Context) ([]usecase.ScheduleRecord, error) {
+	if s == nil || s.pg == nil {
+		return nil, fmt.Errorf("postgres not configured")
+	}
+	rows, err := s.pg.Query(ctx, `SELECT schedule_id, user_id, name, COALESCE(description,''), cron_expression, timezone, task_query, status, created_at, updated_at FROM kc_schedules ORDER BY schedule_id`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	result := make([]usecase.ScheduleRecord, 0)
+	for rows.Next() {
+		var row usecase.ScheduleRecord
+		if err := rows.Scan(&row.ScheduleID, &row.UserID, &row.Name, &row.Description, &row.CronExpression, &row.Timezone, &row.TaskQuery, &row.Status, &row.CreatedAt, &row.UpdatedAt); err != nil {
+			return nil, err
+		}
+		result = append(result, row)
+	}
+
+	return result, rows.Err()
 }
 
 type scheduleRow interface{ Scan(...any) error }
 
 func (s *SessionStore) scanSchedule(row scheduleRow) (*usecase.ScheduleRecord, error) {
 	var result usecase.ScheduleRecord
-	if err := row.Scan(&result.ScheduleID, &result.TemporalScheduleID, &result.UserID, &result.Name, &result.Description, &result.CronExpression, &result.Timezone, &result.TaskQuery, &result.Status, &result.CreatedAt, &result.UpdatedAt); err != nil {
+	if err := row.Scan(&result.ScheduleID, &result.UserID, &result.Name, &result.Description, &result.CronExpression, &result.Timezone, &result.TaskQuery, &result.Status, &result.CreatedAt, &result.UpdatedAt); err != nil {
 		return nil, err
 	}
 	return &result, nil
@@ -58,7 +80,6 @@ func (s *SessionStore) scanScheduleWithSummary(row scheduleRow) (*usecase.Schedu
 	var result usecase.ScheduleRecord
 	if err := row.Scan(
 		&result.ScheduleID,
-		&result.TemporalScheduleID,
 		&result.UserID,
 		&result.Name,
 		&result.Description,
@@ -93,7 +114,7 @@ func (s *SessionStore) ListSchedules(ctx context.Context, userID string, limit, 
 	}
 	rows, err := s.pg.Query(ctx, `
 		SELECT
-			s.schedule_id, s.temporal_schedule_id, s.user_id, s.name, COALESCE(s.description,''),
+			s.schedule_id, s.user_id, s.name, COALESCE(s.description,''),
 			s.cron_expression, s.timezone, s.task_query, s.status,
 			COUNT(r.schedule_run_id) AS total_runs,
 			COUNT(r.schedule_run_id) FILTER (WHERE COALESCE(t.status, r.status) = 'completed') AS successful_runs,
@@ -114,7 +135,7 @@ func (s *SessionStore) ListSchedules(ctx context.Context, userID string, limit, 
 	result := make([]usecase.ScheduleRecord, 0, limit)
 	for rows.Next() {
 		var row usecase.ScheduleRecord
-		if err := rows.Scan(&row.ScheduleID, &row.TemporalScheduleID, &row.UserID, &row.Name, &row.Description, &row.CronExpression, &row.Timezone, &row.TaskQuery, &row.Status, &row.TotalRuns, &row.SuccessfulRuns, &row.FailedRuns, &row.CreatedAt, &row.UpdatedAt); err != nil {
+		if err := rows.Scan(&row.ScheduleID, &row.UserID, &row.Name, &row.Description, &row.CronExpression, &row.Timezone, &row.TaskQuery, &row.Status, &row.TotalRuns, &row.SuccessfulRuns, &row.FailedRuns, &row.CreatedAt, &row.UpdatedAt); err != nil {
 			return nil, 0, err
 		}
 		result = append(result, row)
@@ -161,12 +182,16 @@ func (s *SessionStore) DeleteSchedule(ctx context.Context, scheduleID, userID st
 	return cmd.RowsAffected(), nil
 }
 
-func (s *SessionStore) CreateScheduleRun(ctx context.Context, row usecase.ScheduleRunRow) error {
+func (s *SessionStore) CreateScheduleRun(ctx context.Context, row usecase.ScheduleRunRow) (bool, error) {
 	if s == nil || s.pg == nil {
-		return fmt.Errorf("postgres not configured")
+		return false, fmt.Errorf("postgres not configured")
 	}
-	_, err := s.pg.Exec(ctx, `INSERT INTO kc_schedule_runs (schedule_id, task_id, session_id, status, triggered_at) VALUES ($1,$2,$3,$4,$5)`, row.ScheduleID, row.TaskID, row.SessionID, row.Status, row.TriggeredAt)
-	return err
+	cmd, err := s.pg.Exec(ctx, `INSERT INTO kc_schedule_runs (delivery_id, schedule_id, task_id, session_id, status, triggered_at) VALUES ($1,$2,$3,$4,$5,$6) ON CONFLICT (delivery_id) WHERE delivery_id IS NOT NULL DO NOTHING`, row.DeliveryID, row.ScheduleID, row.TaskID, row.SessionID, row.Status, row.TriggeredAt)
+	if err != nil {
+		return false, err
+	}
+
+	return cmd.RowsAffected() > 0, nil
 }
 
 func (s *SessionStore) FailScheduleRun(ctx context.Context, taskID, message string) error {
