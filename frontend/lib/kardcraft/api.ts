@@ -1000,7 +1000,7 @@ export async function getTaskControlState(taskId: string): Promise<ControlStateR
 
 // Schedule Types
 
-export type ScheduleStatus = 'ACTIVE' | 'PAUSED' | 'DELETED';
+export type ScheduleStatus = 'ACTIVE' | 'PAUSED';
 export type ScheduleRunStatus = 'COMPLETED' | 'FAILED' | 'RUNNING' | 'UNKNOWN';
 
 export interface ScheduleInfo {
@@ -1010,15 +1010,10 @@ export interface ScheduleInfo {
     cron_expression: string;
     timezone: string;
     task_query: string;
-    task_context?: Record<string, unknown>;
     status: ScheduleStatus;
-    next_run_at?: string;
-    last_run_at?: string;
     total_runs: number;
     successful_runs: number;
     failed_runs: number;
-    max_budget_per_run_usd?: number;
-    timeout_seconds?: number;
     created_at: string;
 }
 
@@ -1056,9 +1051,6 @@ export interface CreateScheduleRequest {
     cron_expression: string;
     timezone?: string;
     task_query: string;
-    task_context?: Record<string, string>;  // Backend expects map[string]string
-    max_budget_per_run_usd?: number;
-    timeout_seconds?: number;
 }
 
 export interface UpdateScheduleRequest {
@@ -1067,10 +1059,6 @@ export interface UpdateScheduleRequest {
     cron_expression?: string;
     timezone?: string;
     task_query?: string;
-    task_context?: Record<string, string>;  // Backend expects map[string]string
-    clear_task_context?: boolean;
-    max_budget_per_run_usd?: number;
-    timeout_seconds?: number;
 }
 
 // Schedule API Functions

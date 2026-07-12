@@ -15,6 +15,7 @@ import (
 	"task-orchestrator/internal/entity"
 	"task-orchestrator/internal/usecase"
 	"task-orchestrator/internal/usecase/outcomeprojector"
+	"task-orchestrator/internal/usecase/schedule"
 )
 
 const maxTimelineEventsInMemory = 500
@@ -55,6 +56,7 @@ type Server struct {
 	readModel       usecase.ReadModel
 	sessionStore    SessionLifecycleStore
 	defaultModelRef string
+	scheduleService *schedule.Service
 
 	mu                 sync.RWMutex
 	timelineByWorkflow map[string][]TimelineEvent
@@ -84,6 +86,7 @@ type ServerDependencies struct {
 	SessionStore    SessionLifecycleStore
 	DefaultModelRef string
 	AgentRuntime    usecase.AgentRuntime
+	ScheduleService *schedule.Service
 
 	CloseFuncs []func()
 }
@@ -112,6 +115,7 @@ func NewServer(port int, deps ServerDependencies) *Server {
 		readModel:               deps.ReadModel,
 		sessionStore:            deps.SessionStore,
 		defaultModelRef:         strings.TrimSpace(deps.DefaultModelRef),
+		scheduleService:         deps.ScheduleService,
 		timelineByWorkflow:      make(map[string][]TimelineEvent),
 		subscribers:             make(map[string]map[int]chan OutboundEvent),
 		streamReaders:           make(map[string]context.CancelFunc),

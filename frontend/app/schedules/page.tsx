@@ -1,7 +1,5 @@
 "use client";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -32,7 +30,6 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { ScheduleBuilder } from "@/components/schedule-builder";
 import {
     Search,
@@ -52,10 +49,6 @@ import {
     Zap,
     DollarSign,
     Timer,
-    Sparkles,
-    Microscope,
-    BarChart3,
-    Settings2,
 } from "lucide-react";
 import { useEffect, useState, useCallback } from "react";
 import {
@@ -96,156 +89,6 @@ const COMMON_TIMEZONES = [
     "Australia/Sydney",
     "Pacific/Auckland",
 ];
-
-// Workflow type definitions
-type WorkflowType =
-    | "auto"
-    | "research_quick"
-    | "research_standard"
-    | "research_deep"
-    | "research_academic"
-    | "data_analytics"
-    | "ga4_analytics"
-    | "custom";
-
-interface WorkflowTypeOption {
-    value: WorkflowType;
-    label: string;
-    description: string;
-    icon: React.ElementType;
-    taskContext: Record<string, any> | null;
-}
-
-const WORKFLOW_TYPES: WorkflowTypeOption[] = [
-    {
-        value: "auto",
-        label: "Auto (Simple)",
-        description: "Automatically routes based on query complexity",
-        icon: Sparkles,
-        taskContext: null,
-    },
-    {
-        value: "research_quick",
-        label: "Research - Quick",
-        description: "Fast research with minimal sources",
-        icon: Microscope,
-        taskContext: { research_strategy: "quick", force_research: "true" },
-    },
-    {
-        value: "research_standard",
-        label: "Research - Standard",
-        description: "Balanced depth and speed",
-        icon: Microscope,
-        taskContext: { research_strategy: "standard", force_research: "true" },
-    },
-    {
-        value: "research_deep",
-        label: "Research - Deep",
-        description: "Comprehensive analysis with many sources",
-        icon: Microscope,
-        taskContext: { research_strategy: "deep", force_research: "true" },
-    },
-    {
-        value: "research_academic",
-        label: "Research - Academic",
-        description: "Scholarly sources with citations",
-        icon: Microscope,
-        taskContext: { research_strategy: "academic", force_research: "true" },
-    },
-    {
-        value: "data_analytics",
-        label: "Data Analytics",
-        description: "Specialized for data analysis tasks",
-        icon: BarChart3,
-        taskContext: { role: "data_analytics" },
-    },
-    {
-        value: "ga4_analytics",
-        label: "GA4 Analytics",
-        description: "Google Analytics 4 specialized analysis",
-        icon: BarChart3,
-        taskContext: { role: "ga4_analytics" },
-    },
-    {
-        value: "custom",
-        label: "Custom (Advanced)",
-        description: "Define custom task context JSON",
-        icon: Settings2,
-        taskContext: null,
-    },
-];
-
-// Derive workflow type from task_context
-function getWorkflowTypeFromContext(taskContext?: Record<string, any>): WorkflowType {
-    if (!taskContext || Object.keys(taskContext).length === 0) {
-        return "auto";
-    }
-
-    // Check research strategies
-    if (taskContext.force_research || taskContext.research_strategy) {
-        const strategy = taskContext.research_strategy;
-        if (strategy === "quick") return "research_quick";
-        if (strategy === "standard") return "research_standard";
-        if (strategy === "deep") return "research_deep";
-        if (strategy === "academic") return "research_academic";
-        return "research_standard"; // Default research
-    }
-
-    // Check roles
-    if (taskContext.role) {
-        if (taskContext.role === "data_analytics") return "data_analytics";
-        if (taskContext.role === "ga4_analytics") return "ga4_analytics";
-    }
-
-    // Has custom context
-    return "custom";
-}
-
-// Get workflow type display info
-function getWorkflowTypeInfo(type: WorkflowType): WorkflowTypeOption {
-    return WORKFLOW_TYPES.find((t) => t.value === type) || WORKFLOW_TYPES[0];
-}
-
-// Workflow type badge component
-function WorkflowTypeBadge({ taskContext }: { taskContext?: Record<string, any> }) {
-    const type = getWorkflowTypeFromContext(taskContext);
-    const info = getWorkflowTypeInfo(type);
-    const Icon = info.icon;
-
-    if (type === "auto") {
-        return (
-            <Badge variant="secondary" className="text-xs">
-                <Icon className="size-3 mr-1" />
-                Auto
-            </Badge>
-        );
-    }
-
-    if (type.startsWith("research_")) {
-        return (
-            <Badge className="bg-violet-500/15 text-violet-600 dark:text-violet-400 border-violet-500/30 text-xs">
-                <Icon className="size-3 mr-1" />
-                {info.label.replace("Research - ", "")}
-            </Badge>
-        );
-    }
-
-    if (type === "data_analytics" || type === "ga4_analytics") {
-        return (
-            <Badge className="bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30 text-xs">
-                <Icon className="size-3 mr-1" />
-                {type === "ga4_analytics" ? "GA4" : "Analytics"}
-            </Badge>
-        );
-    }
-
-    return (
-        <Badge variant="outline" className="text-xs">
-            <Icon className="size-3 mr-1" />
-            Custom
-        </Badge>
-    );
-}
 
 // Helper to format cron expression in human-readable form
 function formatCron(cron: string): string {
@@ -467,9 +310,6 @@ function ScheduleRow({
                         </div>
                     </button>
                 </td>
-                <td className="p-4 align-middle hidden md:table-cell">
-                    <WorkflowTypeBadge taskContext={schedule.task_context} />
-                </td>
                 <td className="p-4 align-middle hidden lg:table-cell">
                     <TooltipProvider>
                         <Tooltip>
@@ -488,22 +328,6 @@ function ScheduleRow({
                 </td>
                 <td className="p-4 align-middle">
                     <ScheduleStatusBadge status={schedule.status} />
-                </td>
-                <td className="p-4 align-middle hidden sm:table-cell">
-                    <TooltipProvider>
-                        <Tooltip>
-                            <TooltipTrigger asChild>
-                                <span className="text-sm cursor-default">
-                                    {formatRelativeTime(schedule.next_run_at)}
-                                </span>
-                            </TooltipTrigger>
-                            <TooltipContent suppressHydrationWarning>
-                                {schedule.next_run_at
-                                    ? new Date(schedule.next_run_at).toLocaleString()
-                                    : "No next run scheduled"}
-                            </TooltipContent>
-                        </Tooltip>
-                    </TooltipProvider>
                 </td>
                 <td className="p-4 align-middle hidden xl:table-cell">
                     {successRate !== null ? (
@@ -613,7 +437,7 @@ function ScheduleRow({
             {/* Expanded run history */}
             {isExpanded && (
                 <tr className="bg-muted/30">
-                    <td colSpan={8} className="p-0">
+                    <td colSpan={5} className="p-0">
                         <div className="p-4 space-y-3">
                             <div className="flex items-center justify-between">
                                 <h4 className="text-sm font-medium">Recent Runs</h4>
@@ -782,10 +606,6 @@ interface ScheduleFormData {
     cron_expression: string;
     timezone: string;
     task_query: string;
-    workflow_type: WorkflowType;
-    custom_context: string;
-    max_budget_per_run_usd: string;
-    timeout_seconds: string;
 }
 
 const defaultFormData: ScheduleFormData = {
@@ -794,33 +614,7 @@ const defaultFormData: ScheduleFormData = {
     cron_expression: "0 9 * * *",
     timezone: "UTC",
     task_query: "",
-    workflow_type: "auto",
-    custom_context: "{}",
-    max_budget_per_run_usd: "",
-    timeout_seconds: "",
 };
-
-// Build task_context from workflow type
-// Backend expects map[string]string, so all values must be strings
-function buildTaskContext(workflowType: WorkflowType, customContext: string): Record<string, string> | undefined {
-    if (workflowType === "custom") {
-        try {
-            const parsed = JSON.parse(customContext);
-            if (Object.keys(parsed).length === 0) return undefined;
-            // Convert all values to strings for backend compatibility
-            const stringified: Record<string, string> = {};
-            for (const [key, value] of Object.entries(parsed)) {
-                stringified[key] = typeof value === "string" ? value : JSON.stringify(value);
-            }
-            return stringified;
-        } catch {
-            return undefined;
-        }
-    }
-
-    const typeInfo = WORKFLOW_TYPES.find((t) => t.value === workflowType);
-    return typeInfo?.taskContext || undefined;
-}
 
 // Create/Edit schedule dialog
 function ScheduleFormDialog({
@@ -843,19 +637,12 @@ function ScheduleFormDialog({
     // Reset form when opening/closing or when editing schedule changes
     useEffect(() => {
         if (open && editingSchedule) {
-            const workflowType = getWorkflowTypeFromContext(editingSchedule.task_context);
             setFormData({
                 name: editingSchedule.name,
                 description: editingSchedule.description || "",
                 cron_expression: editingSchedule.cron_expression,
                 timezone: editingSchedule.timezone,
                 task_query: editingSchedule.task_query,
-                workflow_type: workflowType,
-                custom_context: workflowType === "custom" && editingSchedule.task_context
-                    ? JSON.stringify(editingSchedule.task_context, null, 2)
-                    : "{}",
-                max_budget_per_run_usd: editingSchedule.max_budget_per_run_usd?.toString() || "",
-                timeout_seconds: editingSchedule.timeout_seconds?.toString() || "",
             });
         } else if (open && !editingSchedule) {
             setFormData(defaultFormData);
@@ -868,19 +655,6 @@ function ScheduleFormDialog({
         setIsSubmitting(true);
         setError(null);
 
-        // Validate custom JSON if needed
-        if (formData.workflow_type === "custom") {
-            try {
-                JSON.parse(formData.custom_context);
-            } catch {
-                setError("Invalid JSON in custom context");
-                setIsSubmitting(false);
-                return;
-            }
-        }
-
-        const taskContext = buildTaskContext(formData.workflow_type, formData.custom_context);
-
         try {
             if (isEditing) {
                 const updateData: UpdateScheduleRequest = {
@@ -889,15 +663,7 @@ function ScheduleFormDialog({
                     cron_expression: formData.cron_expression,
                     timezone: formData.timezone,
                     task_query: formData.task_query,
-                    task_context: taskContext,
-                    clear_task_context: !taskContext,
                 };
-                if (formData.max_budget_per_run_usd) {
-                    updateData.max_budget_per_run_usd = parseFloat(formData.max_budget_per_run_usd);
-                }
-                if (formData.timeout_seconds) {
-                    updateData.timeout_seconds = parseInt(formData.timeout_seconds);
-                }
                 await updateSchedule(editingSchedule!.schedule_id, updateData);
             } else {
                 const createData: CreateScheduleRequest = {
@@ -906,14 +672,7 @@ function ScheduleFormDialog({
                     cron_expression: formData.cron_expression,
                     timezone: formData.timezone,
                     task_query: formData.task_query,
-                    task_context: taskContext,
                 };
-                if (formData.max_budget_per_run_usd) {
-                    createData.max_budget_per_run_usd = parseFloat(formData.max_budget_per_run_usd);
-                }
-                if (formData.timeout_seconds) {
-                    createData.timeout_seconds = parseInt(formData.timeout_seconds);
-                }
                 await createSchedule(createData);
             }
             onSaved();
@@ -924,8 +683,6 @@ function ScheduleFormDialog({
             setIsSubmitting(false);
         }
     };
-
-    const selectedTypeInfo = WORKFLOW_TYPES.find((t) => t.value === formData.workflow_type);
 
     return (
         <Dialog open={open} onOpenChange={onOpenChange}>
@@ -976,53 +733,6 @@ function ScheduleFormDialog({
                         />
                     </div>
 
-                    <div className="space-y-2">
-                        <Label htmlFor="workflow_type">Workflow Type</Label>
-                        <Select
-                            value={formData.workflow_type}
-                            onValueChange={(value) => setFormData(prev => ({ ...prev, workflow_type: value as WorkflowType }))}
-                        >
-                            <SelectTrigger id="workflow_type">
-                                <SelectValue placeholder="Select workflow type" />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {WORKFLOW_TYPES.map((type) => {
-                                    const Icon = type.icon;
-                                    return (
-                                        <SelectItem key={type.value} value={type.value}>
-                                            <div className="flex items-center gap-2">
-                                                <Icon className="size-4 text-muted-foreground" />
-                                                <span>{type.label}</span>
-                                            </div>
-                                        </SelectItem>
-                                    );
-                                })}
-                            </SelectContent>
-                        </Select>
-                        {selectedTypeInfo && (
-                            <p className="text-xs text-muted-foreground">
-                                {selectedTypeInfo.description}
-                            </p>
-                        )}
-                    </div>
-
-                    {formData.workflow_type === "custom" && (
-                        <div className="space-y-2">
-                            <Label htmlFor="custom_context">Custom Task Context (JSON)</Label>
-                            <Textarea
-                                id="custom_context"
-                                placeholder='{"research_strategy": "deep", "force_research": true}'
-                                value={formData.custom_context}
-                                onChange={(e) => setFormData(prev => ({ ...prev, custom_context: e.target.value }))}
-                                className="font-mono text-sm"
-                                rows={4}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                                Keys: research_strategy, force_research, role, template_id, synthesis_template
-                            </p>
-                        </div>
-                    )}
-
                     <ScheduleBuilder
                         value={formData.cron_expression}
                         onChange={(cron) => setFormData(prev => ({ ...prev, cron_expression: cron }))}
@@ -1059,35 +769,6 @@ function ScheduleFormDialog({
                             required
                             rows={3}
                         />
-                    </div>
-
-                    <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                            <Label htmlFor="budget">Max Budget per Run (USD)</Label>
-                            <Input
-                                id="budget"
-                                type="number"
-                                step="0.01"
-                                min="0"
-                                max="10"
-                                placeholder="e.g. 1.00"
-                                value={formData.max_budget_per_run_usd}
-                                onChange={(e) => setFormData(prev => ({ ...prev, max_budget_per_run_usd: e.target.value }))}
-                            />
-                            <p className="text-xs text-muted-foreground">Max $10.00 per run</p>
-                        </div>
-                        <div className="space-y-2">
-                            <Label htmlFor="timeout">Timeout (seconds)</Label>
-                            <Input
-                                id="timeout"
-                                type="number"
-                                min="60"
-                                placeholder="e.g. 300"
-                                value={formData.timeout_seconds}
-                                onChange={(e) => setFormData(prev => ({ ...prev, timeout_seconds: e.target.value }))}
-                            />
-                            <p className="text-xs text-muted-foreground">Min 60 seconds</p>
-                        </div>
                     </div>
 
                     <DialogFooter>
@@ -1277,17 +958,11 @@ export default function SchedulesPage() {
                                     <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">
                                         Name
                                     </th>
-                                    <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground hidden md:table-cell">
-                                        Type
-                                    </th>
                                     <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground hidden lg:table-cell">
                                         Schedule
                                     </th>
                                     <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">
                                         Status
-                                    </th>
-                                    <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground hidden sm:table-cell">
-                                        Next Run
                                     </th>
                                     <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground hidden xl:table-cell">
                                         Success
@@ -1300,7 +975,7 @@ export default function SchedulesPage() {
                             <tbody className="[&_tr:last-child]:border-0">
                                 {filteredSchedules.length === 0 ? (
                                     <tr>
-                                        <td colSpan={7} className="p-8 text-center text-muted-foreground">
+                                        <td colSpan={5} className="p-8 text-center text-muted-foreground">
                                             {searchQuery ? (
                                                 "No schedules match your search"
                                             ) : (

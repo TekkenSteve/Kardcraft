@@ -13,6 +13,7 @@ import (
 	tclient "go.temporal.io/sdk/client"
 
 	goagentadapter "task-orchestrator/internal/adapter/goagent"
+	"task-orchestrator/internal/adapter/temporalschedule"
 	agentosconfig "task-orchestrator/internal/app/agentos"
 	"task-orchestrator/internal/controller/restapi"
 	"task-orchestrator/internal/repo/memory"
@@ -20,6 +21,7 @@ import (
 	"task-orchestrator/internal/usecase"
 	"task-orchestrator/internal/usecase/command"
 	"task-orchestrator/internal/usecase/readmodel"
+	"task-orchestrator/internal/usecase/schedule"
 	"task-orchestrator/internal/usecase/task"
 )
 
@@ -36,7 +38,7 @@ func NewOrchestratorFromEnv() *restapi.Server {
 		}
 		client, err := tclient.Dial(tclient.Options{HostPort: temporalEndpoint})
 		if err != nil {
-			log.Printf("warning: temporal enabled but dial failed: %v", err)
+			log.Fatalf("Temporal is enabled but unavailable: %v", err)
 		} else {
 			temporalClient = client
 		}
@@ -49,6 +51,7 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	readModel := readmodel.New(readModelStore)
 	var commandSvc usecase.Command
 	var agentRuntime usecase.AgentRuntime
+	var scheduleService *schedule.Service
 	if temporalClient != nil {
 		externalRuntime, err := agentosconfig.ExternalRuntimeConfigFromEnv(storeCfg)
 		if err != nil {
@@ -82,6 +85,20 @@ func NewOrchestratorFromEnv() *restapi.Server {
 	if closer, ok := agentRuntime.(interface{ Close() error }); ok {
 		closeFuncs = append(closeFuncs, func() { _ = closer.Close() })
 	}
+	if temporalClient != nil {
+		scheduleQueue := strings.TrimSpace(os.Getenv("KARDCRAFT_SCHEDULE_TASK_QUEUE"))
+		if scheduleQueue == "" {
+			log.Fatal("KARDCRAFT_SCHEDULE_TASK_QUEUE is required when Temporal is enabled")
+		}
+		scheduleService = schedule.New(sessionStore, temporalschedule.New(temporalClient, scheduleQueue), commandSvc, readModel)
+		stopWorker, err := temporalschedule.StartWorker(temporalClient, scheduleQueue, func(ctx context.Context, input temporalschedule.DispatchInput) error {
+			return scheduleService.Dispatch(ctx, input.ScheduleID)
+		})
+		if err != nil {
+			log.Fatalf("failed to start Temporal schedule worker: %v", err)
+		}
+		closeFuncs = append(closeFuncs, stopWorker)
+	}
 
 	srv := restapi.NewServer(defaultPortFromEnv(), restapi.ServerDependencies{
 		HTTPClient:      &http.Client{Timeout: 5 * time.Second},
@@ -92,6 +109,7 @@ func NewOrchestratorFromEnv() *restapi.Server {
 		SessionStore:    sessionStore,
 		DefaultModelRef: strings.TrimSpace(os.Getenv("GOAGENT_MODEL_REF")),
 		AgentRuntime:    agentRuntime,
+		ScheduleService: scheduleService,
 		CloseFuncs:      closeFuncs,
 	})
 	publisher.AddHook(srv.ProjectDomainEvents)

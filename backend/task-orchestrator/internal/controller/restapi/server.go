@@ -5,6 +5,7 @@ import (
 
 	"task-orchestrator/internal/controller/restapi/v1"
 	"task-orchestrator/internal/usecase"
+	"task-orchestrator/internal/usecase/schedule"
 )
 
 type Server = v1.Server
@@ -19,6 +20,7 @@ type ServerDependencies struct {
 	SessionStore    v1.SessionLifecycleStore
 	DefaultModelRef string
 	AgentRuntime    usecase.AgentRuntime
+	ScheduleService *schedule.Service
 
 	CloseFuncs []func()
 }
@@ -33,6 +35,7 @@ func NewServer(port int, deps ServerDependencies) *Server {
 		SessionStore:    deps.SessionStore,
 		DefaultModelRef: deps.DefaultModelRef,
 		AgentRuntime:    deps.AgentRuntime,
+		ScheduleService: deps.ScheduleService,
 		CloseFuncs:      deps.CloseFuncs,
 	})
 }

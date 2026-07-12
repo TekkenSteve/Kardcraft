@@ -141,8 +141,8 @@ func (s *Server) registerSessionAndTemplateRoutes() {
 	s.mux.HandleFunc("/api/v1/card-templates/", NewCardTemplateDetailHandler(templatesDeps))
 	s.mux.HandleFunc("/api/v1/users/me/template-preferences", NewUserTemplatePreferencesHandler(templatesDeps))
 
-	s.mux.HandleFunc("/api/v1/schedules", NewSchedulesHandler(SchedulesDeps{WriteJSON: writeJSON}))
-	s.mux.HandleFunc("/api/v1/schedules/", NewScheduleDetailHandler())
+	s.mux.HandleFunc("/api/v1/schedules", NewSchedulesHandler(SchedulesDeps{WriteJSON: writeJSON, UserID: func(r *http.Request) string { return userIDFromContext(r.Context()) }, Service: s.scheduleService}))
+	s.mux.HandleFunc("/api/v1/schedules/", NewScheduleDetailHandler(SchedulesDeps{WriteJSON: writeJSON, UserID: func(r *http.Request) string { return userIDFromContext(r.Context()) }, Service: s.scheduleService}))
 
 	s.mux.HandleFunc("/api/v1/cards/", NewCardsHandler(CardsDeps{
 		WriteJSON: writeJSON,

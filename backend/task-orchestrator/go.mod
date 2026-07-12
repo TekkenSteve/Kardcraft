@@ -5,6 +5,7 @@ go 1.26.2
 require (
 	github.com/TekkenSteve/GoAgent v0.0.0-20260708130355-53a9c91f11aa
 	github.com/jackc/pgx/v5 v5.9.1
+	github.com/robfig/cron v1.2.0
 	github.com/redis/go-redis/v9 v9.18.0
 	go.temporal.io/api v1.62.3
 	go.temporal.io/sdk v1.41.0
@@ -83,7 +84,6 @@ require (
 	github.com/nexus-rpc/sdk-go v0.6.0 // indirect
 	github.com/pkg/browser v0.0.0-20240102092130-5ac0b6a4141c // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/robfig/cron v1.2.0 // indirect
 	github.com/rs/zerolog v1.35.0 // indirect
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2 // indirect
 	github.com/savsgio/gotils v0.0.0-20250408102913-196191ec6287 // indirect
