@@ -76,15 +76,35 @@ type TemplateCatalogRow struct {
 	VersionPublished       bool
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
-	Tags                   map[string]any
+	Tags                   any
 	Metadata               map[string]any
 	FrontHTML              string
 	BackHTML               string
 	CSS                    string
 	JS                     string
 	MappingSpec            map[string]any
+	AssetsManifest         map[string]any
+	Compatibility          map[string]any
+	Changelog              string
 	DefaultTemplateID      string
 	DefaultTemplateVersion int
+}
+
+type TemplateImport struct {
+	SourceTemplateID string
+	Name             string
+	Description      string
+	Tags             any
+	Metadata         map[string]any
+	FrontHTML        string
+	BackHTML         string
+	CSS              string
+	JS               string
+	MappingSpec      map[string]any
+	AssetsManifest   map[string]any
+	Compatibility    map[string]any
+	Changelog        string
+	Published        bool
 }
 
 type UsageLedgerRow struct {

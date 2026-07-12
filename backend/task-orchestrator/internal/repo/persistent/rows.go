@@ -102,13 +102,16 @@ type TemplateCatalogRow struct {
 	VersionPublished       bool           `json:"version_published"`
 	CreatedAt              time.Time      `json:"created_at"`
 	UpdatedAt              time.Time      `json:"updated_at"`
-	Tags                   map[string]any `json:"-"`
+	Tags                   any            `json:"-"`
 	Metadata               map[string]any `json:"-"`
 	FrontHTML              string         `json:"-"`
 	BackHTML               string         `json:"-"`
 	CSS                    string         `json:"-"`
 	JS                     string         `json:"-"`
 	MappingSpec            map[string]any `json:"-"`
+	AssetsManifest         map[string]any `json:"-"`
+	Compatibility          map[string]any `json:"-"`
+	Changelog              string         `json:"-"`
 	DefaultTemplateID      string         `json:"-"`
 	DefaultTemplateVersion int            `json:"-"`
 }

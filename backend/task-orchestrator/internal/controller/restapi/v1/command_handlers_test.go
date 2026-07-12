@@ -925,6 +925,10 @@ type fakeReadModelStore struct {
 
 	resolvedDefaultTemplate *usecase.TemplateCatalogRow
 	resolvedDefaultErr      error
+	importedUserID          string
+	importedTemplate        usecase.TemplateImport
+	importResult            usecase.TemplateCatalogRow
+	importErr               error
 }
 
 type capturedEventInsert struct {
@@ -1011,6 +1015,11 @@ func (f *fakeReadModelStore) GetResolvedDefaultTemplate(ctx context.Context, use
 }
 func (f *fakeReadModelStore) UpsertUserTemplatePreference(ctx context.Context, userID, templateID string, version int) error {
 	return nil
+}
+func (f *fakeReadModelStore) ImportUserTemplate(ctx context.Context, userID string, input usecase.TemplateImport) (usecase.TemplateCatalogRow, error) {
+	f.importedUserID = userID
+	f.importedTemplate = input
+	return f.importResult, f.importErr
 }
 func (f *fakeReadModelStore) InsertEvent(ctx context.Context, sessionID, taskID, workflowID, eventType, message, payload, streamID string, ts time.Time) error {
 	f.insertedEvents = append(f.insertedEvents, capturedEventInsert{

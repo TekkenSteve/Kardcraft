@@ -2,12 +2,16 @@ package persistent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"task-orchestrator/internal/usecase"
 )
 
 func (s *SessionStore) ListAccessibleTemplates(ctx context.Context, userID string, limit, offset int) ([]TemplateCatalogRow, int, error) {
@@ -82,7 +86,7 @@ func (s *SessionStore) GetAccessibleTemplate(ctx context.Context, userID, templa
 		return nil, fmt.Errorf("postgres not configured")
 	}
 	var item TemplateCatalogRow
-	var mappingRaw string
+	var mappingRaw, tagsRaw, metadataRaw, assetsRaw, compatibilityRaw string
 	err := s.pg.QueryRow(ctx, `
 		SELECT
 			t.template_id,
@@ -100,7 +104,12 @@ func (s *SessionStore) GetAccessibleTemplate(ctx context.Context, userID, templa
 			COALESCE(v.back_html, ''),
 			COALESCE(v.css, ''),
 			COALESCE(v.js, ''),
-			COALESCE(v.mapping_spec::text, '{}')
+			COALESCE(v.mapping_spec::text, '{}'),
+			COALESCE(v.assets_manifest::text, '{}'),
+			COALESCE(v.compatibility::text, '{}'),
+			COALESCE(v.changelog, ''),
+			COALESCE(t.tags::text, '[]'),
+			COALESCE(t.metadata::text, '{}')
 		FROM kc_card_templates t
 		LEFT JOIN kc_card_template_versions v
 		  ON v.template_id = t.template_id AND v.version = t.latest_version
@@ -125,12 +134,24 @@ func (s *SessionStore) GetAccessibleTemplate(ctx context.Context, userID, templa
 		&item.CSS,
 		&item.JS,
 		&mappingRaw,
+		&assetsRaw,
+		&compatibilityRaw,
+		&item.Changelog,
+		&tagsRaw,
+		&metadataRaw,
 	)
 	if err != nil {
 		return nil, err
 	}
 	item.MappingSpec = make(map[string]any)
 	_ = json.Unmarshal([]byte(mappingRaw), &item.MappingSpec)
+	item.AssetsManifest = make(map[string]any)
+	_ = json.Unmarshal([]byte(assetsRaw), &item.AssetsManifest)
+	item.Compatibility = make(map[string]any)
+	_ = json.Unmarshal([]byte(compatibilityRaw), &item.Compatibility)
+	_ = json.Unmarshal([]byte(tagsRaw), &item.Tags)
+	item.Metadata = make(map[string]any)
+	_ = json.Unmarshal([]byte(metadataRaw), &item.Metadata)
 	return &item, nil
 }
 
@@ -228,4 +249,90 @@ func (s *SessionStore) UpsertUserTemplatePreference(ctx context.Context, userID,
 		    updated_at = NOW()
 	`, userID, templateID, version)
 	return err
+}
+
+func (s *SessionStore) ImportUserTemplate(ctx context.Context, userID string, input usecase.TemplateImport) (TemplateCatalogRow, error) {
+	if s == nil || s.pg == nil {
+		return TemplateCatalogRow{}, fmt.Errorf("postgres not configured")
+	}
+	if strings.TrimSpace(userID) == "" || strings.TrimSpace(input.Name) == "" {
+		return TemplateCatalogRow{}, fmt.Errorf("user_id and template name are required")
+	}
+	if strings.TrimSpace(input.FrontHTML) == "" || strings.TrimSpace(input.BackHTML) == "" || strings.TrimSpace(input.CSS) == "" {
+		return TemplateCatalogRow{}, fmt.Errorf("front_html, back_html, and css are required")
+	}
+	templateID, err := newUserTemplateID()
+	if err != nil {
+		return TemplateCatalogRow{}, err
+	}
+	metadata := cloneJSONMap(input.Metadata)
+	metadata["import_source_template_id"] = strings.TrimSpace(input.SourceTemplateID)
+	tagsJSON, err := json.Marshal(input.Tags)
+	if err != nil {
+		return TemplateCatalogRow{}, fmt.Errorf("marshal template tags: %w", err)
+	}
+	metadataJSON, err := json.Marshal(metadata)
+	if err != nil {
+		return TemplateCatalogRow{}, fmt.Errorf("marshal template metadata: %w", err)
+	}
+	mappingJSON, err := json.Marshal(cloneJSONMap(input.MappingSpec))
+	if err != nil {
+		return TemplateCatalogRow{}, fmt.Errorf("marshal mapping_spec: %w", err)
+	}
+	assetsJSON, err := json.Marshal(cloneJSONMap(input.AssetsManifest))
+	if err != nil {
+		return TemplateCatalogRow{}, fmt.Errorf("marshal assets_manifest: %w", err)
+	}
+	compatibilityJSON, err := json.Marshal(cloneJSONMap(input.Compatibility))
+	if err != nil {
+		return TemplateCatalogRow{}, fmt.Errorf("marshal compatibility: %w", err)
+	}
+	tx, err := s.pg.BeginTx(ctx, pgx.TxOptions{})
+	if err != nil {
+		return TemplateCatalogRow{}, err
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO kc_card_templates
+			(template_id, name, description, scope, owner_user_id, status, latest_version, tags, metadata)
+		VALUES ($1, $2, $3, 'user', $4, 'active', 1, $5::jsonb, $6::jsonb)
+	`, templateID, strings.TrimSpace(input.Name), strings.TrimSpace(input.Description), userID, tagsJSON, metadataJSON); err != nil {
+		return TemplateCatalogRow{}, err
+	}
+	if _, err = tx.Exec(ctx, `
+		INSERT INTO kc_card_template_versions
+			(template_id, version, front_html, back_html, css, js, mapping_spec, assets_manifest, compatibility, changelog, is_published)
+		VALUES ($1, 1, $2, $3, $4, $5, $6::jsonb, $7::jsonb, $8::jsonb, $9, $10)
+	`, templateID, input.FrontHTML, input.BackHTML, input.CSS, input.JS, mappingJSON, assetsJSON, compatibilityJSON, strings.TrimSpace(input.Changelog), input.Published); err != nil {
+		return TemplateCatalogRow{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return TemplateCatalogRow{}, err
+	}
+	return TemplateCatalogRow{
+		TemplateID: templateID, Name: strings.TrimSpace(input.Name), Description: strings.TrimSpace(input.Description),
+		Scope: "user", OwnerUserID: userID, Status: "active", LatestVersion: 1, VersionPublished: input.Published,
+		Tags: input.Tags, Metadata: metadata, FrontHTML: input.FrontHTML, BackHTML: input.BackHTML,
+		CSS: input.CSS, JS: input.JS, MappingSpec: cloneJSONMap(input.MappingSpec),
+		AssetsManifest: cloneJSONMap(input.AssetsManifest), Compatibility: cloneJSONMap(input.Compatibility), Changelog: strings.TrimSpace(input.Changelog),
+	}, nil
+}
+
+func newUserTemplateID() (string, error) {
+	buf := make([]byte, 12)
+	if _, err := rand.Read(buf); err != nil {
+		return "", fmt.Errorf("generate template ID: %w", err)
+	}
+	return "tpl_" + hex.EncodeToString(buf), nil
+}
+
+func cloneJSONMap(source map[string]any) map[string]any {
+	if source == nil {
+		return map[string]any{}
+	}
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
 }

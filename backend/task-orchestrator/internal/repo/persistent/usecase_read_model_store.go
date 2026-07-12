@@ -172,6 +172,14 @@ func (s *UsecaseReadModelStore) UpsertUserTemplatePreference(ctx context.Context
 	return s.store.UpsertUserTemplatePreference(ctx, userID, templateID, version)
 }
 
+func (s *UsecaseReadModelStore) ImportUserTemplate(ctx context.Context, userID string, input usecase.TemplateImport) (usecase.TemplateCatalogRow, error) {
+	row, err := s.store.ImportUserTemplate(ctx, userID, input)
+	if err != nil {
+		return usecase.TemplateCatalogRow{}, err
+	}
+	return convertTemplateRow(row), nil
+}
+
 func (s *UsecaseReadModelStore) InsertEvent(ctx context.Context, sessionID, taskID, workflowID, eventType, message, payload, streamID string, ts time.Time) error {
 	return s.store.InsertEvent(ctx, sessionID, taskID, workflowID, eventType, message, payload, streamID, ts)
 }
@@ -300,6 +308,9 @@ func convertTemplateRow(row TemplateCatalogRow) usecase.TemplateCatalogRow {
 		CSS:                    row.CSS,
 		JS:                     row.JS,
 		MappingSpec:            row.MappingSpec,
+		AssetsManifest:         row.AssetsManifest,
+		Compatibility:          row.Compatibility,
+		Changelog:              row.Changelog,
 		DefaultTemplateID:      row.DefaultTemplateID,
 		DefaultTemplateVersion: row.DefaultTemplateVersion,
 	}

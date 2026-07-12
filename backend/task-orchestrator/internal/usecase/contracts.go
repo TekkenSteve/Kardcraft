@@ -50,6 +50,7 @@ type (
 		GetUserTemplatePreference(ctx context.Context, userID string) (*TemplateCatalogRow, error)
 		GetResolvedDefaultTemplate(ctx context.Context, userID string) (*TemplateCatalogRow, error)
 		UpsertUserTemplatePreference(ctx context.Context, userID, templateID string, version int) error
+		ImportUserTemplate(ctx context.Context, userID string, input TemplateImport) (TemplateCatalogRow, error)
 		InsertEvent(ctx context.Context, sessionID, taskID, workflowID, eventType, message, payload, streamID string, ts time.Time) error
 		InsertLLMUsage(ctx context.Context, row UsageLedgerRow) (bool, error)
 	}

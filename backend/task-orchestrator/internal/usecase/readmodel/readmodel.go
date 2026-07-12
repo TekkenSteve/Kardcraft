@@ -76,6 +76,9 @@ func (s *UseCase) GetResolvedDefaultTemplate(ctx context.Context, userID string)
 func (s *UseCase) UpsertUserTemplatePreference(ctx context.Context, userID, templateID string, version int) error {
 	return s.store.UpsertUserTemplatePreference(ctx, userID, templateID, version)
 }
+func (s *UseCase) ImportUserTemplate(ctx context.Context, userID string, input usecase.TemplateImport) (usecase.TemplateCatalogRow, error) {
+	return s.store.ImportUserTemplate(ctx, userID, input)
+}
 func (s *UseCase) InsertEvent(ctx context.Context, sessionID, taskID, workflowID, eventType, message, payload, streamID string, ts time.Time) error {
 	return s.store.InsertEvent(ctx, sessionID, taskID, workflowID, eventType, message, payload, streamID, ts)
 }

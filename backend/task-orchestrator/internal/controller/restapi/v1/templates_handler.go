@@ -82,11 +82,65 @@ func NewCardTemplatesHandler(deps TemplatesDeps) http.HandlerFunc {
 			}
 			deps.WriteJSON(w, http.StatusOK, resp)
 		case http.MethodPost:
-			http.Error(w, "template mutation is not supported by task-orchestrator", http.StatusNotImplemented)
+			handleTemplateImport(w, r, deps)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	}
+}
+
+func handleTemplateImport(w http.ResponseWriter, r *http.Request, deps TemplatesDeps) {
+	var payload map[string]any
+	if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	templatePayload := MapFromAny(payload["template"])
+	versionPayload := MapFromAny(payload["version"])
+	if templatePayload == nil {
+		templatePayload = payload
+	}
+	if versionPayload == nil {
+		versionPayload = payload
+	}
+	name := strings.TrimSpace(StringOrDefault(templatePayload["name"], ""))
+	frontHTML := StringOrDefault(versionPayload["front_html"], "")
+	backHTML := StringOrDefault(versionPayload["back_html"], "")
+	css := StringOrDefault(versionPayload["css"], "")
+	if name == "" || strings.TrimSpace(frontHTML) == "" || strings.TrimSpace(backHTML) == "" || strings.TrimSpace(css) == "" {
+		http.Error(w, "name, front_html, back_html, and css are required", http.StatusBadRequest)
+		return
+	}
+	published := true
+	if raw, ok := versionPayload["is_published"].(bool); ok {
+		published = raw
+	}
+	row, err := deps.ReadModel.ImportUserTemplate(r.Context(), deps.UserID(r), usecase.TemplateImport{
+		SourceTemplateID: StringOrDefault(templatePayload["template_id"], StringOrDefault(versionPayload["template_id"], "")),
+		Name:             name,
+		Description:      StringOrDefault(templatePayload["description"], ""),
+		Tags:             templatePayload["tags"],
+		Metadata:         MapFromAny(templatePayload["metadata"]),
+		FrontHTML:        frontHTML,
+		BackHTML:         backHTML,
+		CSS:              css,
+		JS:               StringOrDefault(versionPayload["js"], ""),
+		MappingSpec:      MapFromAny(versionPayload["mapping_spec"]),
+		AssetsManifest:   MapFromAny(versionPayload["assets_manifest"]),
+		Compatibility:    MapFromAny(versionPayload["compatibility"]),
+		Changelog:        StringOrDefault(versionPayload["changelog"], ""),
+		Published:        published,
+	})
+	if err != nil {
+		http.Error(w, "failed to import template", http.StatusInternalServerError)
+		return
+	}
+	deps.WriteJSON(w, http.StatusCreated, map[string]any{
+		"ok":             true,
+		"template_id":    row.TemplateID,
+		"version":        row.LatestVersion,
+		"schema_version": "kctpl/v1",
+	})
 }
 
 func NewCardTemplateDetailHandler(deps TemplatesDeps) http.HandlerFunc {
@@ -388,16 +442,21 @@ func handleTemplateExport(w http.ResponseWriter, r *http.Request, templateID str
 			"version_published": row.VersionPublished,
 			"created_at":        row.CreatedAt.UTC().Format(time.RFC3339),
 			"updated_at":        row.UpdatedAt.UTC().Format(time.RFC3339),
+			"tags":              row.Tags,
+			"metadata":          row.Metadata,
 		},
 		"version": map[string]any{
-			"template_id":  row.TemplateID,
-			"version":      row.LatestVersion,
-			"front_html":   row.FrontHTML,
-			"back_html":    row.BackHTML,
-			"css":          row.CSS,
-			"js":           row.JS,
-			"is_published": row.VersionPublished,
-			"mapping_spec": row.MappingSpec,
+			"template_id":     row.TemplateID,
+			"version":         row.LatestVersion,
+			"front_html":      row.FrontHTML,
+			"back_html":       row.BackHTML,
+			"css":             row.CSS,
+			"js":              row.JS,
+			"is_published":    row.VersionPublished,
+			"mapping_spec":    row.MappingSpec,
+			"assets_manifest": row.AssetsManifest,
+			"compatibility":   row.Compatibility,
+			"changelog":       row.Changelog,
 		},
 	})
 }
