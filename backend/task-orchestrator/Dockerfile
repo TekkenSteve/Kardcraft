@@ -25,3 +25,5 @@ USER nonroot:nonroot
 
 COPY --from=builder --chown=nonroot:nonroot /out/task-orchestrator /app/
 COPY --chown=nonroot:nonroot config.yaml /app/
+
+CMD ["/app/task-orchestrator"]
