@@ -5,23 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
+
+	"task-orchestrator/internal/usecase"
 )
 
 type SSEDeps struct {
 	WriteAPIError func(w http.ResponseWriter, status int, code, message string, details map[string]any)
 	UserID        func(r *http.Request) string
-	Authorize     func(r *http.Request, userID, workflowID string) bool
-	NowRFC3339    func() string
-
-	Subscribe                  func(workflowID string) (int, chan OutboundEvent)
-	Unsubscribe                func(workflowID string, subscriberID int)
-	EnsureWorkflowStreamReader func(workflowID string)
-	Backlog                    func(workflowID string, afterEventID int64) []map[string]any
+	Authorize     func(r *http.Request, userID, taskID string) bool
+	Feed          usecase.ExecutionEventFeed
 
 	AuthzDeniedCode string
 }
@@ -32,216 +28,154 @@ func NewSSEHandler(deps SSEDeps) http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		workflowIDs := resolveWorkflowIDs(r)
-		if len(workflowIDs) == 0 {
+		taskIDs := resolveWorkflowIDs(r)
+		if len(taskIDs) == 0 {
 			http.Error(w, "workflow_id required", http.StatusBadRequest)
 			return
 		}
-		afterEventID, hasCursor := resolveLastEventID(r)
 		userID := deps.UserID(r)
-		for _, workflowID := range workflowIDs {
-			if !deps.Authorize(r, userID, workflowID) {
-				deps.WriteAPIError(w, http.StatusForbidden, deps.AuthzDeniedCode, "access denied for workflow stream", map[string]any{
-					"workflow_id": workflowID,
-				})
+		for _, taskID := range taskIDs {
+			if !deps.Authorize(r, userID, taskID) {
+				deps.WriteAPIError(w, http.StatusForbidden, deps.AuthzDeniedCode, "access denied for workflow stream", map[string]any{"workflow_id": taskID})
 				return
 			}
 		}
+		if deps.Feed == nil {
+			http.Error(w, "execution event feed unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
+		cursor := executionEventCursor(r, taskIDs)
+		subscriptions := make([]usecase.TaskExecutionSubscription, 0, len(taskIDs))
+		for _, taskID := range taskIDs {
+			subscription, err := deps.Feed.Subscribe(r.Context(), taskID, cursor[taskID])
+			if err != nil {
+				for _, opened := range subscriptions {
+					_ = opened.Close()
+				}
+				http.Error(w, "failed to subscribe to execution events", http.StatusBadGateway)
+				return
+			}
+			subscriptions = append(subscriptions, subscription)
+		}
+		defer func() {
+			for _, subscription := range subscriptions {
+				_ = subscription.Close()
+			}
+		}()
 
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache, no-transform")
 		w.Header().Set("Connection", "keep-alive")
 		w.Header().Set("X-Accel-Buffering", "no")
-		w.Header().Set("Transfer-Encoding", "chunked")
-
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 			return
 		}
 
-		type subscription struct {
-			workflowID string
-			id         int
-			events     chan OutboundEvent
-		}
-		subscriptions := make([]subscription, 0, len(workflowIDs))
-		for _, workflowID := range workflowIDs {
-			subscriberID, events := deps.Subscribe(workflowID)
-			subscriptions = append(subscriptions, subscription{
-				workflowID: workflowID,
-				id:         subscriberID,
-				events:     events,
-			})
-			deps.EnsureWorkflowStreamReader(workflowID)
-		}
-		defer func() {
-			for _, sub := range subscriptions {
-				deps.Unsubscribe(sub.workflowID, sub.id)
-			}
-		}()
-
-		fmt.Fprintf(w, ": %s\n\n", strings.Repeat(" ", 1024))
+		fmt.Fprint(w, ": connected\n\n")
 		flusher.Flush()
-
-		if hasCursor {
-			type backlogEvent struct {
-				id      int64
-				event   string
-				payload map[string]any
-			}
-			events := make([]backlogEvent, 0, 128)
-			for _, workflowID := range workflowIDs {
-				for _, payload := range deps.Backlog(workflowID, afterEventID) {
-					eventType, _ := payload["event_type"].(string)
-					if strings.TrimSpace(eventType) == "" {
-						eventType = "STATUS_UPDATE"
-					}
-					eventID := resolveBacklogEventID(payload)
-					events = append(events, backlogEvent{
-						id:      eventID,
-						event:   eventType,
-						payload: payload,
-					})
-				}
-			}
-			slices.SortFunc(events, func(a, b backlogEvent) int {
-				if a.id < b.id {
-					return -1
-				}
-				if a.id > b.id {
-					return 1
-				}
-				return 0
-			})
-			for _, event := range events {
-				if event.id > 0 {
-					fmt.Fprintf(w, "id: %d\n", event.id)
-				}
-				b, _ := json.Marshal(event.payload)
-				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.event, string(b))
-			}
-		}
-		flusher.Flush()
-
-		ctx := r.Context()
-		merged := make(chan OutboundEvent, 256)
-		mergeCtx, mergeCancel := context.WithCancel(ctx)
-		var wg sync.WaitGroup
-		for _, sub := range subscriptions {
-			wg.Add(1)
-			go func(ch chan OutboundEvent) {
-				defer wg.Done()
-				for {
-					select {
-					case <-mergeCtx.Done():
-						return
-					case ev, ok := <-ch:
-						if !ok {
-							return
-						}
-						select {
-						case merged <- ev:
-						case <-mergeCtx.Done():
-							return
-						}
-					}
-				}
-			}(sub.events)
-		}
-		go func() {
-			wg.Wait()
-			close(merged)
-		}()
-		defer mergeCancel()
-
-		heartbeat := time.NewTicker(10 * time.Second)
-		defer heartbeat.Stop()
-		for {
-			select {
-			case <-ctx.Done():
+		streamExecutionEvents(r.Context(), subscriptions, func(event usecase.TaskExecutionEvent) {
+			payload, err := json.Marshal(executionEventPayload(event))
+			if err != nil {
 				return
-			case <-heartbeat.C:
-				fmt.Fprintf(w, ": ping %d\n\n", time.Now().UTC().Unix())
-				flusher.Flush()
-			case ev, ok := <-merged:
-				if !ok {
+			}
+			fmt.Fprintf(w, "id: %d\n", event.Sequence)
+			fmt.Fprintf(w, "event: %s\n", event.EventType)
+			fmt.Fprintf(w, "data: %s\n\n", payload)
+			flusher.Flush()
+		}, func() {
+			fmt.Fprintf(w, ": ping %d\n\n", time.Now().UTC().Unix())
+			flusher.Flush()
+		})
+	}
+}
+
+func streamExecutionEvents(ctx context.Context, subscriptions []usecase.TaskExecutionSubscription, emit func(usecase.TaskExecutionEvent), heartbeat func()) {
+	merged := make(chan usecase.TaskExecutionEvent)
+	var group sync.WaitGroup
+	for _, subscription := range subscriptions {
+		group.Add(1)
+		go func(subscription usecase.TaskExecutionSubscription) {
+			defer group.Done()
+			for event := range subscription.Events() {
+				select {
+				case merged <- event:
+				case <-ctx.Done():
 					return
 				}
-				fmt.Fprintf(w, "id: %d\n", ev.ID)
-				fmt.Fprintf(w, "event: %s\n", ev.Event)
-				fmt.Fprintf(w, "data: %s\n\n", string(ev.Payload))
-				flusher.Flush()
 			}
+		}(subscription)
+	}
+	go func() {
+		group.Wait()
+		close(merged)
+	}()
+
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			heartbeat()
+		case event, ok := <-merged:
+			if !ok {
+				return
+			}
+			emit(event)
 		}
 	}
+}
+
+func executionEventPayload(event usecase.TaskExecutionEvent) map[string]any {
+	payload := make(map[string]any, len(event.Payload)+7)
+	for key, value := range event.Payload {
+		payload[key] = value
+	}
+	payload["event_id"] = event.EventID
+	payload["event_type"] = event.EventType
+	payload["run_id"] = event.RunID
+	payload["thread_id"] = event.ThreadID
+	payload["sequence"] = event.Sequence
+	payload["occurred_at"] = event.Timestamp.UTC().Format(time.RFC3339Nano)
+	payload["schema_version"] = "kardcraft.execution-event.v1"
+	return payload
 }
 
 func resolveWorkflowIDs(r *http.Request) []string {
 	values := r.URL.Query()["workflow_id"]
-	if len(values) == 0 {
-		return nil
-	}
 	seen := make(map[string]struct{}, len(values))
-	out := make([]string, 0, len(values))
-	for _, raw := range values {
-		for _, token := range strings.Split(raw, ",") {
-			workflowID := strings.TrimSpace(token)
-			if workflowID == "" {
+	var taskIDs []string
+	for _, value := range values {
+		for _, token := range strings.Split(value, ",") {
+			taskID := strings.TrimSpace(token)
+			if taskID == "" {
 				continue
 			}
-			if _, ok := seen[workflowID]; ok {
+			if _, exists := seen[taskID]; exists {
 				continue
 			}
-			seen[workflowID] = struct{}{}
-			out = append(out, workflowID)
+			seen[taskID] = struct{}{}
+			taskIDs = append(taskIDs, taskID)
 		}
 	}
-	return out
+	return taskIDs
 }
 
-func resolveBacklogEventID(payload map[string]any) int64 {
-	if payload == nil {
-		return 0
+func executionEventCursor(r *http.Request, taskIDs []string) map[string]int64 {
+	cursor := make(map[string]int64, len(taskIDs))
+	if len(taskIDs) != 1 {
+		return cursor
 	}
-	switch typed := payload["event_id"].(type) {
-	case int64:
-		if typed > 0 {
-			return typed
-		}
-	case int:
-		if typed > 0 {
-			return int64(typed)
-		}
-	case float64:
-		if typed > 0 {
-			return int64(typed)
-		}
-	case string:
-		return parseLastEventID(strings.TrimSpace(typed))
-	}
-	return 0
-}
-
-func resolveLastEventID(r *http.Request) (int64, bool) {
-	queryValue := strings.TrimSpace(r.URL.Query().Get("last_event_id"))
-	if queryValue != "" {
-		return parseLastEventID(queryValue), true
-	}
-	headerValue := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
-	if headerValue != "" {
-		return parseLastEventID(headerValue), true
-	}
-	return 0, false
-}
-
-func parseLastEventID(value string) int64 {
+	value := strings.TrimSpace(r.URL.Query().Get("last_event_id"))
 	if value == "" {
-		return 0
+		value = strings.TrimSpace(r.Header.Get("Last-Event-ID"))
 	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || parsed < 0 {
-		return 0
+	if sequence, err := strconv.ParseInt(value, 10, 64); err == nil && sequence >= 0 {
+		cursor[taskIDs[0]] = sequence
 	}
-	return parsed
+	return cursor
 }

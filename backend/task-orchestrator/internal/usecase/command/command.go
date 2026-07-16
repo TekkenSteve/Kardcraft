@@ -2,6 +2,9 @@ package command
 
 import (
 	"context"
+	"crypto/sha1"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -10,18 +13,21 @@ import (
 )
 
 type UseCase struct {
-	tasks        usecase.Task
-	store        usecase.CommandSessionStore
-	agentRuntime usecase.AgentRuntime
-	backend      usecase.AgentBackendRef
-	now          func() time.Time
+	tasks     usecase.Task
+	store     usecase.CommandSessionStore
+	execution usecase.TaskExecution
+	events    usecase.SessionEventRecorder
+	now       func() time.Time
 }
 
-func New(tasks usecase.Task, store usecase.CommandSessionStore, agentRuntime usecase.AgentRuntime, backend usecase.AgentBackendRef) (*UseCase, error) {
-	if strings.TrimSpace(backend.Kind) == "" || strings.TrimSpace(backend.Name) == "" {
-		return nil, fmt.Errorf("agent backend kind and name are required")
+func New(tasks usecase.Task, store usecase.CommandSessionStore, execution usecase.TaskExecution, eventRecorders ...usecase.SessionEventRecorder) (*UseCase, error) {
+	if execution == nil {
+		return nil, fmt.Errorf("task execution is required")
 	}
-	return &UseCase{tasks: tasks, store: store, agentRuntime: agentRuntime, backend: backend, now: time.Now}, nil
+	if len(eventRecorders) == 0 || eventRecorders[0] == nil {
+		return nil, fmt.Errorf("session event recorder is required")
+	}
+	return &UseCase{tasks: tasks, store: store, execution: execution, events: eventRecorders[0], now: time.Now}, nil
 }
 
 func (s *UseCase) CreateTaskInSession(ctx context.Context, cmd usecase.CreateTaskCommand) (*usecase.CreateTaskResult, string, error) {
@@ -101,12 +107,12 @@ func findSessionTask(tasks []usecase.SessionTask, taskID string) (usecase.Sessio
 }
 
 func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskCommand) (string, error) {
-	if s.agentRuntime == nil {
-		return "", fmt.Errorf("agent runtime is required for task execution")
+	if s.execution == nil {
+		return "", fmt.Errorf("task execution is required")
 	}
 	modelRef := strings.TrimSpace(cmd.Config.ModelRef)
-	agentInput := buildAgentTaskInput(cmd)
-	status, err := s.agentRuntime.StartAgentRun(ctx, usecase.AgentRunRequest{
+	executionInput := buildTaskExecutionInput(cmd)
+	status, err := s.execution.StartTaskExecution(ctx, usecase.TaskExecutionRequest{
 		RunID:          cmd.TaskID,
 		ThreadID:       cmd.SessionID,
 		AccountID:      cmd.UserID,
@@ -116,8 +122,7 @@ func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskComma
 		UserMessage:    strings.TrimSpace(cmd.Input.Query),
 		IdempotencyKey: strings.TrimSpace(cmd.Metadata.RequestID),
 		RequestedAt:    s.now().UTC(),
-		Backend:        s.backend,
-		Input:          agentInput,
+		Input:          executionInput,
 	})
 	if err != nil {
 		return "", err
@@ -125,7 +130,7 @@ func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskComma
 	return status.RunID, nil
 }
 
-func buildAgentTaskInput(cmd usecase.CreateTaskCommand) map[string]any {
+func buildTaskExecutionInput(cmd usecase.CreateTaskCommand) map[string]any {
 	return map[string]any{
 		"schema_version":       "kardcraft.task.input.v1",
 		"task_id":              strings.TrimSpace(cmd.TaskID),
@@ -158,8 +163,8 @@ func systemPromptFromCommand(cmd usecase.CreateTaskCommand) string {
 }
 
 func (s *UseCase) SendMessageToSession(ctx context.Context, cmd usecase.SessionMessageCommand) (*usecase.SessionMessageResult, error) {
-	if s.agentRuntime == nil {
-		return nil, fmt.Errorf("agent runtime is required for session messages")
+	if s.execution == nil {
+		return nil, fmt.Errorf("task execution is required for session messages")
 	}
 	if err := s.store.EnsureSessionAccess(ctx, cmd.SessionID, cmd.UserID); err != nil {
 		return nil, err
@@ -192,7 +197,7 @@ func (s *UseCase) SendMessageToSession(ctx context.Context, cmd usecase.SessionM
 		"context_envelope": cmd.ContextEnvelope,
 		"metadata":         cmd.Metadata,
 	}
-	if err := s.agentRuntime.SignalAgentRun(ctx, taskID, usecase.AgentSignal{
+	if err := s.execution.SignalTaskExecution(ctx, taskID, usecase.TaskExecutionSignal{
 		Type:           usecase.AgentSignalUserMessage,
 		IdempotencyKey: idempotencyKey,
 		Payload:        payload,
@@ -200,12 +205,52 @@ func (s *UseCase) SendMessageToSession(ctx context.Context, cmd usecase.SessionM
 	}); err != nil {
 		return nil, err
 	}
+	streamID := sessionMessageStreamID(cmd.SessionID, taskID, idempotencyKey)
+	if err := s.RecordSessionEvents(ctx, []usecase.SessionEvent{{
+		SessionID: cmd.SessionID, TaskID: taskID, WorkflowID: taskID, Type: "MESSAGE_SENT", Message: "User message sent",
+		Payload: map[string]any{
+			"schema_version": "kardcraft.user_message.v1",
+			"content":        strings.TrimSpace(cmd.Content), "attachments": cmd.Attachments, "file_ids": cmd.FileIDs,
+			"context": cmd.Context, "context_envelope": cmd.ContextEnvelope, "metadata": cmd.Metadata,
+		},
+		StreamID: streamID, OccurredAt: sentAt,
+	}}); err != nil {
+		return nil, err
+	}
 	return &usecase.SessionMessageResult{
 		SessionID:      cmd.SessionID,
 		ActiveTaskID:   taskID,
 		IdempotencyKey: idempotencyKey,
+		StreamID:       streamID,
 		SentAt:         sentAt,
 	}, nil
+}
+
+func (s *UseCase) RecordSessionEvents(ctx context.Context, events []usecase.SessionEvent) error {
+	if s.events == nil {
+		return fmt.Errorf("session event recorder is required")
+	}
+	for _, event := range events {
+		payloadBytes, err := json.Marshal(event.Payload)
+		if err != nil {
+			return fmt.Errorf("encode session event %s: %w", event.Type, err)
+		}
+		occurredAt := event.OccurredAt
+		if occurredAt.IsZero() {
+			occurredAt = s.now().UTC()
+		}
+		if err := s.events.InsertEvent(ctx, event.SessionID, event.TaskID, event.WorkflowID, event.Type, event.Message, string(payloadBytes), event.StreamID, occurredAt); err != nil {
+			return fmt.Errorf("record session event %s: %w", event.Type, err)
+		}
+	}
+	return nil
+}
+
+func sessionMessageStreamID(sessionID, taskID, idempotencyKey string) string {
+	sum := sha1.Sum([]byte(strings.Join([]string{
+		"session-message", strings.TrimSpace(sessionID), strings.TrimSpace(taskID), strings.TrimSpace(idempotencyKey),
+	}, "|")))
+	return "message:user:" + hex.EncodeToString(sum[:])
 }
 
 func (s *UseCase) ControlSession(ctx context.Context, cmd usecase.SessionControlCommand) (*usecase.SessionControlResult, error) {
@@ -266,11 +311,11 @@ func (s *UseCase) ControlSession(ctx context.Context, cmd usecase.SessionControl
 }
 
 func (s *UseCase) controlWorkflow(ctx context.Context, taskID, taskType string, op usecase.AgentControlOperation, idempotencyKey string, signal usecase.ControlSignal) error {
-	if s.agentRuntime == nil {
-		return fmt.Errorf("agent runtime is required for task control")
+	if s.execution == nil {
+		return fmt.Errorf("task execution is required for task control")
 	}
 	_ = taskType
-	return s.agentRuntime.ControlAgentRun(ctx, taskID, usecase.AgentControlRequest{
+	return s.execution.ControlTaskExecution(ctx, taskID, usecase.TaskExecutionControl{
 		Operation:      op,
 		IdempotencyKey: idempotencyKey,
 		RequestedAt:    signal.Timestamp,

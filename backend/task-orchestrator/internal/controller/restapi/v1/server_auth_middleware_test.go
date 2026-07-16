@@ -6,11 +6,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 )
 
 func TestWithAuth_RequiresGatewayIdentityForAPIPaths(t *testing.T) {
-	s := &Server{httpClient: &http.Client{Timeout: 200 * time.Millisecond}}
+	s := &Server{}
 	protected := s.withAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 	}))
@@ -29,7 +28,7 @@ func TestWithAuth_RequiresGatewayIdentityForAPIPaths(t *testing.T) {
 }
 
 func TestWithAuth_AllowsHealthWithoutCredentials(t *testing.T) {
-	s := &Server{httpClient: &http.Client{Timeout: 200 * time.Millisecond}}
+	s := &Server{}
 	handler := s.withAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := userIDFromContext(r.Context()); got != "" {
 			t.Fatalf("expected empty user on non-auth route, got %q", got)
@@ -47,7 +46,7 @@ func TestWithAuth_AllowsHealthWithoutCredentials(t *testing.T) {
 }
 
 func TestWithAuth_UsesGatewayIdentityHeader(t *testing.T) {
-	s := &Server{httpClient: &http.Client{Timeout: 200 * time.Millisecond}}
+	s := &Server{}
 	handler := s.withAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"user_id": userIDFromContext(r.Context())})
 	}))
@@ -70,7 +69,7 @@ func TestWithAuth_UsesGatewayIdentityHeader(t *testing.T) {
 }
 
 func TestWithAuth_HonorsInjectedContextUserForUnitTests(t *testing.T) {
-	s := &Server{httpClient: &http.Client{Timeout: 200 * time.Millisecond}}
+	s := &Server{}
 	handler := s.withAuth(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]any{"user_id": userIDFromContext(r.Context())})
 	}))

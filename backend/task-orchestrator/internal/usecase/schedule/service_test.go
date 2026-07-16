@@ -181,6 +181,7 @@ func (*fakeCommand) SendMessageToSession(context.Context, usecase.SessionMessage
 func (*fakeCommand) ControlSession(context.Context, usecase.SessionControlCommand) (*usecase.SessionControlResult, error) {
 	return nil, nil
 }
+func (*fakeCommand) RecordSessionEvents(context.Context, []usecase.SessionEvent) error { return nil }
 
 type fakeReadModel struct {
 	template *usecase.TemplateCatalogRow

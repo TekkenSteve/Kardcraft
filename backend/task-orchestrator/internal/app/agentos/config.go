@@ -13,7 +13,6 @@ import (
 	agentostemporal "github.com/TekkenSteve/GoAgent/agentos/temporal"
 
 	"task-orchestrator/internal/repo/persistent"
-	"task-orchestrator/internal/usecase"
 )
 
 const (
@@ -35,7 +34,7 @@ const (
 )
 
 type ExternalRuntimeConfig struct {
-	Backend usecase.AgentBackendRef
+	Backend agentos.BackendRef
 	Runtime agentostemporal.RuntimeConfig
 }
 
@@ -64,8 +63,8 @@ func ExternalRuntimeConfigFromEnv(storeCfg persistent.SessionStoreConfig) (Exter
 		return ExternalRuntimeConfig{}, fmt.Errorf("invalid redis configuration: %w", err)
 	}
 
-	backend := usecase.AgentBackendRef{
-		Kind: string(agentos.BackendKindTemporalExternal),
+	backend := agentos.BackendRef{
+		Kind: agentos.BackendKindTemporalExternal,
 		Name: backendName,
 	}
 
@@ -73,7 +72,9 @@ func ExternalRuntimeConfigFromEnv(storeCfg persistent.SessionStoreConfig) (Exter
 		Backend: backend,
 		Runtime: agentostemporal.RuntimeConfig{
 			TemporalTaskQueues: agentostemporal.DefaultTaskQueues(),
+			PostgresURL:        storeCfg.PostgresDSN,
 			RedisURL:           redisURL,
+			ArtifactStore:      artifactStoreConfigFromEnv(),
 			TemporalExternalBackends: []agentostemporal.ExternalBackendConfig{
 				{
 					Name:         backend.Name,
@@ -92,6 +93,51 @@ func ExternalRuntimeConfigFromEnv(storeCfg persistent.SessionStoreConfig) (Exter
 			},
 		},
 	}, nil
+}
+
+func artifactStoreConfigFromEnv() agentostemporal.ArtifactStoreConfig {
+	backend := agentostemporal.ArtifactStoreBackend(strings.TrimSpace(os.Getenv("GOAGENT_ARTIFACT_STORE_BACKEND")))
+	if backend == "" {
+		backend = agentostemporal.ArtifactStoreBackendS3
+	}
+
+	return agentostemporal.ArtifactStoreConfig{
+		Backend: backend,
+		Local: agentostemporal.LocalArtifactStoreConfig{
+			Root: strings.TrimSpace(os.Getenv("GOAGENT_ARTIFACT_LOCAL_ROOT")),
+		},
+		S3: agentostemporal.S3ArtifactStoreConfig{
+			Bucket:          strings.TrimSpace(os.Getenv("GOAGENT_ARTIFACT_S3_BUCKET")),
+			Region:          strings.TrimSpace(os.Getenv("GOAGENT_ARTIFACT_S3_REGION")),
+			Endpoint:        strings.TrimSpace(os.Getenv("GOAGENT_ARTIFACT_S3_ENDPOINT")),
+			AccessKeyID:     strings.TrimSpace(os.Getenv("GOAGENT_ARTIFACT_S3_ACCESS_KEY_ID")),
+			SecretAccessKey: strings.TrimSpace(os.Getenv("GOAGENT_ARTIFACT_S3_SECRET_ACCESS_KEY")),
+			ForcePathStyle:  envBool("GOAGENT_ARTIFACT_S3_FORCE_PATH_STYLE"),
+		},
+	}
+}
+
+func envBool(key string) bool {
+	value, err := strconv.ParseBool(strings.TrimSpace(os.Getenv(key)))
+	return err == nil && value
+}
+
+// PlanWorkerConfig derives the plan-only worker configuration from the same
+// runtime configuration used by the embedded PlanRuntime. This keeps backend
+// routing and artifact persistence identical on both sides of RunPlan.
+func PlanWorkerConfig(runtime agentostemporal.RuntimeConfig) agentostemporal.WorkerConfig {
+	return agentostemporal.WorkerConfig{
+		TemporalAddress:          runtime.TemporalAddress,
+		TemporalNamespace:        runtime.TemporalNamespace,
+		TemporalTaskQueues:       runtime.TemporalTaskQueues,
+		PostgresURL:              runtime.PostgresURL,
+		PostgresPoolMax:          runtime.PostgresPoolMax,
+		RedisURL:                 runtime.RedisURL,
+		ArtifactStore:            runtime.ArtifactStore,
+		TemporalExternalBackends: runtime.TemporalExternalBackends,
+		HTTPBackends:             runtime.HTTPBackends,
+		GRPCBackends:             runtime.GRPCBackends,
+	}
 }
 
 func ScheduleTriggerConfigFromEnv() (ScheduleTriggerConfig, error) {

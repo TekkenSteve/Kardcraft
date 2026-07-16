@@ -16,15 +16,15 @@ type TasksDeps struct {
 	TaskService     usecase.Task
 	CommandService  usecase.Command
 	ReadModel       usecase.ReadModel
-	AgentRuntime    usecase.AgentRuntime
+	TemplateService usecase.TemplateOperations
+	TaskPreparation usecase.TaskInputPreparation
+	Workspace       usecase.Workspace
+	TaskExecution   usecase.TaskExecution
 	DefaultModelRef string
 
-	IsAgentRuntimeAvailable    func() bool
-	NextWorkflowID             func(taskType string) string
-	EnsureWorkflowStreamReader func(workflowID string)
-	AppendTimelineWithStreamID func(workflowID, sessionID, eventType, message, streamID string, payload any)
-	BindWorkflowRunID          func(workflowID, runID string)
-	AuthorizeTaskAccess        func(r *http.Request, userID, taskID string) bool
+	IsTaskExecutionAvailable func() bool
+	NextWorkflowID           func(taskType string) string
+	AuthorizeTaskAccess      func(r *http.Request, userID, taskID string) bool
 
 	ActiveTaskCode          string
 	AuthzDeniedCode         string

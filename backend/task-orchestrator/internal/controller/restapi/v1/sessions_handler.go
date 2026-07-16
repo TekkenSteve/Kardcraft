@@ -14,9 +14,10 @@ type SessionsDeps struct {
 	WriteAPIError func(w http.ResponseWriter, status int, code, message string, details map[string]any)
 	UserID        func(r *http.Request) string
 
-	ReadModel               usecase.ReadModel
-	CommandService          usecase.Command
-	IsAgentRuntimeAvailable func() bool
+	ReadModel                usecase.ReadModel
+	Workspace                usecase.Workspace
+	CommandService           usecase.Command
+	IsTaskExecutionAvailable func() bool
 
 	ActiveTaskCode  string
 	AuthzDeniedCode string

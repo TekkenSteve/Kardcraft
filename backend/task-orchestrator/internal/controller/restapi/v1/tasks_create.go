@@ -7,7 +7,6 @@ import (
 	"log"
 	"net/http"
 	"strings"
-	"time"
 
 	"task-orchestrator/internal/usecase"
 )
@@ -19,18 +18,18 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 			return
 		}
 		if r.Method == http.MethodGet {
-			if deps.ReadModel == nil {
-				http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
+			if deps.TemplateService == nil {
+				http.Error(w, "template service unavailable", http.StatusServiceUnavailable)
 				return
 			}
 			userID := deps.UserID(r)
-			rows, total, err := deps.ReadModel.ListAccessibleTemplates(r.Context(), userID, 100, 0)
+			result, err := deps.TemplateService.ListTemplates(r.Context(), userID, 100, 0)
 			if err != nil {
 				http.Error(w, "failed to list templates", http.StatusInternalServerError)
 				return
 			}
-			templates := make([]map[string]any, 0, len(rows))
-			for _, row := range rows {
+			templates := make([]map[string]any, 0, len(result.Templates))
+			for _, row := range result.Templates {
 				templates = append(templates, map[string]any{
 					"id":          row.TemplateID,
 					"name":        row.Name,
@@ -40,7 +39,7 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 					"tags":        row.Tags,
 				})
 			}
-			deps.WriteJSON(w, http.StatusOK, map[string]any{"templates": templates, "total_count": total})
+			deps.WriteJSON(w, http.StatusOK, map[string]any{"templates": templates, "total_count": result.TotalCount})
 			return
 		}
 		if r.Method != http.MethodPost {
@@ -61,8 +60,8 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 			http.Error(w, "template_id is required", http.StatusBadRequest)
 			return
 		}
-		if !deps.IsAgentRuntimeAvailable() {
-			http.Error(w, "agent runtime unavailable", http.StatusServiceUnavailable)
+		if !deps.IsTaskExecutionAvailable() {
+			http.Error(w, "task execution unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		if deps.ReadModel == nil || !deps.ReadModel.Ready() {
@@ -114,7 +113,6 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("failed to start workflow: %v", err), http.StatusInternalServerError)
 			return
 		}
-		deps.EnsureWorkflowStreamReader(createResult.WorkflowID)
 		deps.WriteJSON(w, http.StatusCreated, map[string]any{
 			"workflow_id":    createResult.WorkflowID,
 			"run_id":         createResult.RunID,
@@ -154,13 +152,11 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 			http.Error(w, "query is required in input.query for main task", http.StatusBadRequest)
 			return
 		}
-		if strings.TrimSpace(req.Input.Context.TemplateID) == "" {
-			if deps.ReadModel != nil && deps.ReadModel.Ready() {
-				if resolved, err := deps.ReadModel.GetResolvedDefaultTemplate(r.Context(), userID); err == nil && resolved != nil && strings.TrimSpace(resolved.DefaultTemplateID) != "" {
-					req.Input.Context.TemplateID = strings.TrimSpace(resolved.DefaultTemplateID)
-					if req.Input.Context.TemplateVersion <= 0 {
-						req.Input.Context.TemplateVersion = resolved.DefaultTemplateVersion
-					}
+		if strings.TrimSpace(req.Input.Context.TemplateID) == "" && deps.TemplateService != nil {
+			if resolved, err := deps.TemplateService.GetDefaultTemplate(r.Context(), userID); err == nil && strings.TrimSpace(resolved.TemplateID) != "" {
+				req.Input.Context.TemplateID = strings.TrimSpace(resolved.TemplateID)
+				if req.Input.Context.TemplateVersion <= 0 {
+					req.Input.Context.TemplateVersion = resolved.Version
 				}
 			}
 			if strings.TrimSpace(req.Input.Context.TemplateID) == "" {
@@ -176,22 +172,12 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 	}
 	sessionID := resolveSessionID(req.Input.SessionID)
 	req.Input.SessionID = sessionID
-	req.Input.FilePolicy = normalizeFilePolicy(req.Input.FilePolicy)
-	conversationHistory := normalizeConversationHistoryFromRequest(req.Input.ConversationHistory, 24)
-	if taskType == usecase.TaskTypeMain && deps.ReadModel != nil && deps.ReadModel.Ready() {
-		historyFromSession, err := buildConversationHistoryFromSession(r.Context(), deps, sessionID, userID, 24)
-		if err != nil {
-			log.Printf("failed to build conversation history session_id=%s user_id=%s err=%v", sessionID, userID, err)
-		} else if len(historyFromSession) > 0 {
-			conversationHistory = historyFromSession
-		}
-	}
 	taskQuery := query
 	if taskQuery == "" && taskType == usecase.TaskTypeCardTemplate {
 		taskQuery = fmt.Sprintf("template:%s", strings.TrimSpace(req.Input.TemplateID))
 	}
-	if !deps.IsAgentRuntimeAvailable() {
-		http.Error(w, "agent runtime unavailable", http.StatusServiceUnavailable)
+	if !deps.IsTaskExecutionAvailable() {
+		http.Error(w, "task execution unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if deps.ReadModel == nil || !deps.ReadModel.Ready() {
@@ -202,65 +188,39 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 		http.Error(w, "command service unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	explicitFileIDs := append([]string(nil), req.Input.FileIDs...)
-	effectiveFileIDs := append([]string(nil), explicitFileIDs...)
-	sessionFileArtifacts := []map[string]any{}
-	inheritedFileIDs := []string{}
-	if req.Input.FilePolicy != "explicit_only" {
-		artifacts, resolved, err := resolveSessionFileContext(r.Context(), deps, sessionID)
-		if err != nil {
-			log.Printf("failed to resolve inherited file_ids session_id=%s user_id=%s err=%v", sessionID, userID, err)
-		} else {
-			sessionFileArtifacts = artifacts
-			inheritedFileIDs = resolved
-		}
+	if deps.TaskPreparation == nil {
+		http.Error(w, "task input preparation unavailable", http.StatusServiceUnavailable)
+		return
 	}
-	effectiveFileIDs = applyFilePolicy(req.Input.FilePolicy, inheritedFileIDs, effectiveFileIDs)
-	req.Input.EffectiveFileIDs = append([]string(nil), effectiveFileIDs...)
-	req.Input.FileIDs = append([]string(nil), effectiveFileIDs...)
-	req.Input.ContextEnvelope = buildContextEnvelope(
-		r.Context(),
-		deps,
-		userID,
-		sessionID,
-		req.Input.Query,
-		req.Input.FilePolicy,
-		req.Input.ContextEnvelope,
-		conversationHistory,
-		sessionFileArtifacts,
-		explicitFileIDs,
-		inheritedFileIDs,
-		effectiveFileIDs,
-	)
 	correlationID, err := ensureCorrelationID(req.Metadata.RequestID)
 	if err != nil {
 		http.Error(w, "failed to generate correlation_id", http.StatusInternalServerError)
 		return
 	}
 	req.Metadata.RequestID = correlationID
-	req.Input.ContextEnvelope["correlation_id"] = correlationID
-
 	workflowID := deps.NextWorkflowID(taskType)
+	prepared, err := deps.TaskPreparation.PrepareTaskInput(r.Context(), usecase.TaskInputPreparationRequest{
+		TaskID: workflowID, TaskType: taskType, UserID: userID, SessionID: sessionID, CorrelationID: correlationID,
+		Input: usecase.AgentTaskInput{
+			SessionID: sessionID, Query: req.Input.Query, ConversationHistory: req.Input.ConversationHistory,
+			Context:    usecase.TemplateContext{TemplateID: req.Input.Context.TemplateID, TemplateVersion: req.Input.Context.TemplateVersion, TemplateProfile: req.Input.Context.TemplateProfile},
+			FilePolicy: req.Input.FilePolicy, ContextEnvelope: req.Input.ContextEnvelope, FileIDs: req.Input.FileIDs,
+			TargetCount: req.Input.TargetCount, DifficultyLevel: req.Input.DifficultyLevel, TemplateID: req.Input.TemplateID, Variables: req.Input.Variables,
+		},
+		Attachments: taskPreparationAttachments(req.Input.Attachments),
+	})
+	if err != nil {
+		log.Printf("prepare task input failed session_id=%s user_id=%s task_id=%s err=%v", sessionID, userID, workflowID, err)
+		http.Error(w, "failed to prepare task input", http.StatusInternalServerError)
+		return
+	}
 	cmd := usecase.CreateTaskCommand{
 		TaskID:    workflowID,
 		UserID:    userID,
 		TaskType:  taskType,
 		SessionID: sessionID,
 		Query:     taskQuery,
-		Input: usecase.AgentTaskInput{
-			SessionID:           req.Input.SessionID,
-			Query:               req.Input.Query,
-			ConversationHistory: conversationHistory,
-			Context:             usecase.TemplateContext{TemplateID: req.Input.Context.TemplateID, TemplateVersion: req.Input.Context.TemplateVersion, TemplateProfile: req.Input.Context.TemplateProfile},
-			FilePolicy:          req.Input.FilePolicy,
-			ContextEnvelope:     req.Input.ContextEnvelope,
-			FileIDs:             req.Input.FileIDs,
-			EffectiveFileIDs:    req.Input.EffectiveFileIDs,
-			TargetCount:         req.Input.TargetCount,
-			DifficultyLevel:     req.Input.DifficultyLevel,
-			TemplateID:          req.Input.TemplateID,
-			Variables:           req.Input.Variables,
-		},
+		Input:     prepared.Input,
 		Config: usecase.CreateTaskConfig{
 			ActivityTaskQueue: req.Config.ActivityTaskQueue,
 			ModelRef:          strings.TrimSpace(firstNonEmptyStringAny(req.Config.ModelRef, deps.DefaultModelRef)),
@@ -285,48 +245,11 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	persistWorkspaceLifecycleAuditEvent(
-		r.Context(),
-		deps,
-		createResult.SessionID,
-		workflowID,
-		userID,
-		req.Input.ContextEnvelope,
-	)
-	if deps.BindWorkflowRunID != nil {
-		deps.BindWorkflowRunID(createResult.WorkflowID, createResult.RunID)
-	}
-	persistPlannerTraceEvents(
-		r.Context(),
-		deps,
-		createResult.SessionID,
-		workflowID,
-		workflowID,
-		buildPlannerTraceRecords(req.Input.FilePolicy, explicitFileIDs, inheritedFileIDs, effectiveFileIDs, req.Input.ContextEnvelope, len(conversationHistory)),
-	)
-	attachments := normalizeInputAttachments(req.Input.Attachments)
-	if len(attachments) > 0 {
-		payloadBytes, err := json.Marshal(map[string]any{
-			"attachments": attachments,
-			"file_ids":    effectiveFileIDs,
-		})
-		if err != nil {
-			log.Printf("failed to marshal attachment payload session_id=%s user_id=%s task_id=%s err=%v", createResult.SessionID, userID, workflowID, err)
-		} else if err := deps.ReadModel.InsertEvent(
-			r.Context(),
-			createResult.SessionID,
-			workflowID,
-			workflowID,
-			"MESSAGE_SENT",
-			"User message sent",
-			string(payloadBytes),
-			fmt.Sprintf("message:user:%s", workflowID),
-			time.Now().UTC(),
-		); err != nil {
-			log.Printf("failed to persist user attachment metadata session_id=%s user_id=%s task_id=%s err=%v", createResult.SessionID, userID, workflowID, err)
+	if len(prepared.SessionEvents) > 0 {
+		if err := deps.CommandService.RecordSessionEvents(r.Context(), prepared.SessionEvents); err != nil {
+			log.Printf("record task preparation events session_id=%s user_id=%s task_id=%s err=%v", createResult.SessionID, userID, workflowID, err)
 		}
 	}
-	deps.EnsureWorkflowStreamReader(workflowID)
 	deps.WriteJSON(w, http.StatusCreated, map[string]any{
 		"workflow_id":    createResult.WorkflowID,
 		"run_id":         createResult.RunID,
@@ -336,6 +259,14 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 		"stream_url":     fmt.Sprintf("/api/v1/stream/sse?workflow_id=%s", createResult.WorkflowID),
 		"session_id":     createResult.SessionID,
 		"correlation_id": correlationID,
-		"file_ids":       effectiveFileIDs,
+		"file_ids":       prepared.EffectiveFileIDs,
 	})
+}
+
+func taskPreparationAttachments(attachments []Attachment) []usecase.FileAttachment {
+	prepared := make([]usecase.FileAttachment, 0, len(attachments))
+	for _, attachment := range attachments {
+		prepared = append(prepared, usecase.FileAttachment{FileID: attachment.FileID, Filename: attachment.Filename, Size: attachment.Size, MimeType: attachment.MimeType})
+	}
+	return prepared
 }

@@ -49,7 +49,21 @@ type SessionMessageResult struct {
 	SessionID      string
 	ActiveTaskID   string
 	IdempotencyKey string
+	StreamID       string
 	SentAt         time.Time
+}
+
+// SessionEvent is an application-level audit record. The command use case
+// owns serialization and persistence so HTTP handlers do not write read models.
+type SessionEvent struct {
+	SessionID  string
+	TaskID     string
+	WorkflowID string
+	Type       string
+	Message    string
+	Payload    any
+	StreamID   string
+	OccurredAt time.Time
 }
 
 type SessionTask struct {
@@ -77,6 +91,33 @@ type AgentTaskInput struct {
 	DifficultyLevel     string
 	TemplateID          string
 	Variables           map[string]any
+}
+
+// TaskInputPreparationRequest is the application command for deriving the
+// runtime context of a task from its request, session history, and workspace.
+// HTTP adapters provide only request values; this use case owns all derived
+// execution data and audit records.
+type TaskInputPreparationRequest struct {
+	TaskID        string
+	TaskType      string
+	UserID        string
+	SessionID     string
+	CorrelationID string
+	Input         AgentTaskInput
+	Attachments   []FileAttachment
+}
+
+type FileAttachment struct {
+	FileID   string
+	Filename string
+	Size     int64
+	MimeType string
+}
+
+type PreparedTaskInput struct {
+	Input            AgentTaskInput
+	EffectiveFileIDs []string
+	SessionEvents    []SessionEvent
 }
 
 type CreateTaskConfig struct {

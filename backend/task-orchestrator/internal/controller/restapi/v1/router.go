@@ -1,9 +1,7 @@
 package v1
 
 import (
-	"fmt"
 	"net/http"
-	"sync/atomic"
 )
 
 func (s *Server) registerTaskRoutes() {
@@ -14,16 +12,16 @@ func (s *Server) registerTaskRoutes() {
 		UserID: func(r *http.Request) string {
 			return userIDFromContext(r.Context())
 		},
-		TaskService:                s.taskService,
-		CommandService:             s.commandService,
-		ReadModel:                  s.readModel,
-		AgentRuntime:               s.agentRuntime,
-		DefaultModelRef:            s.defaultModelRef,
-		IsAgentRuntimeAvailable:    s.isAgentRuntimeAvailable,
-		NextWorkflowID:             s.nextWorkflowID,
-		EnsureWorkflowStreamReader: s.ensureWorkflowStreamReader,
-		AppendTimelineWithStreamID: s.appendTimelineWithStreamID,
-		BindWorkflowRunID:          s.bindWorkflowRunID,
+		TaskService:              s.taskService,
+		CommandService:           s.commandService,
+		ReadModel:                s.readModel,
+		TemplateService:          s.templateService,
+		TaskPreparation:          s.taskPreparation,
+		Workspace:                s.workspaceService,
+		TaskExecution:            s.taskExecution,
+		DefaultModelRef:          s.defaultModelRef,
+		IsTaskExecutionAvailable: s.isTaskExecutionAvailable,
+		NextWorkflowID:           s.nextWorkflowID,
 		AuthorizeTaskAccess: func(r *http.Request, userID, taskID string) bool {
 			return s.authorizeTaskAccess(r.Context(), userID, taskID)
 		},
@@ -34,20 +32,9 @@ func (s *Server) registerTaskRoutes() {
 	s.mux.HandleFunc("/api/v1/tasks", NewTasksHandler(tasksDeps))
 	s.mux.HandleFunc("/api/v1/tasks/template", NewTemplateTasksHandler(tasksDeps))
 	s.mux.HandleFunc("/api/v1/tasks/", NewTaskDetailRouter(tasksDeps))
-
-	s.mux.HandleFunc("/api/v1/agentos/runs/", NewAgentOSEventsHandler(AgentOSEventsDeps{
-		WriteJSON:     writeJSON,
-		WriteAPIError: writeAPIError,
-		ReadModel:     s.readModel,
-		OutcomeStore:  s.sessionStore,
-		AppendTimeline: func(workflowID, sessionID, eventType, message, streamID string, payload any, persist bool) {
-			if persist {
-				s.appendTimelineWithStreamID(workflowID, sessionID, eventType, message, streamID, payload)
-				return
-			}
-			s.appendTimelineTransient(workflowID, sessionID, eventType, message, streamID, payload)
-		},
-	}))
+	if s.internalExecutionEvents != nil {
+		s.mux.Handle("/internal/execution/runs/", s.internalExecutionEvents)
+	}
 
 	s.mux.HandleFunc("/api/v1/stream/sse", NewSSEHandler(SSEDeps{
 		WriteAPIError: writeAPIError,
@@ -57,42 +44,7 @@ func (s *Server) registerTaskRoutes() {
 		Authorize: func(r *http.Request, userID, workflowID string) bool {
 			return s.authorizeTaskAccess(r.Context(), userID, workflowID)
 		},
-		NowRFC3339: nowRFC3339,
-		Subscribe:  s.subscribe,
-		Unsubscribe: func(workflowID string, subscriberID int) {
-			s.unsubscribe(workflowID, subscriberID)
-		},
-		EnsureWorkflowStreamReader: s.ensureWorkflowStreamReader,
-		Backlog: func(workflowID string, afterEventID int64) []map[string]any {
-			s.mu.RLock()
-			backlog := append([]TimelineEvent(nil), s.timelineByWorkflow[workflowID]...)
-			s.mu.RUnlock()
-			out := make([]map[string]any, 0, len(backlog))
-			for _, ev := range backlog {
-				if afterEventID > 0 && ev.ID <= afterEventID {
-					continue
-				}
-				correlationID := correlationIDFromPayload(anyToMap(ev.Payload), ev.WorkflowID, ev.RunID)
-				if correlationID == "" {
-					continue
-				}
-				payload := map[string]any{
-					"schema_version": 1,
-					"correlation_id": correlationID,
-					"event_id":       fmt.Sprintf("%d", ev.ID),
-					"event_type":     ev.Type,
-					"workflow_id":    ev.WorkflowID,
-					"run_id":         ev.RunID,
-					"session_id":     ev.SessionID,
-					"seq":            ev.Seq,
-					"occurred_at":    ev.Timestamp,
-					"stream_id":      ev.StreamID,
-					"payload":        ev.Payload,
-				}
-				out = append(out, payload)
-			}
-			return out
-		},
+		Feed:            s.executionFeed,
 		AuthzDeniedCode: errCodeAuthzDenied,
 	}))
 }
@@ -112,11 +64,12 @@ func (s *Server) registerSessionAndTemplateRoutes() {
 		UserID: func(r *http.Request) string {
 			return userIDFromContext(r.Context())
 		},
-		ReadModel:               s.readModel,
-		CommandService:          s.commandService,
-		IsAgentRuntimeAvailable: s.isAgentRuntimeAvailable,
-		ActiveTaskCode:          errCodeActiveTaskExists,
-		AuthzDeniedCode:         errCodeAuthzDenied,
+		ReadModel:                s.readModel,
+		Workspace:                s.workspaceService,
+		CommandService:           s.commandService,
+		IsTaskExecutionAvailable: s.isTaskExecutionAvailable,
+		ActiveTaskCode:           errCodeActiveTaskExists,
+		AuthzDeniedCode:          errCodeAuthzDenied,
 	}
 	s.mux.HandleFunc("/api/v1/sessions", NewSessionsHandler(sessionsDeps))
 	s.mux.HandleFunc("/api/v1/sessions/", NewSessionsRouter(sessionsDeps))
@@ -127,10 +80,8 @@ func (s *Server) registerSessionAndTemplateRoutes() {
 		UserID: func(r *http.Request) string {
 			return userIDFromContext(r.Context())
 		},
-		NowRFC3339:     nowRFC3339,
-		HTTPClient:     s.httpClient,
-		AnkiRuntimeURL: s.ankiRuntimeURL,
-		ReadModel:      s.readModel,
+		NowRFC3339: nowRFC3339,
+		Service:    s.templateService,
 	}
 	s.mux.HandleFunc("/api/v1/card-templates", NewCardTemplatesHandler(templatesDeps))
 	s.mux.HandleFunc("/api/v1/card-templates/preview", NewCardTemplatePreviewHandler(templatesDeps))
@@ -149,7 +100,7 @@ func (s *Server) registerSessionAndTemplateRoutes() {
 		UserID: func(r *http.Request) string {
 			return userIDFromContext(r.Context())
 		},
-		ReadModel: s.readModel,
+		Workspace: s.workspaceService,
 	}))
 
 	exportsDeps := ExportsDeps{
@@ -157,10 +108,8 @@ func (s *Server) registerSessionAndTemplateRoutes() {
 		UserID: func(r *http.Request) string {
 			return userIDFromContext(r.Context())
 		},
-		NowRFC3339:     nowRFC3339,
-		HTTPClient:     s.httpClient,
-		AnkiRuntimeURL: s.ankiRuntimeURL,
-		ReadModel:      s.readModel,
+		ReadModel: s.readModel,
+		Service:   s.apkgExportService,
 	}
 	s.mux.HandleFunc("/api/v1/exports/apkg", NewApkgExportsHandler(exportsDeps))
 	s.mux.HandleFunc("/api/v1/exports/apkg/", NewApkgExportDetailRouter(exportsDeps))
@@ -168,18 +117,14 @@ func (s *Server) registerSessionAndTemplateRoutes() {
 
 func (s *Server) registerMiscRoutes() {
 	health := NewHealthHandler(HealthDeps{
-		WriteJSON: writeJSON,
-		Port:      s.port,
-		StreamReaders: func() int {
-			s.mu.RLock()
-			defer s.mu.RUnlock()
-			return len(s.streamReaders)
-		},
-		DuplicateDrops: func() int64 { return atomic.LoadInt64(&s.duplicateDrops) },
-		UsageIngested:  func() int64 { return atomic.LoadInt64(&s.llmUsageIngested) },
-		UsageDeduped:   func() int64 { return atomic.LoadInt64(&s.llmUsageDeduped) },
-		UsageFailed:    func() int64 { return atomic.LoadInt64(&s.llmUsageFailed) },
-		UsageInvalid:   func() int64 { return atomic.LoadInt64(&s.llmUsageInvalid) },
+		WriteJSON:      writeJSON,
+		Port:           s.port,
+		StreamReaders:  func() int { return 0 },
+		DuplicateDrops: func() int64 { return 0 },
+		UsageIngested:  func() int64 { return 0 },
+		UsageDeduped:   func() int64 { return 0 },
+		UsageFailed:    func() int64 { return 0 },
+		UsageInvalid:   func() int64 { return 0 },
 	})
 	s.mux.HandleFunc("/health", health)
 	s.mux.HandleFunc("/health/task-orchestrator", health)

@@ -14,8 +14,12 @@ import (
 	"task-orchestrator/internal/repo/memory"
 	"task-orchestrator/internal/usecase"
 	"task-orchestrator/internal/usecase/command"
+	"task-orchestrator/internal/usecase/execution"
 	"task-orchestrator/internal/usecase/readmodel"
 	"task-orchestrator/internal/usecase/task"
+	"task-orchestrator/internal/usecase/taskpreparation"
+	templateusecase "task-orchestrator/internal/usecase/template"
+	"task-orchestrator/internal/usecase/workspace"
 )
 
 func TestHandleCreateTaskBoundaries(t *testing.T) {
@@ -136,9 +140,6 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if executor.lastReq == nil {
 			t.Fatal("expected agent runtime request")
 		}
-		if executor.lastReq.Backend != testAgentBackend() {
-			t.Fatalf("expected agent workflow backend, got %#v", executor.lastReq.Backend)
-		}
 		if executor.lastReq.Input["task_type"] != usecase.TaskTypeMain {
 			t.Fatalf("expected structured task input, got %#v", executor.lastReq.Input)
 		}
@@ -160,9 +161,6 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		}
 		if executor.lastReq == nil {
 			t.Fatal("expected agent runtime request")
-		}
-		if executor.lastReq.Backend != testAgentBackend() {
-			t.Fatalf("expected agent workflow backend, got %#v", executor.lastReq.Backend)
 		}
 		if executor.lastReq.Input["template_id"] != "tpl-source" {
 			t.Fatalf("expected template_id in structured input, got %#v", executor.lastReq.Input)
@@ -415,7 +413,7 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		}
 	})
 
-	t.Run("context_envelope compatibility normalizes malformed sections and preserves extensions", func(t *testing.T) {
+	t.Run("context_envelope is server derived and ignores client extensions", func(t *testing.T) {
 		readStore := &fakeReadModelStore{ready: true}
 		s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), nil, true, readStore)
 		req := newJSONRequest(http.MethodPost, "/api/v1/tasks", `{
@@ -449,11 +447,11 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		if _, ok := contextEnvelope["history"].(map[string]any); !ok {
 			t.Fatalf("expected normalized history map, got %#v", contextEnvelope["history"])
 		}
-		if _, ok := contextEnvelope["compatibility"].(map[string]any); !ok {
-			t.Fatalf("expected compatibility section, got %#v", contextEnvelope["compatibility"])
+		if _, exists := contextEnvelope["compatibility"]; exists {
+			t.Fatalf("unexpected compatibility section: %#v", contextEnvelope["compatibility"])
 		}
-		if _, ok := contextEnvelope["ext_hint"].(map[string]any); !ok {
-			t.Fatalf("expected ext_hint to be preserved, got %#v", contextEnvelope["ext_hint"])
+		if _, exists := contextEnvelope["ext_hint"]; exists {
+			t.Fatalf("unexpected client extension: %#v", contextEnvelope["ext_hint"])
 		}
 	})
 
@@ -565,48 +563,7 @@ func TestHandleTaskControlRequiresIdempotencyKey(t *testing.T) {
 	}
 }
 
-func TestHandleTaskControlTimelineIsIdempotentByStreamID(t *testing.T) {
-	store := newFakeCommandStore()
-	readStore := &fakeReadModelStore{ready: true}
-	s := newCommandTestServerWithReadStore(store, nil, true, readStore)
-
-	makePauseRequest := func() *httptest.ResponseRecorder {
-		req := newJSONRequest(http.MethodPost, "/api/v1/tasks/task-1/pause", `{"reason":"manual"}`)
-		req.Header.Set("Idempotency-Key", "same-key")
-		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
-		rr := httptest.NewRecorder()
-		s.Handler().ServeHTTP(rr, req)
-		return rr
-	}
-
-	first := makePauseRequest()
-	if first.Code != http.StatusOK {
-		t.Fatalf("expected first request 200, got %d body=%s", first.Code, first.Body.String())
-	}
-	second := makePauseRequest()
-	if second.Code != http.StatusOK {
-		t.Fatalf("expected second request 200, got %d body=%s", second.Code, second.Body.String())
-	}
-
-	pausedEvents := 0
-	streamIDs := map[string]struct{}{}
-	for _, ev := range readStore.insertedEvents {
-		if ev.eventType != usecase.EventWorkflowPaused {
-			continue
-		}
-		pausedEvents++
-		streamIDs[ev.streamID] = struct{}{}
-	}
-
-	if pausedEvents != 1 {
-		t.Fatalf("expected exactly 1 persisted %s event, got %d", usecase.EventWorkflowPaused, pausedEvents)
-	}
-	if len(streamIDs) != 1 {
-		t.Fatalf("expected stable deterministic stream_id, got %d unique IDs", len(streamIDs))
-	}
-}
-
-func TestHandleTaskControlPassesControlRequestToAgentRuntime(t *testing.T) {
+func TestHandleTaskControlPassesControlRequestToTaskExecution(t *testing.T) {
 	store := newFakeCommandStore()
 	readStore := &fakeReadModelStore{ready: true}
 	s, executor := newCommandTestServerWithReadStoreAndExecutor(store, nil, true, readStore)
@@ -637,7 +594,7 @@ func TestHandleTaskControlPassesControlRequestToAgentRuntime(t *testing.T) {
 	}
 }
 
-func TestHandleGetTaskCombinesPersistentDataWithAgentRuntimeStatus(t *testing.T) {
+func TestHandleGetTaskCombinesPersistentDataWithTaskExecutionStatus(t *testing.T) {
 	startedAt := time.Date(2026, 7, 11, 8, 0, 0, 0, time.UTC)
 	completedAt := startedAt.Add(2 * time.Second)
 	durationMS := completedAt.Sub(startedAt).Milliseconds()
@@ -656,7 +613,7 @@ func TestHandleGetTaskCombinesPersistentDataWithAgentRuntimeStatus(t *testing.T)
 		},
 	}
 	s, executor := newCommandTestServerWithReadStoreAndExecutor(newFakeCommandStore(), nil, true, readStore)
-	executor.runStatus = usecase.AgentRunStatus{
+	executor.runStatus = usecase.TaskExecutionStatus{
 		RunID:          "agent-run-1",
 		LifecycleState: "completed",
 		UpdatedAt:      completedAt,
@@ -732,17 +689,17 @@ func TestHandleTaskPlannerTrace(t *testing.T) {
 	}
 }
 
-func newCommandTestServer(store *fakeCommandStore, _ any, agentRuntimeAvailable bool) *Server {
-	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, nil, agentRuntimeAvailable, nil)
+func newCommandTestServer(store *fakeCommandStore, _ any, taskExecutionAvailable bool) *Server {
+	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, nil, taskExecutionAvailable, nil)
 	return s
 }
 
-func newCommandTestServerWithReadStore(store *fakeCommandStore, _ any, agentRuntimeAvailable bool, readStore *fakeReadModelStore) *Server {
-	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, nil, agentRuntimeAvailable, readStore)
+func newCommandTestServerWithReadStore(store *fakeCommandStore, _ any, taskExecutionAvailable bool, readStore *fakeReadModelStore) *Server {
+	s, _ := newCommandTestServerWithReadStoreAndExecutor(store, nil, taskExecutionAvailable, readStore)
 	return s
 }
 
-func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, _ any, agentRuntimeAvailable bool, readStore *fakeReadModelStore) (*Server, *fakeAgentExecutor) {
+func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, _ any, taskExecutionAvailable bool, readStore *fakeReadModelStore) (*Server, *fakeAgentExecutor) {
 	if readStore == nil {
 		readStore = &fakeReadModelStore{ready: true}
 	}
@@ -750,34 +707,44 @@ func newCommandTestServerWithReadStoreAndExecutor(store *fakeCommandStore, _ any
 	publisher := memory.NewInMemoryEventPublisher()
 	taskService := task.New(taskRepo, publisher, nil)
 	agentExecutor := &fakeAgentExecutor{runID: "agent-run-1"}
-	commandService, err := command.New(taskService, store, agentExecutor, testAgentBackend())
+	commandService, err := command.New(taskService, store, agentExecutor, readStore)
 	if err != nil {
 		panic(err)
 	}
 
 	readModel := readmodel.New(readStore)
-	s := &Server{
-		mux:                     http.NewServeMux(),
-		taskService:             taskService,
-		commandService:          commandService,
-		readModel:               readModel,
-		defaultModelRef:         "test-model",
-		timelineByWorkflow:      make(map[string][]TimelineEvent),
-		subscribers:             make(map[string]map[int]chan OutboundEvent),
-		streamReaders:           make(map[string]context.CancelFunc),
-		seenStreamIDs:           make(map[string]map[string]struct{}),
-		runSeqByRunID:           make(map[string]int64),
-		workflowRunByWorkflowID: make(map[string]string),
+	workspaceService, err := workspace.New(readModel)
+	if err != nil {
+		panic(err)
 	}
-	if agentRuntimeAvailable {
-		s.agentRuntime = agentExecutor
+	taskPreparation, err := taskpreparation.New(readModel, workspaceService)
+	if err != nil {
+		panic(err)
+	}
+	templateService, err := templateusecase.New(readModel, unusedTemplateRuntime{})
+	if err != nil {
+		panic(err)
+	}
+	s := &Server{
+		mux:              http.NewServeMux(),
+		taskService:      taskService,
+		commandService:   commandService,
+		readModel:        readModel,
+		workspaceService: workspaceService,
+		templateService:  templateService,
+		taskPreparation:  taskPreparation,
+		defaultModelRef:  "test-model",
+	}
+	if taskExecutionAvailable {
+		s.taskExecution = agentExecutor
+		feed, err := execution.NewFeed(agentExecutor)
+		if err != nil {
+			panic(err)
+		}
+		s.executionFeed = feed
 	}
 	s.registerRoutes()
 	return s, agentExecutor
-}
-
-func testAgentBackend() usecase.AgentBackendRef {
-	return usecase.AgentBackendRef{Kind: "temporal_external", Name: "langgraph"}
 }
 
 func newJSONRequest(method, path, body string) *http.Request {
@@ -872,45 +839,49 @@ func (f *fakeCommandStore) EnsureSessionAccess(ctx context.Context, sessionID, u
 
 type fakeAgentExecutor struct {
 	runID           string
-	runStatus       usecase.AgentRunStatus
-	lastReq         *usecase.AgentRunRequest
-	lastControl     *usecase.AgentControlRequest
+	runStatus       usecase.TaskExecutionStatus
+	lastReq         *usecase.TaskExecutionRequest
+	lastControl     *usecase.TaskExecutionControl
 	lastSignalRunID string
-	lastSignal      *usecase.AgentSignal
+	lastSignal      *usecase.TaskExecutionSignal
 }
 
-func (f *fakeAgentExecutor) StartAgentRun(ctx context.Context, req usecase.AgentRunRequest) (usecase.AgentRunStatus, error) {
+func (f *fakeAgentExecutor) StartTaskExecution(ctx context.Context, req usecase.TaskExecutionRequest) (usecase.TaskExecutionStatus, error) {
 	f.lastReq = &req
 	runID := f.runID
 	if runID == "" {
 		runID = req.RunID
 	}
-	return usecase.AgentRunStatus{RunID: runID, LifecycleState: "created", UpdatedAt: time.Now().UTC()}, nil
+	return usecase.TaskExecutionStatus{RunID: runID, LifecycleState: "created", UpdatedAt: time.Now().UTC()}, nil
 }
 
-func (f *fakeAgentExecutor) GetAgentRunStatus(ctx context.Context, runID string) (usecase.AgentRunStatus, error) {
+func (f *fakeAgentExecutor) GetTaskExecutionStatus(ctx context.Context, runID string) (usecase.TaskExecutionStatus, error) {
 	if strings.TrimSpace(runID) == "" {
-		return usecase.AgentRunStatus{}, errors.New("run ID is required")
+		return usecase.TaskExecutionStatus{}, errors.New("run ID is required")
 	}
 	if f.runStatus.RunID != "" {
 		return f.runStatus, nil
 	}
-	return usecase.AgentRunStatus{RunID: runID, LifecycleState: "running", UpdatedAt: time.Now().UTC()}, nil
+	return usecase.TaskExecutionStatus{RunID: runID, LifecycleState: "running", UpdatedAt: time.Now().UTC()}, nil
 }
 
-func (f *fakeAgentExecutor) ControlAgentRun(ctx context.Context, runID string, control usecase.AgentControlRequest) error {
+func (f *fakeAgentExecutor) ControlTaskExecution(ctx context.Context, runID string, control usecase.TaskExecutionControl) error {
 	f.lastControl = &control
 	return nil
 }
 
-func (f *fakeAgentExecutor) SignalAgentRun(ctx context.Context, runID string, signal usecase.AgentSignal) error {
+func (f *fakeAgentExecutor) SignalTaskExecution(ctx context.Context, runID string, signal usecase.TaskExecutionSignal) error {
 	f.lastSignalRunID = runID
 	f.lastSignal = &signal
 	return nil
 }
 
-func (f *fakeAgentExecutor) SubscribeAgentEvents(ctx context.Context, scope usecase.AgentEventScope) (usecase.AgentEventSubscription, error) {
+func (f *fakeAgentExecutor) SubscribeTaskExecution(ctx context.Context, scope usecase.TaskExecutionEventScope) (usecase.TaskExecutionSubscription, error) {
 	return nil, errors.New("not implemented")
+}
+
+func (f *fakeAgentExecutor) IngestTaskExecutionEvent(ctx context.Context, event usecase.ExternalTaskExecutionEvent) (usecase.TaskExecutionEvent, error) {
+	return usecase.TaskExecutionEvent{}, errors.New("not implemented")
 }
 
 type fakeReadModelStore struct {

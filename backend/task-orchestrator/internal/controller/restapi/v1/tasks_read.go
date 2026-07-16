@@ -1,9 +1,7 @@
 package v1
 
 import (
-	"context"
 	"crypto/rand"
-	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -82,8 +80,8 @@ func handleGetTask(w http.ResponseWriter, r *http.Request, taskID string, deps T
 		http.Error(w, "storage unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if deps.AgentRuntime == nil {
-		http.Error(w, "agent runtime unavailable", http.StatusServiceUnavailable)
+	if deps.TaskExecution == nil {
+		http.Error(w, "task execution unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	task, err := deps.ReadModel.GetTask(r.Context(), taskID, userID)
@@ -91,7 +89,7 @@ func handleGetTask(w http.ResponseWriter, r *http.Request, taskID string, deps T
 		http.Error(w, "task not found", http.StatusNotFound)
 		return
 	}
-	status, err := deps.AgentRuntime.GetAgentRunStatus(r.Context(), taskID)
+	status, err := deps.TaskExecution.GetTaskExecutionStatus(r.Context(), taskID)
 	if err != nil {
 		http.Error(w, "failed to retrieve agent run status", http.StatusBadGateway)
 		return
@@ -200,8 +198,8 @@ func handleTaskControl(w http.ResponseWriter, r *http.Request, taskID string, ac
 		http.Error(w, "command service unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if deps.AgentRuntime == nil {
-		http.Error(w, "agent runtime unavailable", http.StatusServiceUnavailable)
+	if deps.TaskExecution == nil {
+		http.Error(w, "task execution unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	if deps.ReadModel == nil || !deps.ReadModel.Ready() {
@@ -229,81 +227,11 @@ func handleTaskControl(w http.ResponseWriter, r *http.Request, taskID string, ac
 		deps.WriteJSON(w, http.StatusBadRequest, map[string]any{"success": false, "message": err.Error(), "workflow_id": taskID})
 		return
 	}
-	appendControlTimelineEvent(r.Context(), taskID, action, req.Reason, userID, idempotencyKey, deps)
 	deps.WriteJSON(w, http.StatusOK, map[string]any{
 		"success":     true,
 		"message":     fmt.Sprintf("Task %s signal sent successfully", action),
 		"workflow_id": taskID,
 	})
-}
-
-func appendControlTimelineEvent(ctx context.Context, taskID, action, reason, requestedBy, idempotencyKey string, deps TasksDeps) {
-	if deps.AppendTimelineWithStreamID == nil {
-		return
-	}
-	eventType, message := controlTimelineEvent(action, reason)
-	if eventType == "" {
-		return
-	}
-	sessionID := ""
-	if deps.ReadModel != nil {
-		if resolved, err := deps.ReadModel.GetTaskSession(ctx, taskID); err == nil {
-			sessionID = strings.TrimSpace(resolved)
-		}
-	}
-	runID := ""
-	if deps.AgentRuntime != nil {
-		if status, err := deps.AgentRuntime.GetAgentRunStatus(ctx, taskID); err == nil {
-			runID = strings.TrimSpace(status.RunID)
-		}
-	}
-	streamID := deterministicControlStreamID(taskID, action, idempotencyKey)
-	deps.AppendTimelineWithStreamID(taskID, sessionID, eventType, message, streamID, map[string]any{
-		"task_id":          taskID,
-		"workflow_id":      taskID,
-		"run_id":           runID,
-		"correlation_id":   strings.TrimSpace(idempotencyKey),
-		"action":           strings.ToLower(strings.TrimSpace(action)),
-		"reason":           strings.TrimSpace(reason),
-		"requested_by":     strings.TrimSpace(requestedBy),
-		"idempotency_key":  strings.TrimSpace(idempotencyKey),
-		"schema_version":   "task-control-event.v1",
-		"control_event_id": streamID,
-	})
-}
-
-func controlTimelineEvent(action, reason string) (string, string) {
-	normalizedAction := strings.ToLower(strings.TrimSpace(action))
-	normalizedReason := strings.TrimSpace(reason)
-	switch normalizedAction {
-	case "pause":
-		if normalizedReason == "" {
-			normalizedReason = "Task paused"
-		}
-		return usecase.EventWorkflowPaused, normalizedReason
-	case "resume":
-		if normalizedReason == "" {
-			normalizedReason = "Task resumed"
-		}
-		return usecase.EventWorkflowResumed, normalizedReason
-	case "cancel":
-		if normalizedReason == "" {
-			normalizedReason = "Task cancelled"
-		}
-		return usecase.EventWorkflowCancelled, normalizedReason
-	default:
-		return "", ""
-	}
-}
-
-func deterministicControlStreamID(taskID, action, idempotencyKey string) string {
-	sum := sha1.Sum([]byte(strings.Join([]string{
-		"task-control",
-		strings.TrimSpace(taskID),
-		strings.ToLower(strings.TrimSpace(action)),
-		strings.TrimSpace(idempotencyKey),
-	}, "|")))
-	return "task_control:" + hex.EncodeToString(sum[:])
 }
 
 func ensureCorrelationID(value string) (string, error) {
@@ -360,11 +288,11 @@ func handleTaskPlannerTrace(w http.ResponseWriter, r *http.Request, taskID strin
 }
 
 func handleTaskControlState(w http.ResponseWriter, r *http.Request, taskID string, deps TasksDeps) {
-	if deps.AgentRuntime == nil {
-		http.Error(w, "agent runtime unavailable", http.StatusServiceUnavailable)
+	if deps.TaskExecution == nil {
+		http.Error(w, "task execution unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	status, err := deps.AgentRuntime.GetAgentRunStatus(r.Context(), taskID)
+	status, err := deps.TaskExecution.GetTaskExecutionStatus(r.Context(), taskID)
 	if err != nil {
 		http.Error(w, "failed to retrieve agent run status", http.StatusBadGateway)
 		return

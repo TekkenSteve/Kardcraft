@@ -20,12 +20,16 @@ func handleSessionWorkspace(w http.ResponseWriter, r *http.Request, sessionID st
 		http.Error(w, "session not found", http.StatusNotFound)
 		return
 	}
-	resp, err := deps.ReadModel.LoadWorkspace(r.Context(), sessionID)
+	if deps.Workspace == nil {
+		http.Error(w, "workspace service unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	workspace, err := deps.Workspace.GetWorkspace(r.Context(), sessionID, userID)
 	if err != nil {
 		http.Error(w, "failed to load workspace", http.StatusInternalServerError)
 		return
 	}
-	normalized := NormalizeWorkspaceResponse(resp, sessionID)
+	normalized := workspace.Payload
 
 	needTemplateMetadata := true
 	if templateID, ok := normalized["template_id"].(string); ok && strings.TrimSpace(templateID) != "" {

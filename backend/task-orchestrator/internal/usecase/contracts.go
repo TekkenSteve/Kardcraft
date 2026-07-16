@@ -26,6 +26,7 @@ type (
 		CreateTaskInSession(context.Context, CreateTaskCommand) (*CreateTaskResult, string, error)
 		SendMessageToSession(context.Context, SessionMessageCommand) (*SessionMessageResult, error)
 		ControlSession(context.Context, SessionControlCommand) (*SessionControlResult, error)
+		RecordSessionEvents(context.Context, []SessionEvent) error
 	}
 
 	ReadModel interface {
@@ -63,16 +64,60 @@ type (
 		EnsureSessionAccess(ctx context.Context, sessionID, userID string) error
 	}
 
+	SessionEventRecorder interface {
+		InsertEvent(ctx context.Context, sessionID, taskID, workflowID, eventType, message, payload, streamID string, ts time.Time) error
+	}
+
 	ReadModelStore interface {
 		ReadModel
 	}
 
-	AgentRuntime interface {
-		StartAgentRun(ctx context.Context, req AgentRunRequest) (AgentRunStatus, error)
-		GetAgentRunStatus(ctx context.Context, runID string) (AgentRunStatus, error)
-		SignalAgentRun(ctx context.Context, runID string, signal AgentSignal) error
-		ControlAgentRun(ctx context.Context, runID string, control AgentControlRequest) error
-		SubscribeAgentEvents(ctx context.Context, scope AgentEventScope) (AgentEventSubscription, error)
+	TaskExecution interface {
+		StartTaskExecution(ctx context.Context, req TaskExecutionRequest) (TaskExecutionStatus, error)
+		GetTaskExecutionStatus(ctx context.Context, taskID string) (TaskExecutionStatus, error)
+		SignalTaskExecution(ctx context.Context, taskID string, signal TaskExecutionSignal) error
+		ControlTaskExecution(ctx context.Context, taskID string, control TaskExecutionControl) error
+		SubscribeTaskExecution(ctx context.Context, scope TaskExecutionEventScope) (TaskExecutionSubscription, error)
+		IngestTaskExecutionEvent(ctx context.Context, event ExternalTaskExecutionEvent) (TaskExecutionEvent, error)
+	}
+
+	ExecutionEventFeed interface {
+		Subscribe(ctx context.Context, taskID string, afterSequence int64) (TaskExecutionSubscription, error)
+	}
+
+	APKGExport interface {
+		CreateAPKGExport(ctx context.Context, command CreateAPKGExportCommand) (APKGExportResult, error)
+		GetAPKGExport(ctx context.Context, exportID, sessionID, userID string) (APKGExportResult, error)
+		DownloadAPKGExport(ctx context.Context, exportID, sessionID, userID string) (APKGExportDownload, error)
+	}
+
+	Workspace interface {
+		GetWorkspace(ctx context.Context, sessionID, userID string) (WorkspaceSnapshot, error)
+		BulkUpdateCards(ctx context.Context, command BulkCardUpdateCommand) (BulkCardUpdateResult, error)
+		DescribeWorkspace(ctx context.Context, sessionID string, now time.Time) (WorkspaceContext, error)
+	}
+
+	APKGBuilder interface {
+		BuildAPKG(ctx context.Context, request BuildAPKGRequest) (BuildAPKGResult, error)
+	}
+
+	TemplateOperations interface {
+		ExecuteTemplateOperation(ctx context.Context, command TemplateOperationCommand) (TemplateOperationResult, error)
+		PrepareTemplateOperation(ctx context.Context, userID string, command TemplateOperationCommand) (TemplateOperationCommand, error)
+		ListTemplates(ctx context.Context, userID string, limit, offset int) (TemplateListResult, error)
+		GetTemplate(ctx context.Context, userID, templateID string) (TemplateDetailResult, error)
+		ImportTemplate(ctx context.Context, userID string, command TemplateImportCommand) (TemplateImportResult, error)
+		GetDefaultTemplate(ctx context.Context, userID string) (TemplateDefaultResult, error)
+		SetDefaultTemplate(ctx context.Context, userID string, command SetDefaultTemplateCommand) (TemplateDefaultResult, error)
+		ExportTemplate(ctx context.Context, userID, templateID string, exportedAt time.Time) (TemplateExportResult, error)
+	}
+
+	TaskInputPreparation interface {
+		PrepareTaskInput(ctx context.Context, request TaskInputPreparationRequest) (PreparedTaskInput, error)
+	}
+
+	TemplateRuntime interface {
+		ExecuteTemplateRuntime(ctx context.Context, operation TemplateOperation, payload map[string]any) (TemplateOperationResult, error)
 	}
 )
 
@@ -107,7 +152,7 @@ const (
 	AgentControlCancel AgentControlOperation = "cancel"
 )
 
-type AgentControlRequest struct {
+type TaskExecutionControl struct {
 	Operation      AgentControlOperation
 	IdempotencyKey string
 	RequestedAt    time.Time
@@ -115,7 +160,7 @@ type AgentControlRequest struct {
 	Metadata       map[string]string
 }
 
-type AgentRunRequest struct {
+type TaskExecutionRequest struct {
 	RunID          string
 	ThreadID       string
 	AccountID      string
@@ -127,30 +172,26 @@ type AgentRunRequest struct {
 	IdempotencyKey string
 	RequestedAt    time.Time
 	Metadata       map[string]string
-	Backend        AgentBackendRef
 	Input          map[string]any
 }
 
-type AgentRunStatus struct {
+type TaskExecutionStatus struct {
+	TaskID         string
+	PlanID         string
 	RunID          string
 	LifecycleState string
-	Progress       *AgentRunProgress
+	Progress       *TaskExecutionProgress
 	Reason         string
 	UpdatedAt      time.Time
 }
 
-type AgentRunProgress struct {
+type TaskExecutionProgress struct {
 	Current int32
 	Total   int32
 	Label   string
 }
 
-type AgentBackendRef struct {
-	Kind string
-	Name string
-}
-
-type AgentSignal struct {
+type TaskExecutionSignal struct {
 	Type           string
 	IdempotencyKey string
 	Payload        map[string]any
@@ -175,13 +216,12 @@ type AgentToolCallFunction struct {
 	Arguments string `json:"arguments"`
 }
 
-type AgentEventScope struct {
-	RunID         string
-	ThreadID      string
+type TaskExecutionEventScope struct {
+	TaskID        string
 	AfterSequence int64
 }
 
-type AgentRuntimeEvent struct {
+type TaskExecutionEvent struct {
 	EventID   string
 	EventType string
 	RunID     string
@@ -191,7 +231,203 @@ type AgentRuntimeEvent struct {
 	Payload   map[string]any
 }
 
-type AgentEventSubscription interface {
-	Events() <-chan AgentRuntimeEvent
+// ExternalTaskExecutionEvent is the backend-neutral callback contract used by
+// an execution backend to append a durable event to a task's plan stream.
+// EventID and Sequence belong to the external source; the execution runtime
+// assigns the canonical durable sequence returned in TaskExecutionEvent.
+type ExternalTaskExecutionEvent struct {
+	EventID   string
+	RunID     string
+	ThreadID  string
+	EventType string
+	Source    string
+	Sequence  int64
+	Timestamp time.Time
+	Payload   map[string]any
+}
+
+type TaskExecutionSubscription interface {
+	Events() <-chan TaskExecutionEvent
 	Close() error
+}
+
+type CreateAPKGExportCommand struct {
+	SessionID  string
+	UserID     string
+	TemplateID string
+	DeckName   string
+}
+
+type APKGExportResult struct {
+	ExportID       string
+	SessionID      string
+	TemplateID     string
+	DeckName       string
+	PackageName    string
+	Status         string
+	ConfirmedCount int
+	FileName       string
+	FileSize       int64
+	DownloadPath   string
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	CompletedAt    *time.Time
+	Error          string
+}
+
+type APKGExportDownload struct {
+	FileName string
+	Content  []byte
+}
+
+// WorkspaceSnapshot is the HTTP-independent projection of the workspace JSON
+// document. Card content remains open because a template owns its fields.
+type WorkspaceSnapshot struct {
+	SessionID string
+	Payload   map[string]any
+}
+
+type BulkCardUpdateCommand struct {
+	SessionID    string
+	UserID       string
+	Action       string
+	CardIDs      []string
+	Status       string
+	QuestionType string
+}
+
+type BulkCardUpdateResult struct {
+	Updated int
+}
+
+type WorkspaceContext struct {
+	Available      bool
+	Status         string
+	LifecycleState string
+	UpdatedAt      string
+	AgeHours       float64
+	Version        int64
+	CardCount      int
+	Cards          []WorkspaceCardSummary
+}
+
+type WorkspaceCardSummary struct {
+	ID    string
+	Title string
+	Type  string
+}
+
+type BuildAPKGRequest struct {
+	DeckName    string
+	ModelName   string
+	FieldNames  []string
+	FrontHTML   string
+	BackHTML    string
+	CSS         string
+	Cards       []APKGCard
+	PackageName string
+}
+
+type APKGCard struct {
+	Fields map[string]string
+	Tags   []string
+}
+
+type BuildAPKGResult struct {
+	FileName string
+	Content  []byte
+}
+
+type TemplateOperation string
+
+const (
+	TemplateOperationPreview        TemplateOperation = "preview"
+	TemplateOperationValidate       TemplateOperation = "validate"
+	TemplateOperationRequiredFields TemplateOperation = "required_fields"
+	TemplateOperationPrecheck       TemplateOperation = "precheck"
+	TemplateOperationBuildAPKG      TemplateOperation = "build_apkg"
+)
+
+type TemplateOperationCommand struct {
+	Operation TemplateOperation
+	Payload   map[string]any
+}
+
+type TemplateOperationResult struct {
+	StatusCode int
+	Body       []byte
+}
+
+type TemplateSummary struct {
+	TemplateID       string
+	Name             string
+	Description      string
+	Scope            string
+	OwnerUserID      string
+	Status           string
+	IsDefault        bool
+	LatestVersion    int
+	VersionPublished bool
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	Tags             any
+}
+
+type TemplateListResult struct {
+	Templates                  []TemplateSummary
+	TotalCount                 int
+	UserDefaultTemplateID      string
+	UserDefaultTemplateVersion int
+}
+
+type TemplateDetailResult struct {
+	TemplateSummary
+	Tags           any
+	Metadata       map[string]any
+	FrontHTML      string
+	BackHTML       string
+	CSS            string
+	JS             string
+	MappingSpec    map[string]any
+	AssetsManifest map[string]any
+	Compatibility  map[string]any
+	Changelog      string
+}
+
+type TemplateImportCommand struct {
+	SourceTemplateID string
+	Name             string
+	Description      string
+	Tags             any
+	Metadata         map[string]any
+	FrontHTML        string
+	BackHTML         string
+	CSS              string
+	JS               string
+	MappingSpec      map[string]any
+	AssetsManifest   map[string]any
+	Compatibility    map[string]any
+	Changelog        string
+	Published        bool
+}
+
+type TemplateImportResult struct {
+	TemplateID string
+	Version    int
+}
+
+type SetDefaultTemplateCommand struct {
+	TemplateID string
+	Version    int
+}
+
+type TemplateDefaultResult struct {
+	UserID     string
+	TemplateID string
+	Version    int
+}
+
+type TemplateExportResult struct {
+	Template   TemplateDetailResult
+	ExportedAt time.Time
 }

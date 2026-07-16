@@ -1,20 +1,26 @@
 package v1
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"task-orchestrator/internal/usecase"
+	templateusecase "task-orchestrator/internal/usecase/template"
 )
 
 func TestTemplateImportCreatesUserOwnedCopyAndPreservesPackageContent(t *testing.T) {
 	store := &fakeReadModelStore{ready: true, importResult: usecase.TemplateCatalogRow{TemplateID: "tpl-copy", LatestVersion: 1}}
+	service, err := templateusecase.New(store, unusedTemplateRuntime{})
+	if err != nil {
+		t.Fatalf("create template service: %v", err)
+	}
 	handler := NewCardTemplatesHandler(TemplatesDeps{
 		WriteJSON: writeJSON,
 		UserID:    func(*http.Request) string { return "user-1" },
-		ReadModel: store,
+		Service:   service,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/card-templates", strings.NewReader(`{
 		"schema_version":"kctpl/v1",
@@ -37,4 +43,10 @@ func TestTemplateImportCreatesUserOwnedCopyAndPreservesPackageContent(t *testing
 	if store.importedTemplate.AssetsManifest["images"] == nil || store.importedTemplate.Compatibility["anki"] != "24" || store.importedTemplate.Changelog != "imported" {
 		t.Fatalf("expected package version content to be preserved, got %#v", store.importedTemplate)
 	}
+}
+
+type unusedTemplateRuntime struct{}
+
+func (unusedTemplateRuntime) ExecuteTemplateRuntime(context.Context, usecase.TemplateOperation, map[string]any) (usecase.TemplateOperationResult, error) {
+	return usecase.TemplateOperationResult{}, nil
 }

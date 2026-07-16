@@ -1,4 +1,4 @@
-package v1
+package execution
 
 import (
 	"strings"
@@ -6,7 +6,7 @@ import (
 	"task-orchestrator/internal/usecase"
 )
 
-var agentOSRuntimeEventTypes = map[string]string{
+var agentOSEventTypes = map[string]string{
 	"run.started":             usecase.EventWorkflowStarted,
 	"run.completed":           usecase.EventWorkflowCompleted,
 	"run.failed":              usecase.EventWorkflowFailed,
@@ -19,12 +19,12 @@ var agentOSRuntimeEventTypes = map[string]string{
 	"usage.reported":          usecase.EventLLMUsageRecorded,
 }
 
-func kardcraftEventTypeFromAgentOS(eventType string) string {
+func KardcraftEventType(eventType string) string {
 	normalized := strings.TrimSpace(eventType)
 	if normalized == "" {
 		return usecase.EventWorkflowProgress
 	}
-	if mapped, ok := agentOSRuntimeEventTypes[normalized]; ok {
+	if mapped, ok := agentOSEventTypes[normalized]; ok {
 		return mapped
 	}
 	return normalized
