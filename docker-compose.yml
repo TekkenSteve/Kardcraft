@@ -65,6 +65,42 @@ services:
     networks:
       - kardcraft-network
 
+  # GoAgent owns the durable PlanRuntime schema. Keep this migration job
+  # separate from Kardcraft's business schema so their histories cannot drift.
+  agentos-migrate:
+    build:
+      context: ${GOAGENT_SOURCE_PATH:-../GoAgent}
+      dockerfile: Dockerfile
+      args:
+        TARGET: agentos-migrate
+    container_name: kardcraft-agentos-migrate
+    environment:
+      PG_URL: postgres://postgres:postgres123@postgres:5432/kardcraft
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - kardcraft-network
+
+  river-migrate:
+    build:
+      context: ./backend/task-orchestrator
+      dockerfile: Dockerfile
+      args:
+        TARGET: river-migrate
+      additional_contexts:
+        goagent: ${GOAGENT_SOURCE_PATH:-../GoAgent}
+    container_name: kardcraft-river-migrate
+    environment:
+      PG_URL: postgres://postgres:postgres123@postgres:5432/kardcraft?sslmode=disable
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - kardcraft-network
+
   # Ory Kratos Database Table Structure Migration Service - One-Time Task
   # Migration is idempotent, running it multiple times will not cause issues
   # When upgrading Kratos in the production environment, the migration will automatically handle table structure changes
@@ -117,6 +153,92 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+    networks:
+      - kardcraft-network
+
+  hydra-db-init:
+    image: postgres:15-alpine
+    container_name: kardcraft-hydra-db-init
+    environment:
+      PGPASSWORD: postgres123
+      HYDRA_DATABASE_NAME: ${HYDRA_DATABASE_NAME:-hydra}
+    command:
+      - /bin/sh
+      - -ec
+      - |
+        psql -h postgres -U postgres -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$${HYDRA_DATABASE_NAME}'" | grep -q 1 || \
+          psql -h postgres -U postgres -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE \"$${HYDRA_DATABASE_NAME}\""
+    restart: on-failure
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - kardcraft-network
+
+  hydra-migrate:
+    image: oryd/hydra:v2.3.0
+    container_name: kardcraft-hydra-migrate
+    environment:
+      DSN: ${HYDRA_DSN:?HYDRA_DSN is required}
+      HYDRA_DSN: ${HYDRA_DSN:?HYDRA_DSN is required}
+      HYDRA_SYSTEM_SECRET: ${HYDRA_SYSTEM_SECRET:?HYDRA_SYSTEM_SECRET is required}
+      HYDRA_ISSUER_URL: ${HYDRA_ISSUER_URL:-http://hydra:4444}
+      URLS_SELF_ISSUER: ${HYDRA_ISSUER_URL:-http://hydra:4444}
+    volumes:
+      - ./backend/auth-gateway/hydra:/etc/config/hydra:ro
+    command: ["migrate", "sql", "up", "-e", "--yes", "-c", "/etc/config/hydra/hydra.yml"]
+    restart: on-failure
+    depends_on:
+      hydra-db-init:
+        condition: service_completed_successfully
+    networks:
+      - kardcraft-network
+
+  hydra:
+    image: oryd/hydra:v2.3.0
+    container_name: kardcraft-hydra
+    restart: always
+    ports:
+      - "${HYDRA_PUBLIC_HOST_PORT:-4444}:4444"
+      - "${HYDRA_ADMIN_HOST_PORT:-4445}:4445"
+    environment:
+      DSN: ${HYDRA_DSN:?HYDRA_DSN is required}
+      HYDRA_DSN: ${HYDRA_DSN:?HYDRA_DSN is required}
+      HYDRA_SYSTEM_SECRET: ${HYDRA_SYSTEM_SECRET:?HYDRA_SYSTEM_SECRET is required}
+      HYDRA_ISSUER_URL: ${HYDRA_ISSUER_URL:-http://hydra:4444}
+      URLS_SELF_ISSUER: ${HYDRA_ISSUER_URL:-http://hydra:4444}
+    volumes:
+      - ./backend/auth-gateway/hydra:/etc/config/hydra:ro
+    # docker-compose is the local development topology. Production must use a
+    # HTTPS issuer and omit --dev in its deployment manifest.
+    command: ["serve", "all", "--dev", "--config", "/etc/config/hydra/hydra.yml"]
+    depends_on:
+      hydra-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:4444/health/ready"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - kardcraft-network
+
+  hydra-bootstrap-clients:
+    image: oryd/hydra:v2.3.0
+    container_name: kardcraft-hydra-bootstrap-clients
+    environment:
+      HYDRA_ADMIN_URL: http://hydra:4445
+      AGENT_WORKFLOW_OAUTH_CLIENT_ID: ${AGENT_WORKFLOW_OAUTH_CLIENT_ID:?AGENT_WORKFLOW_OAUTH_CLIENT_ID is required}
+      AGENT_WORKFLOW_OAUTH_CLIENT_SECRET: ${AGENT_WORKFLOW_OAUTH_CLIENT_SECRET:?AGENT_WORKFLOW_OAUTH_CLIENT_SECRET is required}
+      TASK_ORCHESTRATOR_OAUTH_CLIENT_ID: ${TASK_ORCHESTRATOR_OAUTH_CLIENT_ID:?TASK_ORCHESTRATOR_OAUTH_CLIENT_ID is required}
+      TASK_ORCHESTRATOR_OAUTH_CLIENT_SECRET: ${TASK_ORCHESTRATOR_OAUTH_CLIENT_SECRET:?TASK_ORCHESTRATOR_OAUTH_CLIENT_SECRET is required}
+    volumes:
+      - ./backend/auth-gateway/hydra:/etc/config/hydra:ro
+    entrypoint: ["/bin/sh", "/etc/config/hydra/bootstrap-clients.sh"]
+    restart: on-failure
+    depends_on:
+      hydra:
+        condition: service_healthy
     networks:
       - kardcraft-network
 
@@ -195,6 +317,21 @@ services:
     depends_on:
       - etcd
       - minio
+    networks:
+      - kardcraft-network
+
+  minio-init:
+    image: minio/mc:RELEASE.2025-03-12T17-29-24Z
+    container_name: kardcraft-minio-init
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        mc alias set kardcraft http://minio:9000 minioadmin minioadmin;
+        mc mb --ignore-existing kardcraft/${GOAGENT_ARTIFACT_S3_BUCKET:?GOAGENT_ARTIFACT_S3_BUCKET is required}
+    restart: on-failure
+    depends_on:
+      minio:
+        condition: service_healthy
     networks:
       - kardcraft-network
 
@@ -451,6 +588,13 @@ services:
       - KARDCRAFT_SCHEDULE_RETRY_BACKOFF_COEFFICIENT=${KARDCRAFT_SCHEDULE_RETRY_BACKOFF_COEFFICIENT:?KARDCRAFT_SCHEDULE_RETRY_BACKOFF_COEFFICIENT is required}
       - KARDCRAFT_SCHEDULE_RETRY_MAXIMUM_ATTEMPTS=${KARDCRAFT_SCHEDULE_RETRY_MAXIMUM_ATTEMPTS:?KARDCRAFT_SCHEDULE_RETRY_MAXIMUM_ATTEMPTS is required}
       - ANKI_RUNTIME_URL=http://anki-runtime:8012
+      - GOAGENT_ARTIFACT_STORE_BACKEND=${GOAGENT_ARTIFACT_STORE_BACKEND:?GOAGENT_ARTIFACT_STORE_BACKEND is required}
+      - GOAGENT_ARTIFACT_S3_BUCKET=${GOAGENT_ARTIFACT_S3_BUCKET:?GOAGENT_ARTIFACT_S3_BUCKET is required}
+      - GOAGENT_ARTIFACT_S3_REGION=${GOAGENT_ARTIFACT_S3_REGION:?GOAGENT_ARTIFACT_S3_REGION is required}
+      - GOAGENT_ARTIFACT_S3_ENDPOINT=${GOAGENT_ARTIFACT_S3_ENDPOINT:?GOAGENT_ARTIFACT_S3_ENDPOINT is required}
+      - GOAGENT_ARTIFACT_S3_ACCESS_KEY_ID=${GOAGENT_ARTIFACT_S3_ACCESS_KEY_ID:?GOAGENT_ARTIFACT_S3_ACCESS_KEY_ID is required}
+      - GOAGENT_ARTIFACT_S3_SECRET_ACCESS_KEY=${GOAGENT_ARTIFACT_S3_SECRET_ACCESS_KEY:?GOAGENT_ARTIFACT_S3_SECRET_ACCESS_KEY is required}
+      - GOAGENT_ARTIFACT_S3_FORCE_PATH_STYLE=${GOAGENT_ARTIFACT_S3_FORCE_PATH_STYLE:?GOAGENT_ARTIFACT_S3_FORCE_PATH_STYLE is required}
     volumes:
       - ./backend/task-orchestrator/config.yaml:/app/config.yaml
     depends_on:
@@ -460,10 +604,18 @@ services:
         condition: service_healthy
       db-migrate:
         condition: service_completed_successfully
+      agentos-migrate:
+        condition: service_completed_successfully
+      river-migrate:
+        condition: service_completed_successfully
       temporal:
         condition: service_started
+      hydra-bootstrap-clients:
+        condition: service_completed_successfully
       anki-runtime:
         condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
       agent-workflow:
         condition: service_started
     # Distroless image has no shell/wget/curl; disable in-container healthcheck.
@@ -519,6 +671,8 @@ services:
       postgres:
         condition: service_healthy
       db-migrate:
+        condition: service_completed_successfully
+      hydra-bootstrap-clients:
         condition: service_completed_successfully
       minio:
         condition: service_started

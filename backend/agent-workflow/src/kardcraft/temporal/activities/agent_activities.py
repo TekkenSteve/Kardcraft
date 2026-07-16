@@ -9,7 +9,6 @@ import json
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
 import time
-import uuid
 
 from temporalio import activity
 
@@ -32,6 +31,24 @@ def _normalize_string_list(value: Any) -> list[str]:
     if not isinstance(value, list):
         return []
     return [str(item).strip() for item in value if str(item or "").strip()]
+
+
+class _ActivityEventIdentity:
+    """Allocates replay-stable delivery IDs within one Temporal activity."""
+
+    def __init__(self, run_id: str) -> None:
+        info = activity.info()
+        self._run_id = str(run_id)
+        self._activity_id = str(info.activity_id)
+        self._sequence = 0
+
+    def next(self) -> tuple[str, int, str]:
+        self._sequence += 1
+        return (
+            f"{self._run_id}:activity:{self._activity_id}:{self._sequence}",
+            self._sequence,
+            datetime.now(timezone.utc).isoformat(),
+        )
 
 
 class AgentActivities:
@@ -229,6 +246,7 @@ class AgentActivities:
             correlation_id=correlation_id,
         )
         self._event_contexts[str(task_id)] = event_ctx
+        event_identity = _ActivityEventIdentity(str(task_id))
 
         # 增强的progress callback，确保定期heartbeat
         last_heartbeat_time = [0.0]
@@ -252,16 +270,17 @@ class AgentActivities:
                 last_heartbeat_time[0] = current_time
 
             # Publish progress through the AgentOS control plane.
-            await self._publish_progress_event(task_id, event_data, event_ctx=event_ctx)
+            await self._publish_progress_event(task_id, event_data, event_ctx=event_ctx, event_identity=event_identity)
 
         try:
             # 发送heartbeat表示开始执行LangGraph
             activity.heartbeat({"status": "running_langgraph", "task_id": task_id})
 
             async def usage_emitter(payload: Dict[str, Any]) -> None:
+                event_id, sequence, timestamp = event_identity.next()
                 event_payload = {
-                    "event_id": str(uuid.uuid4()),
-                    "occurred_at": datetime.now(timezone.utc).isoformat(),
+                    "event_id": event_id,
+                    "occurred_at": timestamp,
                     "task_id": str(task_id),
                     "workflow_id": str(task_id),
                     "session_id": str(session_id or ""),
@@ -275,7 +294,9 @@ class AgentActivities:
                     ctx=event_ctx,
                     event_type="LLM_USAGE_RECORDED",
                     payload=event_payload,
-                    event_id=str(event_payload["event_id"]),
+                    event_id=event_id,
+                    sequence=sequence,
+                    timestamp=timestamp,
                 )
 
             llm_ctx_token = set_runtime_context(
@@ -511,17 +532,19 @@ class AgentActivities:
             correlation_id=correlation_id,
         )
         self._event_contexts[str(task_id)] = event_ctx
+        event_identity = _ActivityEventIdentity(str(task_id))
 
         async def progress_callback(event_data: Dict[str, Any]):
             await self.control_gate.wait_until_runnable(str(task_id))
-            await self._publish_progress_event(task_id, event_data, event_ctx=event_ctx)
+            await self._publish_progress_event(task_id, event_data, event_ctx=event_ctx, event_identity=event_identity)
             activity.heartbeat("Resuming...")
 
         try:
             async def usage_emitter(payload: Dict[str, Any]) -> None:
+                event_id, sequence, timestamp = event_identity.next()
                 event_payload = {
-                    "event_id": str(uuid.uuid4()),
-                    "occurred_at": datetime.now(timezone.utc).isoformat(),
+                    "event_id": event_id,
+                    "occurred_at": timestamp,
                     "task_id": str(task_id),
                     "workflow_id": str(task_id),
                     "session_id": str(session_id or ""),
@@ -535,7 +558,9 @@ class AgentActivities:
                     ctx=event_ctx,
                     event_type="LLM_USAGE_RECORDED",
                     payload=event_payload,
-                    event_id=str(event_payload["event_id"]),
+                    event_id=event_id,
+                    sequence=sequence,
+                    timestamp=timestamp,
                 )
 
             llm_ctx_token = set_runtime_context(
@@ -656,6 +681,7 @@ class AgentActivities:
         data: Dict[str, Any],
         *,
         event_ctx: AgentOSEventContext,
+        event_identity: _ActivityEventIdentity,
     ):
         """Publish progress event to the AgentOS event ingest endpoint."""
         try:
@@ -731,10 +757,14 @@ class AgentActivities:
                 self._progress_cache[cache_key] = cache
                 return
 
+            event_id, sequence, timestamp = event_identity.next()
             await self.event_sink.emit(
                 ctx=event_ctx,
                 event_type=event_type,
                 payload=payload,
+                event_id=event_id,
+                sequence=sequence,
+                timestamp=timestamp,
             )
             self._progress_cache[cache_key] = {
                 "fingerprint": fingerprint,

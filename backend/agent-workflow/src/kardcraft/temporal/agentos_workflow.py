@@ -59,7 +59,9 @@ class EventInput:
     event_type: str
     source: str
     payload: dict[str, Any]
-    event_id: str = ""
+    event_id: str
+    sequence: int
+    timestamp: str
 
 
 @workflow.defn(name=WORKFLOW_TYPE)
@@ -72,6 +74,7 @@ class KardcraftAgentOSWorkflow:
         self._pending_user_messages: list[SignalInput] = []
         self._pending_runtime_events: list[dict[str, Any]] = []
         self._last_outcome: dict[str, Any] | None = None
+        self._event_sequence = 0
 
     @workflow.run
     async def run(self, start: StartInput) -> RunStatus:
@@ -274,6 +277,8 @@ class KardcraftAgentOSWorkflow:
             return
         payload = dict(payload or {})
         payload.setdefault("correlation_id", self._correlation_id())
+        self._event_sequence += 1
+        sequence = self._event_sequence
         await workflow.execute_activity(
             "emit_agentos_event",
             EventInput(
@@ -283,6 +288,9 @@ class KardcraftAgentOSWorkflow:
                 event_type=event_type,
                 source="kardcraft.agent_workflow",
                 payload=payload,
+                event_id=f"{self._start.run_id}:workflow:{sequence}",
+                sequence=sequence,
+                timestamp=workflow.now().isoformat(),
             ),
             start_to_close_timeout=timedelta(seconds=15),
         )

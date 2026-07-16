@@ -1,0 +1,27 @@
+dsn: ${HYDRA_DSN}
+
+serve:
+  public:
+    port: 4444
+  admin:
+    port: 4445
+
+urls:
+  self:
+    issuer: http://hydra:4444
+
+strategies:
+  access_token: opaque
+
+ttl:
+  access_token: 5m
+
+secrets:
+  system:
+    - ${HYDRA_SYSTEM_SECRET}
+
+oauth2:
+  expose_internal_errors: false
+
+log:
+  level: info
