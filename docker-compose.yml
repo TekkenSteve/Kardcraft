@@ -56,7 +56,7 @@ services:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=postgres123
     volumes:
-      - ./backend/database:/migrations:ro
+      - ./backend/database:/migrations:ro,Z
     command: [ "/bin/sh", "/migrations/scripts/migrate.sh" ]
     restart: on-failure
     depends_on:
@@ -113,7 +113,7 @@ services:
       SECRETS_COOKIE: '["${KRATOS_COOKIE_SECRET:-}"]'
       SECRETS_CIPHER: '["${KRATOS_CIPHER_SECRET:-}"]'
     volumes:
-      - ./backend/auth-gateway/kratos/email-password:/etc/config/kratos
+      - ./backend/auth-gateway/kratos/email-password:/etc/config/kratos:z
     command: -c /etc/config/kratos/kratos.yml migrate sql -e --yes
     restart: on-failure # Migration failed when retrying  
     depends_on:
@@ -142,7 +142,7 @@ services:
     entrypoint: ["/etc/config/kratos/start-kratos.sh"]
     # Production environment: serve -c /etc/config/kratos/kratos.yml
     volumes:
-      - ./backend/auth-gateway/kratos/email-password:/etc/config/kratos
+      - ./backend/auth-gateway/kratos/email-password:/etc/config/kratos:z
     depends_on:
       kratos-migrate:
         condition: service_completed_successfully
@@ -185,7 +185,7 @@ services:
       HYDRA_ISSUER_URL: ${HYDRA_ISSUER_URL:-http://hydra:4444}
       URLS_SELF_ISSUER: ${HYDRA_ISSUER_URL:-http://hydra:4444}
     volumes:
-      - ./backend/auth-gateway/hydra:/etc/config/hydra:ro
+      - ./backend/auth-gateway/hydra:/etc/config/hydra:ro,z
     command: ["migrate", "sql", "up", "-e", "--yes", "-c", "/etc/config/hydra/hydra.yml"]
     restart: on-failure
     depends_on:
@@ -208,7 +208,7 @@ services:
       HYDRA_ISSUER_URL: ${HYDRA_ISSUER_URL:-http://hydra:4444}
       URLS_SELF_ISSUER: ${HYDRA_ISSUER_URL:-http://hydra:4444}
     volumes:
-      - ./backend/auth-gateway/hydra:/etc/config/hydra:ro
+      - ./backend/auth-gateway/hydra:/etc/config/hydra:ro,z
     # docker-compose is the local development topology. Production must use a
     # HTTPS issuer and omit --dev in its deployment manifest.
     command: ["serve", "all", "--dev", "--config", "/etc/config/hydra/hydra.yml"]
@@ -233,7 +233,7 @@ services:
       TASK_ORCHESTRATOR_OAUTH_CLIENT_ID: ${TASK_ORCHESTRATOR_OAUTH_CLIENT_ID:-}
       TASK_ORCHESTRATOR_OAUTH_CLIENT_SECRET: ${TASK_ORCHESTRATOR_OAUTH_CLIENT_SECRET:-}
     volumes:
-      - ./backend/auth-gateway/hydra:/etc/config/hydra:ro
+      - ./backend/auth-gateway/hydra:/etc/config/hydra:ro,z
     entrypoint: ["/bin/sh", "/etc/config/hydra/bootstrap-clients.sh"]
     restart: on-failure
     depends_on:
@@ -251,7 +251,7 @@ services:
       - "${OATHKEEPER_PROXY_HOST_PORT:-4455}:4455"
       - "${OATHKEEPER_API_HOST_PORT:-4456}:4456"
     volumes:
-      - ./backend/auth-gateway/oathkeeper:/etc/config/oathkeeper:ro
+      - ./backend/auth-gateway/oathkeeper:/etc/config/oathkeeper:ro,Z
     depends_on:
       kratos:
         condition: service_healthy
@@ -356,9 +356,9 @@ services:
       - LIGHTRAG_WORKSPACE_IDLE_TTL_SEC=${LIGHTRAG_WORKSPACE_IDLE_TTL_SEC:-1800}
       - LIGHTRAG_BORROW_TIMEOUT_SEC=${LIGHTRAG_BORROW_TIMEOUT_SEC:-10}
     volumes:
-      - ./.env.lightrag:/app/.env:ro
-      - ./data/lightrag_workspaces:/data/lightrag_workspaces
-      - ./config.ini:/app/config.ini
+      - ./.env.lightrag:/app/.env:ro,Z
+      - ./data/lightrag_workspaces:/data/lightrag_workspaces:Z
+      - ./config.ini:/app/config.ini:Z
     restart: always
     depends_on:
       neo4j:
@@ -521,8 +521,8 @@ services:
       - "${APISIX_CONTROL_HOST_PORT:-9092}:9092/tcp"
     volumes:
       # 单体
-      - ./backend/api-gateway/apisix_conf/apisix-standalone.yaml:/usr/local/apisix/conf/apisix.yaml:ro
-      - ./backend/api-gateway/apisix_conf/config-standalone.yaml:/usr/local/apisix/conf/config.yaml:ro
+      - ./backend/api-gateway/apisix_conf/apisix-standalone.yaml:/usr/local/apisix/conf/apisix.yaml:ro,Z
+      - ./backend/api-gateway/apisix_conf/config-standalone.yaml:/usr/local/apisix/conf/config.yaml:ro,Z
       # 集群
       # - ./backend/api-gateway/apisix_conf/config.yaml:/usr/local/apisix/conf/config.yaml:ro
     depends_on:
@@ -539,7 +539,7 @@ services:
     image: nginx:1.19.0-alpine
     restart: always
     volumes:
-      - ./backend/api-gateway/upstream/web1.conf:/etc/nginx/nginx.conf
+      - ./backend/api-gateway/upstream/web1.conf:/etc/nginx/nginx.conf:ro,Z
     ports:
       - "${WEB1_HOST_PORT:-9081}:80/tcp"
     environment:
@@ -596,7 +596,7 @@ services:
       - GOAGENT_ARTIFACT_S3_SECRET_ACCESS_KEY=${GOAGENT_ARTIFACT_S3_SECRET_ACCESS_KEY:-}
       - GOAGENT_ARTIFACT_S3_FORCE_PATH_STYLE=${GOAGENT_ARTIFACT_S3_FORCE_PATH_STYLE:-}
     volumes:
-      - ./backend/task-orchestrator/config.yaml:/app/config.yaml
+      - ./backend/task-orchestrator/config.yaml:/app/config.yaml:Z
     depends_on:
       redis:
         condition: service_healthy
@@ -664,7 +664,7 @@ services:
       - SANDBOX_BROKER_TARGET=sandbox-broker:50061
     volumes:
       - agent-workflow-storage:/app/storage
-      - /data/kardcraft:/data/kardcraft
+      - /data/kardcraft:/data/kardcraft:Z
     depends_on:
       redis:
         condition: service_healthy
@@ -703,7 +703,7 @@ services:
       - SANDBOX_BROKER_TARGET=sandbox-broker:50061
       - SANDBOX_BROKER_POLICY_FILE=/app/config/policy-profiles.yaml
     volumes:
-      - ./backend/agent-workflow/config/policy-profiles.yaml:/app/config/policy-profiles.yaml:ro
+      - ./backend/agent-workflow/config/policy-profiles.yaml:/app/config/policy-profiles.yaml:ro,Z
       - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       - etcd
