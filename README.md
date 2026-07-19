@@ -55,8 +55,11 @@ cp frontend/.env.local.example frontend/.env.local
 
 ### 2. Start Backend Services (from project root)
 
+`make` checks for Buf before it starts Docker. If Buf is missing, it prints the
+installation link and stops before the image build.
+
 ```bash
-docker compose up -d
+make
 ```
 
 ### 3. Start Frontend Dev Server

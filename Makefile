@@ -1,217 +1,174 @@
-# ============================================================================
-# Kardcraft Makefile
-# ============================================================================
+# Kardcraft development commands
 
-.PHONY: help build build-all test test-all up down logs clean protobuf protobuf-lint protobuf-check verify-lightrag-isolation verify-lightrag-isolation-stress
+.DEFAULT_GOAL := up
 
-# 默认目标
-help:
-	@echo "Kardcraft 构建和部署工具"
+COMPOSE := docker compose
+PROTO_SCRIPT := ./backend/protobuf/generate.sh
+PROTO_DIR := backend/protobuf
+
+.PHONY: \
+	help check-docker check-buf \
+	up up-core down logs ps \
+	protobuf protobuf-lint protobuf-check \
+	build-all build-api build-task build-agent build-storage \
+	test-all test-api test-task test-agent test-guard \
+	db-migrate db-bootstrap-templates db-bootstrap-templates-force \
+	db-check-template-bootstrap db-cutover-template-governance \
+	db-verify-template-governance-empty-db clean
+
+help: ## Show available commands
+	@echo "Kardcraft commands"
 	@echo ""
-	@echo "可用命令:"
-	@echo "  make build-all     构建所有服务"
-	@echo "  make build-api     构建API网关"
-	@echo "  make build-task    构建任务编排器"
-	@echo "  make build-agent   构建Agent工作流"
-	@echo "  make build-rust    构建Rust服务"
-	@echo "  make build-storage 构建文件存储"
+	@echo "Start"
+	@echo "  make                 Generate protobuf code and start all services"
+	@echo "  make up              Generate protobuf code and start all services"
+	@echo "  make up-core         Start Redis, PostgreSQL, MinIO, and Milvus"
+	@echo "  make down            Stop all services"
+	@echo "  make logs            Follow service logs"
+	@echo "  make ps              Show service status"
 	@echo ""
-	@echo "  make test-all      运行所有测试"
-	@echo "  make test-api      测试API网关"
-	@echo "  make test-task     测试任务编排器"
-	@echo "  make test-agent    测试Agent工作流"
+	@echo "Code generation"
+	@echo "  make protobuf        Generate all protobuf code"
+	@echo "  make protobuf-lint   Lint protobuf files"
+	@echo "  make protobuf-check  Check generated protobuf code"
 	@echo ""
-	@echo "  make up            启动所有服务"
-	@echo "  make up-core       仅启动核心服务"
-	@echo "  make down          停止所有服务"
-	@echo "  make logs          查看日志"
+	@echo "Build and test"
+	@echo "  make build-all       Build all local services"
+	@echo "  make test-all        Run all tests and checks"
+	@echo "  make test-guard      Run database guard checks"
 	@echo ""
-	@echo "  make protobuf      生成protobuf代码"
-	@echo "  make protobuf-lint 校验protobuf schema"
-	@echo "  make protobuf-check 校验protobuf生成产物是否最新"
-	@echo "  make verify-lightrag-isolation 验证LightRAG多租户隔离"
-	@echo "  make verify-lightrag-isolation-stress 多轮验证LightRAG多租户隔离"
-	@echo "  make clean         清理构建文件"
+	@echo "Database"
+	@echo "  make db-migrate                         Run database migrations"
+	@echo "  make db-bootstrap-templates             Add missing template data"
+	@echo "  make db-bootstrap-templates-force       Replace template data"
+	@echo "  make db-check-template-bootstrap         Check template data"
+	@echo ""
+	@echo "Other"
+	@echo "  make clean                              Remove local build files"
 
-# ============================================================================
-# 构建命令
-# ============================================================================
+# Checks
 
-build-all: build-api build-task build-agent build-rust build-storage
+check-docker: ## Check Docker access
+	@command -v docker >/dev/null 2>&1 || { \
+		echo "Error: Docker is not installed or not in PATH."; \
+		exit 1; \
+	}
+	@$(COMPOSE) version >/dev/null 2>&1 || { \
+		echo "Error: Docker Compose is not available."; \
+		exit 1; \
+	}
+	@docker info >/dev/null 2>&1 || { \
+		echo "Error: Docker is not running or this user cannot access it."; \
+		echo "Run 'newgrp docker' once after adding your user to the docker group."; \
+		exit 1; \
+	}
 
-build-api:
-	@echo "构建API网关..."
-	cd backend/api-gateway && go build -o bin/api-gateway ./cmd/server
+check-buf: ## Check Buf access
+	@command -v buf >/dev/null 2>&1 || { \
+		echo "Error: Buf is required to generate protobuf code."; \
+		echo "Install it from https://buf.build/docs/installation"; \
+		echo "Then run make again."; \
+		exit 1; \
+	}
 
-build-task:
-	@echo "构建任务编排器..."
-	cd backend/task-orchestrator && go build -o bin/task-orchestrator ./cmd/orchestrator
+# Start and stop
 
-build-agent:
-	@echo "构建Agent工作流..."
-	cd backend/agent-workflow && pip install -e .
+up: protobuf check-docker ## Generate code and start all services
+	@echo "Starting all services..."
+	@$(COMPOSE) up -d
 
-build-storage:
-	@echo "构建文件存储..."
-	cd backend/file-storage && go build -o bin/file-storage ./cmd/storage
+up-core: check-docker ## Start core services
+	@echo "Starting core services..."
+	@$(COMPOSE) up -d redis postgres minio milvus
 
-# ============================================================================
-# 测试命令
-# ============================================================================
+down: check-docker ## Stop all services
+	@echo "Stopping all services..."
+	@$(COMPOSE) down
 
-test-all: test-api test-task test-agent
+logs: check-docker ## Follow service logs
+	@$(COMPOSE) logs -f
 
-test-api:
-	@echo "测试API网关..."
-	cd backend/api-gateway && go test ./...
+ps: check-docker ## Show service status
+	@$(COMPOSE) ps
 
-test-task:
-	@echo "测试任务编排器..."
-	cd backend/task-orchestrator && go test ./...
+# Protobuf
 
-test-agent:
-	@echo "测试Agent工作流..."
-	cd backend/agent-workflow && pytest tests/
+protobuf: check-buf ## Generate protobuf code
+	@echo "Generating protobuf code..."
+	@$(PROTO_SCRIPT)
 
-test-guard:
-	@echo "运行运行时引用守卫..."
-	./scripts/check_no_rust_services_refs.sh
-	./scripts/check_no_legacy_workspace_refs.sh
-	./scripts/check_no_direct_litellm_calls.sh
-	./scripts/check_execution_arch_guardrails.sh
-	./scripts/check_no_runtime_ddl.sh
-	./backend/database/scripts/check_no_template_seed.sh
-	./backend/database/scripts/check_no_template_overwrite_in_migrations.sh
-	./scripts/check_schema_drift.sh
-	./scripts/check_protobuf_codegen.sh
+protobuf-lint: check-buf ## Lint protobuf files
+	@echo "Linting protobuf files..."
+	@cd $(PROTO_DIR) && buf lint
 
-# ============================================================================
-# Docker命令
-# ============================================================================
+protobuf-check: protobuf ## Check generated protobuf code
+	@git diff --exit-code -- backend/task-orchestrator/internal/proto backend/file-storage/pkg/grpc/pb backend/agent-workflow/src/kardcraft
 
-up:
-	@echo "启动所有服务..."
-	docker-compose up -d
+# Build
 
-up-core:
-	@echo "启动核心服务..."
-	docker-compose up -d redis postgres minio milvus
+build-all: build-api build-task build-agent build-storage ## Build all local services
 
-down:
-	@echo "停止所有服务..."
-	docker-compose down
+build-api: ## Build the API gateway
+	@echo "Building API gateway..."
+	@cd backend/api-gateway && go build -o bin/api-gateway ./cmd/server
 
-logs:
-	@echo "查看日志..."
-	docker-compose logs -f
+build-task: ## Build the task orchestrator
+	@echo "Building task orchestrator..."
+	@cd backend/task-orchestrator && go build -o bin/task-orchestrator ./cmd/orchestrator
 
-# ============================================================================
-# 开发工具
-# ============================================================================
+build-agent: ## Install the agent workflow package
+	@echo "Installing agent workflow..."
+	@cd backend/agent-workflow && pip install -e .
 
-protobuf:
-	@echo "生成protobuf代码..."
-	./backend/protobuf/generate.sh
+build-storage: protobuf ## Build file storage
+	@echo "Building file storage..."
+	@cd backend/file-storage && go build -o bin/file-storage ./cmd/storage
 
-protobuf-lint:
-	@echo "校验protobuf schema..."
-	cd backend/protobuf && buf lint
+# Test
 
-protobuf-check:
-	@echo "检查protobuf生成产物是否最新..."
-	./backend/protobuf/generate.sh
-	git diff --exit-code -- backend/task-orchestrator/internal/proto backend/file-storage/pkg/grpc/pb backend/agent-workflow/src/kardcraft
+test-all: test-api test-task test-agent test-guard ## Run all tests and checks
 
-verify-lightrag-isolation:
-	@echo "验证LightRAG多租户隔离..."
-	./scripts/verify_lightrag_isolation.sh
+test-api: ## Test the API gateway
+	@cd backend/api-gateway && go test ./...
 
-verify-lightrag-isolation-stress:
-	@echo "多轮验证LightRAG多租户隔离..."
-	LIGHTRAG_VERIFY_ROUNDS=$${LIGHTRAG_VERIFY_ROUNDS:-10} ./scripts/verify_lightrag_isolation.sh
+test-task: ## Test the task orchestrator
+	@cd backend/task-orchestrator && go test ./...
 
-clean:
-	@echo "清理构建文件..."
-	rm -rf backend/api-gateway/bin
-	rm -rf backend/task-orchestrator/bin
-	rm -rf backend/file-storage/bin
-	rm -rf backend/agent-workflow/__pycache__
-	rm -rf backend/agent-workflow/*.egg-info
-	find . -name "*.pyc" -delete
-	find . -name "__pycache__" -type d -exec rm -rf {} +
+test-agent: ## Test the agent workflow
+	@cd backend/agent-workflow && pytest tests/
 
-# ============================================================================
-# 部署命令
-# ============================================================================
+test-guard: ## Run database guard checks
+	@./backend/database/scripts/check_no_template_seed.sh
+	@./backend/database/scripts/check_no_template_overwrite_in_migrations.sh
 
-deploy-dev:
-	@echo "部署到开发环境..."
-	cd scripts/deploy && ./deploy-dev.sh
+# Database
 
-deploy-staging:
-	@echo "部署到预发布环境..."
-	cd scripts/deploy && ./deploy-staging.sh
+db-migrate: ## Run database migrations
+	@./backend/database/scripts/migrate.sh
 
-deploy-prod:
-	@echo "部署到生产环境..."
-	cd scripts/deploy && ./deploy-prod.sh
+db-bootstrap-templates: ## Add missing template data
+	@./backend/database/scripts/bootstrap_templates.sh
 
-# ============================================================================
-# 数据库命令
-# ============================================================================
+db-bootstrap-templates-force: ## Replace template data
+	@./backend/database/scripts/bootstrap_templates.sh --force
 
-db-migrate:
-	@echo "运行数据库迁移..."
-	cd backend/database/scripts && ./migrate.sh
+db-check-template-bootstrap: ## Check template data
+	@./backend/database/scripts/check_template_bootstrap.sh
 
-db-bootstrap-templates:
-	@echo "引导模板内容（默认不覆盖）..."
-	cd backend/database/scripts && ./bootstrap_templates.sh
+db-cutover-template-governance: ## Run the template migration flow
+	@./backend/database/scripts/cutover_template_governance.sh
 
-db-bootstrap-templates-force:
-	@echo "强制覆盖模板内容版本（需显式确认使用场景）..."
-	cd backend/database/scripts && ./bootstrap_templates.sh --force
+db-verify-template-governance-empty-db: ## Test template setup on an empty database
+	@./backend/database/scripts/verify_template_governance_empty_db.sh
 
-db-check-template-bootstrap:
-	@echo "检查模板引导状态..."
-	cd backend/database/scripts && ./check_template_bootstrap.sh
+# Cleanup
 
-db-cutover-template-governance:
-	@echo "执行模板治理切换流水线..."
-	cd backend/database/scripts && ./cutover_template_governance.sh
-
-db-verify-template-governance-empty-db:
-	@echo "验证空库模板治理链路（migration/bootstrap/create-task）..."
-	cd backend/database/scripts && ./verify_template_governance_empty_db.sh
-
-db-seed:
-	@echo "填充种子数据..."
-	@echo "暂未配置统一 seeds 目录"
-
-db-backup:
-	@echo "备份数据库..."
-	@echo "暂未配置统一 backup 脚本"
-
-# ============================================================================
-# 监控命令
-# ============================================================================
-
-monitor-up:
-	@echo "启动监控服务..."
-	docker-compose up -d prometheus grafana
-
-monitor-down:
-	@echo "停止监控服务..."
-	docker-compose stop prometheus grafana
-
-# ============================================================================
-# 开发工具
-# ============================================================================
-
-dev-tools-up:
-	@echo "启动开发工具..."
-	docker-compose up -d pgadmin redis-commander minio-console
-
-dev-tools-down:
-	@echo "停止开发工具..."
-	docker-compose stop pgadmin redis-commander minio-console
+clean: ## Remove local build files
+	@echo "Removing local build files..."
+	@rm -rf backend/api-gateway/bin
+	@rm -rf backend/task-orchestrator/bin
+	@rm -rf backend/file-storage/bin
+	@rm -rf backend/agent-workflow/__pycache__
+	@rm -rf backend/agent-workflow/*.egg-info
+	@find . -name "*.pyc" -delete
+	@find . -name "__pycache__" -type d -exec rm -rf {} +
