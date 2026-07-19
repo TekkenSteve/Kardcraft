@@ -69,31 +69,6 @@ Use one service for external API:
 - `lightrag`: this gateway, mapped to host `:9621`.
 - It launches official `lightrag-server` subprocesses per workspace using `.env.lightrag`.
 
-## Verify Isolation
-
-From repo root:
-
-```bash
-make verify-lightrag-isolation
-```
-
-Multi-round stability verification:
-
-```bash
-make verify-lightrag-isolation-stress
-# or custom rounds:
-LIGHTRAG_VERIFY_ROUNDS=20 make verify-lightrag-isolation-stress
-```
-
-Optional environment overrides:
-
-```bash
-LIGHTRAG_VERIFY_API_BASE=http://127.0.0.1:9621 \
-LIGHTRAG_VERIFY_WORKSPACE_A=tenant_a \
-LIGHTRAG_VERIFY_WORKSPACE_B=tenant_b \
-make verify-lightrag-isolation
-```
-
 ## Notes
 
 This MVP keeps compatibility at API path level and adds runtime-per-workspace isolation.
