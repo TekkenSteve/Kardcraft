@@ -63,7 +63,7 @@ func (c *compressionStorage) Upload(ctx context.Context, key string, reader io.R
 	if metadata.CustomMeta == nil {
 		metadata.CustomMeta = make(map[string]string)
 	}
-	
+
 	metadata.CustomMeta["compression"] = c.algorithm
 	metadata.CustomMeta["original_size"] = fmt.Sprintf("%d", metadata.ContentLength)
 	metadata.ContentLength = int64(len(compressedData))
@@ -121,6 +121,24 @@ func (c *compressionStorage) Download(ctx context.Context, key string) (io.ReadC
 	return io.NopCloser(bytes.NewReader(decompressedData)), metadata, nil
 }
 
+// GetMetadata reports the original size for compressed objects.
+func (c *compressionStorage) GetMetadata(ctx context.Context, key string) (*types.FileMetadata, error) {
+	metadata, err := c.StorageWrapper.GetMetadata(ctx, key)
+	if err != nil || metadata == nil || metadata.CustomMeta == nil {
+		return metadata, err
+	}
+	if metadata.CustomMeta["compression"] != c.algorithm {
+		return metadata, nil
+	}
+	if originalSizeStr := metadata.CustomMeta["original_size"]; originalSizeStr != "" {
+		var originalSize int64
+		if _, scanErr := fmt.Sscanf(originalSizeStr, "%d", &originalSize); scanErr == nil {
+			metadata.ContentLength = originalSize
+		}
+	}
+	return metadata, nil
+}
+
 // compress compresses data using the specified algorithm
 func (c *compressionStorage) compress(reader io.Reader) ([]byte, error) {
 	switch c.algorithm {
@@ -145,17 +163,17 @@ func (c *compressionStorage) decompress(data []byte) ([]byte, error) {
 func (c *compressionStorage) compressGzip(reader io.Reader) ([]byte, error) {
 	var buf bytes.Buffer
 	writer := gzip.NewWriter(&buf)
-	
+
 	_, err := io.Copy(writer, reader)
 	if err != nil {
 		return nil, err
 	}
-	
+
 	err = writer.Close()
 	if err != nil {
 		return nil, err
 	}
-	
+
 	return buf.Bytes(), nil
 }
 
@@ -166,7 +184,7 @@ func (c *compressionStorage) decompressGzip(data []byte) ([]byte, error) {
 		return nil, err
 	}
 	defer reader.Close()
-	
+
 	return io.ReadAll(reader)
 }
 
@@ -185,13 +203,13 @@ func (c *compressionStorage) shouldCompress(contentType string) bool {
 		"application/x-compress",
 		"application/x-compressed",
 	}
-	
+
 	contentType = strings.ToLower(contentType)
 	for _, compressedType := range compressedTypes {
 		if strings.HasPrefix(contentType, compressedType) {
 			return false
 		}
 	}
-	
+
 	return true
 }

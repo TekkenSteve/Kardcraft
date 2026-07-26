@@ -93,7 +93,8 @@ func (s *FileStorageService) UploadConversationFile(stream pb.FileStorageService
 		defer pw.Close()
 
 		fileMetadata := &storage.FileMetadata{
-			ContentType: metadata.ContentType,
+			ContentType:   metadata.ContentType,
+			ContentLength: metadata.FileSize,
 			CustomMeta: map[string]string{
 				"user_id":           metadata.UserId,
 				"session_id":        metadata.SessionId,
@@ -185,15 +186,19 @@ func (s *FileStorageService) GetConversationFiles(ctx context.Context, req *pb.G
 	// Convert to conversation file info
 	conversationFiles := make([]*pb.ConversationFileInfo, 0, len(files))
 	for _, file := range files {
-		if file.Metadata != nil && file.Metadata.CustomMeta != nil {
+		fileMetadata, err := storageInstance.GetMetadata(ctx, file.Key)
+		if err != nil {
+			return nil, s.handleStorageError(err)
+		}
+		if fileMetadata != nil && fileMetadata.CustomMeta != nil {
 			conversationFiles = append(conversationFiles, &pb.ConversationFileInfo{
-				FileId:      file.Metadata.CustomMeta["file_id"],
-				Filename:    file.Metadata.CustomMeta["original_filename"],
-				ContentType: file.ContentType,
-				FileSize:    file.Size,
+				FileId:      fileMetadata.CustomMeta["file_id"],
+				Filename:    fileMetadata.CustomMeta["original_filename"],
+				ContentType: fileMetadata.ContentType,
+				FileSize:    fileMetadata.ContentLength,
 				StorageKey:  file.Key,
 				UploadedAt:  timestamppb.New(file.LastModified),
-				CustomMeta:  file.Metadata.CustomMeta,
+				CustomMeta:  fileMetadata.CustomMeta,
 			})
 		}
 	}

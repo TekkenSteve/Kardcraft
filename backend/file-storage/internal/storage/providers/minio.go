@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 	"strings"
+	"time"
 
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
@@ -20,9 +20,9 @@ import (
 
 // MinIOStorage implements Storage interface using MinIO (S3 compatible)
 type MinIOStorage struct {
-	bucket *blob.Bucket
+	bucket   *blob.Bucket
 	s3Client *s3.Client
-	config config.ProviderConfig
+	config   config.ProviderConfig
 }
 
 // NewMinIOStorage creates a new MinIO storage instance
@@ -58,16 +58,16 @@ func NewMinIOStorage(ctx context.Context, cfg config.ProviderConfig) (*MinIOStor
 	}
 
 	return &MinIOStorage{
-		bucket: bucket,
+		bucket:   bucket,
 		s3Client: s3Client,
-		config: cfg,
+		config:   cfg,
 	}, nil
 }
 
 // Upload uploads a file to MinIO
 func (m *MinIOStorage) Upload(ctx context.Context, key string, reader io.Reader, metadata *types.FileMetadata) error {
 	opts := &blob.WriterOptions{}
-	
+
 	if metadata != nil {
 		opts.ContentType = metadata.ContentType
 		if metadata.CustomMeta != nil {
@@ -115,11 +115,23 @@ func (m *MinIOStorage) Download(ctx context.Context, key string) (io.ReadCloser,
 		}
 	}
 
+	attrs, err := m.bucket.Attributes(ctx, key)
+	if err != nil {
+		reader.Close()
+		return nil, nil, &types.StorageError{
+			Op:   "get_metadata",
+			Key:  key,
+			Err:  err,
+			Code: types.ErrorCodeInternal,
+		}
+	}
+
 	metadata := &types.FileMetadata{
-		ContentType:   reader.ContentType(),
-		ContentLength: reader.Size(),
-		LastModified:  reader.ModTime(),
-		CustomMeta:    make(map[string]string),
+		ContentType:   attrs.ContentType,
+		ContentLength: attrs.Size,
+		ETag:          attrs.ETag,
+		LastModified:  attrs.ModTime,
+		CustomMeta:    cloneMetadata(attrs.Metadata),
 	}
 
 	return reader, metadata, nil
@@ -165,7 +177,7 @@ func (m *MinIOStorage) List(ctx context.Context, prefix string, limit int) ([]*t
 
 	iter := m.bucket.List(opts)
 	var files []*types.FileInfo
-	
+
 	for {
 		obj, err := iter.Next(ctx)
 		if err == io.EOF {
@@ -221,9 +233,18 @@ func (m *MinIOStorage) GetMetadata(ctx context.Context, key string) (*types.File
 	return &types.FileMetadata{
 		ContentType:   attrs.ContentType,
 		ContentLength: attrs.Size,
+		ETag:          attrs.ETag,
 		LastModified:  attrs.ModTime,
-		CustomMeta:    make(map[string]string),
+		CustomMeta:    cloneMetadata(attrs.Metadata),
 	}, nil
+}
+
+func cloneMetadata(source map[string]string) map[string]string {
+	cloned := make(map[string]string, len(source))
+	for key, value := range source {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 // UpdateMetadata updates file metadata in MinIO

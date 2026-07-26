@@ -25,8 +25,8 @@ type ServerConfig struct {
 
 // StorageConfig contains storage configuration
 type StorageConfig struct {
-	DefaultProvider string                        `yaml:"default_provider"`
-	Providers       map[string]ProviderConfig     `yaml:"providers"`
+	DefaultProvider string                    `yaml:"default_provider"`
+	Providers       map[string]ProviderConfig `yaml:"providers"`
 }
 
 // ProviderConfig contains provider-specific configuration
@@ -38,17 +38,17 @@ type ProviderConfig struct {
 	Secure    bool   `yaml:"secure"`
 	Bucket    string `yaml:"bucket"`
 	Region    string `yaml:"region"`
-	
+
 	// Azure configuration
 	AccountName string `yaml:"account_name"`
 	Container   string `yaml:"container"`
-	
+
 	// File system configuration
 	BasePath string `yaml:"base_path"`
-	
+
 	// GCS configuration
 	CredentialsFile string `yaml:"credentials_file"`
-	
+
 	// Memory configuration
 	Enabled bool `yaml:"enabled"`
 }
@@ -88,9 +88,9 @@ type AuditConfig struct {
 
 // PoliciesConfig contains file policies
 type PoliciesConfig struct {
-	MaxFileSize        string   `yaml:"max_file_size"`
-	AllowedExtensions  []string `yaml:"allowed_extensions"`
-	ScanForMalware     bool     `yaml:"scan_for_malware"`
+	MaxFileSize       string   `yaml:"max_file_size"`
+	AllowedExtensions []string `yaml:"allowed_extensions"`
+	ScanForMalware    bool     `yaml:"scan_for_malware"`
 }
 
 // LoggingConfig contains logging configuration
@@ -102,22 +102,22 @@ type LoggingConfig struct {
 // LoadConfig loads configuration from file and environment variables
 func LoadConfig(configPath string) (*Config, error) {
 	config := &Config{}
-	
+
 	// Load from file
 	if configPath != "" {
 		data, err := os.ReadFile(configPath)
 		if err != nil {
 			return nil, fmt.Errorf("failed to read config file: %w", err)
 		}
-		
+
 		if err := yaml.Unmarshal(data, config); err != nil {
 			return nil, fmt.Errorf("failed to unmarshal config: %w", err)
 		}
 	}
-	
+
 	// Override with environment variables
 	config.overrideWithEnv()
-	
+
 	return config, nil
 }
 
@@ -126,15 +126,15 @@ func (c *Config) overrideWithEnv() {
 	if port := os.Getenv("PORT"); port != "" {
 		c.Server.Port = port
 	}
-	
+
 	if host := os.Getenv("HOST"); host != "" {
 		c.Server.Host = host
 	}
-	
+
 	if provider := os.Getenv("STORAGE_PROVIDER"); provider != "" {
 		c.Storage.DefaultProvider = provider
 	}
-	
+
 	// MinIO environment variables
 	if endpoint := os.Getenv("MINIO_ENDPOINT"); endpoint != "" {
 		if c.Storage.Providers == nil {
@@ -144,16 +144,22 @@ func (c *Config) overrideWithEnv() {
 		minioConfig.Endpoint = endpoint
 		c.Storage.Providers["minio"] = minioConfig
 	}
-	
+
 	if accessKey := os.Getenv("MINIO_ACCESS_KEY"); accessKey != "" {
 		minioConfig := c.Storage.Providers["minio"]
 		minioConfig.AccessKey = accessKey
 		c.Storage.Providers["minio"] = minioConfig
 	}
-	
+
 	if secretKey := os.Getenv("MINIO_SECRET_KEY"); secretKey != "" {
 		minioConfig := c.Storage.Providers["minio"]
 		minioConfig.SecretKey = secretKey
+		c.Storage.Providers["minio"] = minioConfig
+	}
+
+	if bucket := os.Getenv("MINIO_BUCKET"); bucket != "" {
+		minioConfig := c.Storage.Providers["minio"]
+		minioConfig.Bucket = bucket
 		c.Storage.Providers["minio"] = minioConfig
 	}
 }
