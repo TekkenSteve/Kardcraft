@@ -1,0 +1,10 @@
+# syntax=docker/dockerfile:1
+
+# During joint development the goagent named context is the same source used
+# by the orchestrator's go.mod replace directive. Release builds replace that
+# directive with a pinned module version before publishing this image.
+FROM goagent AS goagent-source
+
+FROM migrate/migrate:v4.19.1
+
+COPY --from=goagent-source /migrations /migrations
