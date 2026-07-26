@@ -17,6 +17,7 @@ type SessionsDeps struct {
 	ReadModel                usecase.ReadModel
 	Workspace                usecase.Workspace
 	CommandService           usecase.Command
+	Conversation             usecase.Conversation
 	IsTaskExecutionAvailable func() bool
 
 	ActiveTaskCode  string
@@ -78,10 +79,12 @@ func NewSessionsRouter(deps SessionsDeps) http.HandlerFunc {
 		}
 		suffix := parts[1]
 		switch suffix {
-		case "messages":
-			handleSessionMessages(w, r, sessionID, deps)
-		case "conversation":
-			handleSessionConversation(w, r, sessionID, deps)
+		case "stream-state":
+			handleSessionStreamState(w, r, sessionID, deps)
+		case "events":
+			handleSessionEvents(w, r, sessionID, deps)
+		case "runs":
+			handleSessionRuns(w, r, sessionID, deps)
 		case "timeline":
 			handleSessionTimeline(w, r, sessionID, deps)
 		case "history":

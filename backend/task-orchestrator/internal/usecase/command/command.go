@@ -9,25 +9,41 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
+
 	"task-orchestrator/internal/usecase"
 )
 
 type UseCase struct {
-	tasks     usecase.Task
-	store     usecase.CommandSessionStore
-	execution usecase.TaskExecution
-	events    usecase.SessionEventRecorder
-	now       func() time.Time
+	tasks        usecase.Task
+	store        usecase.CommandSessionStore
+	execution    usecase.TaskExecution
+	conversation usecase.Conversation
+	outbox       usecase.ConversationDispatchOutbox
+	events       usecase.SessionEventRecorder
+	now          func() time.Time
 }
 
 func New(tasks usecase.Task, store usecase.CommandSessionStore, execution usecase.TaskExecution, eventRecorders ...usecase.SessionEventRecorder) (*UseCase, error) {
+	return newUseCase(tasks, store, execution, nil, eventRecorders...)
+}
+
+func NewWithConversation(tasks usecase.Task, store usecase.CommandSessionStore, execution usecase.TaskExecution, conversation usecase.Conversation, eventRecorders ...usecase.SessionEventRecorder) (*UseCase, error) {
+	if conversation == nil {
+		return nil, fmt.Errorf("conversation is required")
+	}
+	return newUseCase(tasks, store, execution, conversation, eventRecorders...)
+}
+
+func newUseCase(tasks usecase.Task, store usecase.CommandSessionStore, execution usecase.TaskExecution, conversation usecase.Conversation, eventRecorders ...usecase.SessionEventRecorder) (*UseCase, error) {
 	if execution == nil {
 		return nil, fmt.Errorf("task execution is required")
 	}
 	if len(eventRecorders) == 0 || eventRecorders[0] == nil {
 		return nil, fmt.Errorf("session event recorder is required")
 	}
-	return &UseCase{tasks: tasks, store: store, execution: execution, events: eventRecorders[0], now: time.Now}, nil
+	outbox, _ := store.(usecase.ConversationDispatchOutbox)
+	return &UseCase{tasks: tasks, store: store, execution: execution, conversation: conversation, outbox: outbox, events: eventRecorders[0], now: time.Now}, nil
 }
 
 func (s *UseCase) CreateTaskInSession(ctx context.Context, cmd usecase.CreateTaskCommand) (*usecase.CreateTaskResult, string, error) {
@@ -70,11 +86,28 @@ func (s *UseCase) CreateTaskInSession(ctx context.Context, cmd usecase.CreateTas
 func (s *UseCase) resumeTaskStart(ctx context.Context, cmd usecase.CreateTaskCommand, existing usecase.SessionTask) (*usecase.CreateTaskResult, string, error) {
 	switch strings.ToLower(strings.TrimSpace(existing.Status)) {
 	case "queued", "running", "paused":
+		runID := cmd.TaskID
+		var userMessage usecase.ConversationMessage
+		var cursor int64
+		if s.conversation != nil {
+			run, err := s.startConversationRun(ctx, cmd, nil)
+			if err != nil {
+				return nil, "", err
+			}
+			runID = run.RunID
+			userMessage, cursor, err = s.conversationRunSnapshot(ctx, cmd, run.RunID)
+			if err != nil {
+				return nil, "", err
+			}
+		}
 		return &usecase.CreateTaskResult{
-			WorkflowID: cmd.TaskID,
-			RunID:      cmd.TaskID,
-			Status:     existing.Status,
-			SessionID:  cmd.SessionID,
+			WorkflowID:  cmd.TaskID,
+			RunID:       runID,
+			ProcessID:   cmd.TaskID,
+			Status:      existing.Status,
+			SessionID:   cmd.SessionID,
+			UserMessage: userMessage,
+			Cursor:      cursor,
 		}, "", nil
 	default:
 		return s.startTask(ctx, cmd)
@@ -82,18 +115,51 @@ func (s *UseCase) resumeTaskStart(ctx context.Context, cmd usecase.CreateTaskCom
 }
 
 func (s *UseCase) startTask(ctx context.Context, cmd usecase.CreateTaskCommand) (*usecase.CreateTaskResult, string, error) {
-	runID, err := s.startWorkflow(ctx, cmd)
+	conversationRunID := cmd.TaskID
+	var userMessage usecase.ConversationMessage
+	var cursor int64
+	if s.conversation != nil {
+		run, err := s.startConversationRun(ctx, cmd, nil)
+		if err != nil {
+			_ = s.store.UpdateTaskStatus(ctx, cmd.TaskID, "failed", err.Error())
+			return nil, "", err
+		}
+		conversationRunID = run.RunID
+		userMessage, cursor, err = s.conversationRunSnapshot(ctx, cmd, run.RunID)
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	_, err := s.startWorkflow(ctx, cmd, conversationRunID)
 	if err != nil {
 		_ = s.store.UpdateTaskStatus(ctx, cmd.TaskID, "failed", err.Error())
 		return nil, "", err
 	}
 
 	return &usecase.CreateTaskResult{
-		WorkflowID: cmd.TaskID,
-		RunID:      runID,
-		Status:     "pending",
-		SessionID:  cmd.SessionID,
+		WorkflowID:  cmd.TaskID,
+		RunID:       conversationRunID,
+		ProcessID:   cmd.TaskID,
+		Status:      "pending",
+		SessionID:   cmd.SessionID,
+		UserMessage: userMessage,
+		Cursor:      cursor,
 	}, "", nil
+}
+
+func (s *UseCase) conversationRunSnapshot(ctx context.Context, cmd usecase.CreateTaskCommand, runID string) (usecase.ConversationMessage, int64, error) {
+	snapshot, err := s.conversation.GetThreadSnapshot(ctx, usecase.ConversationThreadScope{
+		ThreadID: cmd.SessionID, AccountID: cmd.UserID, ProjectID: cmd.SessionID,
+	})
+	if err != nil {
+		return usecase.ConversationMessage{}, 0, err
+	}
+	for i := len(snapshot.Messages) - 1; i >= 0; i-- {
+		if snapshot.Messages[i].RunID == runID && snapshot.Messages[i].Role == "user" {
+			return snapshot.Messages[i], snapshot.Cursor, nil
+		}
+	}
+	return usecase.ConversationMessage{}, snapshot.Cursor, fmt.Errorf("conversation run %q has no persisted user message", runID)
 }
 
 func findSessionTask(tasks []usecase.SessionTask, taskID string) (usecase.SessionTask, bool) {
@@ -106,13 +172,13 @@ func findSessionTask(tasks []usecase.SessionTask, taskID string) (usecase.Sessio
 	return usecase.SessionTask{}, false
 }
 
-func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskCommand) (string, error) {
+func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskCommand, conversationRunID string) (string, error) {
 	if s.execution == nil {
 		return "", fmt.Errorf("task execution is required")
 	}
 	modelRef := strings.TrimSpace(cmd.Config.ModelRef)
-	executionInput := buildTaskExecutionInput(cmd)
-	status, err := s.execution.StartTaskExecution(ctx, usecase.TaskExecutionRequest{
+	executionInput := buildTaskExecutionInput(cmd, conversationRunID)
+	request := usecase.TaskExecutionRequest{
 		RunID:          cmd.TaskID,
 		ThreadID:       cmd.SessionID,
 		AccountID:      cmd.UserID,
@@ -123,19 +189,32 @@ func (s *UseCase) startWorkflow(ctx context.Context, cmd usecase.CreateTaskComma
 		IdempotencyKey: strings.TrimSpace(cmd.Metadata.RequestID),
 		RequestedAt:    s.now().UTC(),
 		Input:          executionInput,
-	})
+	}
+	if s.outbox != nil {
+		if err := s.enqueueConversationDispatch(ctx, conversationDispatchPayload{Start: &request}, usecase.ConversationDispatch{
+			IdempotencyKey: "start:" + strings.TrimSpace(cmd.Metadata.RequestID),
+			ThreadID:       cmd.SessionID, RunID: conversationRunID, ProcessID: cmd.TaskID,
+			AccountID: cmd.UserID, ProjectID: cmd.SessionID, Kind: "start",
+		}); err != nil {
+			return "", err
+		}
+		_ = s.DispatchPendingConversations(ctx, 1)
+		return cmd.TaskID, nil
+	}
+	status, err := s.execution.StartTaskExecution(ctx, request)
 	if err != nil {
 		return "", err
 	}
 	return status.RunID, nil
 }
 
-func buildTaskExecutionInput(cmd usecase.CreateTaskCommand) map[string]any {
+func buildTaskExecutionInput(cmd usecase.CreateTaskCommand, conversationRunID string) map[string]any {
 	return map[string]any{
 		"schema_version":       "kardcraft.task.input.v1",
 		"task_id":              strings.TrimSpace(cmd.TaskID),
 		"task_type":            strings.TrimSpace(cmd.TaskType),
 		"session_id":           strings.TrimSpace(cmd.SessionID),
+		"conversation_run_id":  strings.TrimSpace(conversationRunID),
 		"query":                strings.TrimSpace(cmd.Input.Query),
 		"conversation_history": cmd.Input.ConversationHistory,
 		"context": map[string]any{
@@ -152,6 +231,24 @@ func buildTaskExecutionInput(cmd usecase.CreateTaskCommand) map[string]any {
 		"template_id":        strings.TrimSpace(cmd.Input.TemplateID),
 		"variables":          cmd.Input.Variables,
 	}
+}
+
+func (s *UseCase) startConversationRun(ctx context.Context, cmd usecase.CreateTaskCommand, resume *usecase.ConversationResume) (usecase.ConversationRun, error) {
+	requestedAt := s.now().UTC()
+	attachments := make([]usecase.ConversationAttachment, 0, len(cmd.Attachments))
+	for _, attachment := range cmd.Attachments {
+		attachments = append(attachments, usecase.ConversationAttachment{
+			FileID: attachment.FileID, Filename: attachment.Filename,
+			Size: attachment.Size, MIMEType: attachment.MimeType,
+		})
+	}
+	return s.conversation.StartRun(ctx, usecase.ConversationStartRequest{
+		ThreadID: cmd.SessionID, ProcessID: cmd.TaskID, AccountID: cmd.UserID, ProjectID: cmd.SessionID,
+		UserMessage: strings.TrimSpace(cmd.Input.Query), Attachments: attachments,
+		IdempotencyKey: strings.TrimSpace(cmd.Metadata.RequestID),
+		RunMetadata:    map[string]any{"task_type": cmd.TaskType, "source": cmd.Metadata.Source},
+		Resume:         resume, RequestedAt: requestedAt,
+	})
 }
 
 func systemPromptFromCommand(cmd usecase.CreateTaskCommand) string {
@@ -185,45 +282,121 @@ func (s *UseCase) SendMessageToSession(ctx context.Context, cmd usecase.SessionM
 	if idempotencyKey == "" {
 		return nil, fmt.Errorf("idempotency key is required")
 	}
-	payload := map[string]any{
-		"schema_version":   "kardcraft.user_message.v1",
-		"session_id":       strings.TrimSpace(cmd.SessionID),
-		"user_id":          strings.TrimSpace(cmd.UserID),
-		"active_task_id":   taskID,
-		"content":          strings.TrimSpace(cmd.Content),
-		"attachments":      cmd.Attachments,
-		"file_ids":         cmd.FileIDs,
-		"context":          cmd.Context,
-		"context_envelope": cmd.ContextEnvelope,
-		"metadata":         cmd.Metadata,
+	conversationRunID := taskID
+	var userMessage usecase.ConversationMessage
+	var cursor int64
+	if s.conversation != nil {
+		attachments := make([]usecase.ConversationAttachment, 0, len(cmd.Attachments))
+		for _, attachment := range cmd.Attachments {
+			attachments = append(attachments, usecase.ConversationAttachment{
+				FileID: stringMapValue(attachment, "file_id"), Filename: stringMapValue(attachment, "filename"),
+				Size: int64MapValue(attachment, "size"), MIMEType: stringMapValue(attachment, "mime_type"),
+			})
+		}
+		var resume *usecase.ConversationResume
+		if strings.TrimSpace(cmd.InterruptID) != "" {
+			resume = &usecase.ConversationResume{InterruptID: strings.TrimSpace(cmd.InterruptID), Response: cmd.Content}
+		}
+		run, err := s.conversation.StartRun(ctx, usecase.ConversationStartRequest{
+			RunID: uuid.NewString(), ThreadID: cmd.SessionID, ProcessID: taskID,
+			AccountID: cmd.UserID, ProjectID: cmd.SessionID, MessageID: uuid.NewString(),
+			UserMessage: strings.TrimSpace(cmd.Content), Attachments: attachments,
+			MessageMetadata: cmd.Metadata, Resume: resume, IdempotencyKey: idempotencyKey, RequestedAt: sentAt,
+		})
+		if err != nil {
+			return nil, err
+		}
+		conversationRunID = run.RunID
+		snapshot, err := s.conversation.GetThreadSnapshot(ctx, usecase.ConversationThreadScope{
+			ThreadID: cmd.SessionID, AccountID: cmd.UserID, ProjectID: cmd.SessionID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		cursor = snapshot.Cursor
+		for i := len(snapshot.Messages) - 1; i >= 0; i-- {
+			if snapshot.Messages[i].RunID == run.RunID && snapshot.Messages[i].Role == "user" {
+				userMessage = snapshot.Messages[i]
+				break
+			}
+		}
 	}
-	if err := s.execution.SignalTaskExecution(ctx, taskID, usecase.TaskExecutionSignal{
+	payload := map[string]any{
+		"schema_version":      "kardcraft.user_message.v1",
+		"session_id":          strings.TrimSpace(cmd.SessionID),
+		"user_id":             strings.TrimSpace(cmd.UserID),
+		"active_task_id":      taskID,
+		"conversation_run_id": conversationRunID,
+		"interrupt_id":        strings.TrimSpace(cmd.InterruptID),
+		"content":             strings.TrimSpace(cmd.Content),
+		"attachments":         cmd.Attachments,
+		"file_ids":            cmd.FileIDs,
+		"context":             cmd.Context,
+		"context_envelope":    cmd.ContextEnvelope,
+		"metadata":            cmd.Metadata,
+	}
+	signal := usecase.TaskExecutionSignal{
 		Type:           usecase.AgentSignalUserMessage,
 		IdempotencyKey: idempotencyKey,
+		ActorID:        strings.TrimSpace(cmd.UserID),
 		Payload:        payload,
 		SentAt:         sentAt,
-	}); err != nil {
+	}
+	if s.outbox != nil {
+		if err := s.enqueueConversationDispatch(ctx, conversationDispatchPayload{SignalTaskID: taskID, Signal: &signal}, usecase.ConversationDispatch{
+			IdempotencyKey: "resume:" + idempotencyKey,
+			ThreadID:       cmd.SessionID, RunID: conversationRunID, ProcessID: taskID,
+			AccountID: cmd.UserID, ProjectID: cmd.SessionID, Kind: "resume",
+		}); err != nil {
+			return nil, err
+		}
+		_ = s.DispatchPendingConversations(ctx, 1)
+	} else if err := s.execution.SignalTaskExecution(ctx, taskID, signal); err != nil {
 		return nil, err
 	}
 	streamID := sessionMessageStreamID(cmd.SessionID, taskID, idempotencyKey)
-	if err := s.RecordSessionEvents(ctx, []usecase.SessionEvent{{
-		SessionID: cmd.SessionID, TaskID: taskID, WorkflowID: taskID, Type: "MESSAGE_SENT", Message: "User message sent",
-		Payload: map[string]any{
-			"schema_version": "kardcraft.user_message.v1",
-			"content":        strings.TrimSpace(cmd.Content), "attachments": cmd.Attachments, "file_ids": cmd.FileIDs,
-			"context": cmd.Context, "context_envelope": cmd.ContextEnvelope, "metadata": cmd.Metadata,
-		},
-		StreamID: streamID, OccurredAt: sentAt,
-	}}); err != nil {
-		return nil, err
+	if s.conversation == nil {
+		if err := s.RecordSessionEvents(ctx, []usecase.SessionEvent{{
+			SessionID: cmd.SessionID, TaskID: taskID, WorkflowID: taskID, Type: "MESSAGE_SENT", Message: "User message sent",
+			Payload: map[string]any{
+				"schema_version": "kardcraft.user_message.v1",
+				"content":        strings.TrimSpace(cmd.Content), "attachments": cmd.Attachments, "file_ids": cmd.FileIDs,
+				"context": cmd.Context, "context_envelope": cmd.ContextEnvelope, "metadata": cmd.Metadata,
+			},
+			StreamID: streamID, OccurredAt: sentAt,
+		}}); err != nil {
+			return nil, err
+		}
 	}
 	return &usecase.SessionMessageResult{
 		SessionID:      cmd.SessionID,
 		ActiveTaskID:   taskID,
+		RunID:          conversationRunID,
+		ProcessID:      taskID,
+		UserMessage:    userMessage,
+		Cursor:         cursor,
 		IdempotencyKey: idempotencyKey,
 		StreamID:       streamID,
 		SentAt:         sentAt,
 	}, nil
+}
+
+func stringMapValue(record map[string]any, key string) string {
+	value, _ := record[key].(string)
+	return strings.TrimSpace(value)
+}
+
+func int64MapValue(record map[string]any, key string) int64 {
+	switch value := record[key].(type) {
+	case int64:
+		return value
+	case int:
+		return int64(value)
+	case float64:
+		return int64(value)
+	default:
+		return 0
+	}
 }
 
 func (s *UseCase) RecordSessionEvents(ctx context.Context, events []usecase.SessionEvent) error {

@@ -167,36 +167,17 @@ func TestHandleCreateTaskBoundaries(t *testing.T) {
 		}
 	})
 
-	t.Run("session message signals active AgentOS run", func(t *testing.T) {
-		store := newFakeCommandStore()
-		store.sessionTasks = []usecase.SessionTask{{TaskID: "active-1", Status: "running", TaskType: usecase.TaskTypeMain}}
-		readStore := &fakeReadModelStore{ready: true}
-		s, executor := newCommandTestServerWithReadStoreAndExecutor(store, nil, true, readStore)
+	t.Run("legacy session messages endpoint is removed", func(t *testing.T) {
+		s := newCommandTestServer(newFakeCommandStore(), nil, true)
 		req := newJSONRequest(http.MethodPost, "/api/v1/sessions/s1/messages", `{
-			"content":"continue",
-			"idempotency_key":"msg-1"
+			"content":"continue"
 		}`)
 		req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
 		rr := httptest.NewRecorder()
 
 		s.Handler().ServeHTTP(rr, req)
-		if rr.Code != http.StatusAccepted {
-			t.Fatalf("expected 202, got %d body=%s", rr.Code, rr.Body.String())
-		}
-		if executor.lastSignal == nil {
-			t.Fatal("expected agent signal")
-		}
-		if executor.lastSignalRunID != "active-1" {
-			t.Fatalf("expected signal to active-1, got %s", executor.lastSignalRunID)
-		}
-		if executor.lastSignal.Type != usecase.AgentSignalUserMessage {
-			t.Fatalf("expected user.message signal, got %s", executor.lastSignal.Type)
-		}
-		if got := executor.lastSignal.Payload["content"]; got != "continue" {
-			t.Fatalf("expected content payload, got %#v", got)
-		}
-		if len(readStore.insertedEvents) != 1 || readStore.insertedEvents[0].taskID != "active-1" {
-			t.Fatalf("expected persisted active task message event, got %#v", readStore.insertedEvents)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("expected 404, got %d body=%s", rr.Code, rr.Body.String())
 		}
 	})
 

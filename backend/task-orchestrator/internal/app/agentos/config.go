@@ -26,16 +26,20 @@ const (
 	EnvScheduleRetryBackoff     = "KARDCRAFT_SCHEDULE_RETRY_BACKOFF_COEFFICIENT"
 	EnvScheduleRetryAttempts    = "KARDCRAFT_SCHEDULE_RETRY_MAXIMUM_ATTEMPTS"
 
-	externalStatusQuery       = "agentos_status"
-	externalUserMessageSignal = "user_input"
-	externalPauseSignal       = "pause"
-	externalResumeSignal      = "resume"
-	externalCancelSignal      = "cancel"
+	externalStatusQuery        = "agentos_status"
+	externalUserMessageSignal  = "user_input"
+	externalPauseSignal        = "pause"
+	externalResumeSignal       = "resume"
+	externalCancelSignal       = "cancel"
+	kardcraftPlanControlQueue  = "kardcraft-agentos-plan-control-v2"
+	kardcraftPlanActivityQueue = "kardcraft-agentos-plan-activity-v2"
+	kardcraftTriggerQueue      = "kardcraft-agentos-trigger-v2"
 )
 
 type ExternalRuntimeConfig struct {
-	Backend agentos.BackendRef
-	Runtime agentostemporal.RuntimeConfig
+	Backend          agentos.BackendRef
+	Runtime          agentostemporal.RuntimeConfig
+	TriggerTaskQueue string
 }
 
 // ScheduleTriggerConfig is Kardcraft's explicit recurring delivery policy.
@@ -62,17 +66,26 @@ func ExternalRuntimeConfigFromEnv(storeCfg persistent.SessionStoreConfig) (Exter
 	if err != nil {
 		return ExternalRuntimeConfig{}, fmt.Errorf("invalid redis configuration: %w", err)
 	}
+	agentosPostgresURL, err := requiredEnv("AGENTOS_PG_URL")
+	if err != nil {
+		return ExternalRuntimeConfig{}, err
+	}
 
 	backend := agentos.BackendRef{
 		Kind: agentos.BackendKindTemporalExternal,
 		Name: backendName,
 	}
 
+	taskQueues := agentostemporal.DefaultTaskQueues()
+	taskQueues.PlanControl = kardcraftPlanControlQueue
+	taskQueues.PlanActivity = kardcraftPlanActivityQueue
+
 	return ExternalRuntimeConfig{
-		Backend: backend,
+		Backend:          backend,
+		TriggerTaskQueue: kardcraftTriggerQueue,
 		Runtime: agentostemporal.RuntimeConfig{
-			TemporalTaskQueues: agentostemporal.DefaultTaskQueues(),
-			PostgresURL:        storeCfg.PostgresDSN,
+			TemporalTaskQueues: taskQueues,
+			PostgresURL:        agentosPostgresURL,
 			RedisURL:           redisURL,
 			ArtifactStore:      artifactStoreConfigFromEnv(),
 			TemporalExternalBackends: []agentostemporal.ExternalBackendConfig{

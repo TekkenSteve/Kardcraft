@@ -18,6 +18,7 @@ type ServerDependencies struct {
 	DefaultModelRef         string
 	TaskExecution           usecase.TaskExecution
 	ExecutionFeed           usecase.ExecutionEventFeed
+	Conversation            usecase.Conversation
 	InternalExecutionEvents http.Handler
 	APKGExportService       usecase.APKGExport
 	WorkspaceService        usecase.Workspace
@@ -37,6 +38,7 @@ func NewServer(port int, deps ServerDependencies) *Server {
 		DefaultModelRef:         deps.DefaultModelRef,
 		TaskExecution:           deps.TaskExecution,
 		ExecutionFeed:           deps.ExecutionFeed,
+		Conversation:            deps.Conversation,
 		InternalExecutionEvents: deps.InternalExecutionEvents,
 		APKGExportService:       deps.APKGExportService,
 		WorkspaceService:        deps.WorkspaceService,

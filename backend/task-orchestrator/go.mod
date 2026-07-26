@@ -2,6 +2,8 @@ module task-orchestrator
 
 go 1.26.2
 
+replace github.com/TekkenSteve/GoAgent => ../../../GoAgent
+
 require (
 	github.com/TekkenSteve/GoAgent v0.0.0-20260715133128-17e2c74d1103
 	github.com/google/uuid v1.6.0

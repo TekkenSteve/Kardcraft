@@ -9,10 +9,13 @@ const (
 )
 
 type CreateTaskResult struct {
-	WorkflowID string
-	RunID      string
-	Status     string
-	SessionID  string
+	WorkflowID  string
+	RunID       string
+	ProcessID   string
+	Status      string
+	SessionID   string
+	UserMessage ConversationMessage
+	Cursor      int64
 }
 
 type SessionControlCommand struct {
@@ -41,16 +44,35 @@ type SessionMessageCommand struct {
 	Context         map[string]any
 	ContextEnvelope map[string]any
 	IdempotencyKey  string
+	InterruptID     string
 	Metadata        map[string]any
 	SentAt          time.Time
 }
 
 type SessionMessageResult struct {
-	SessionID      string
-	ActiveTaskID   string
-	IdempotencyKey string
-	StreamID       string
-	SentAt         time.Time
+	SessionID      string              `json:"session_id"`
+	ActiveTaskID   string              `json:"active_task_id"`
+	RunID          string              `json:"run_id"`
+	ProcessID      string              `json:"process_id"`
+	UserMessage    ConversationMessage `json:"user_message"`
+	Cursor         int64               `json:"cursor"`
+	IdempotencyKey string              `json:"idempotency_key"`
+	StreamID       string              `json:"stream_id"`
+	SentAt         time.Time           `json:"sent_at"`
+}
+
+type ConversationDispatch struct {
+	DispatchID     string    `json:"dispatch_id"`
+	IdempotencyKey string    `json:"idempotency_key"`
+	ThreadID       string    `json:"thread_id"`
+	RunID          string    `json:"run_id"`
+	ProcessID      string    `json:"process_id"`
+	AccountID      string    `json:"account_id"`
+	ProjectID      string    `json:"project_id"`
+	Kind           string    `json:"kind"`
+	Payload        []byte    `json:"payload"`
+	Attempts       int       `json:"attempts"`
+	CreatedAt      time.Time `json:"created_at"`
 }
 
 // SessionEvent is an application-level audit record. The command use case
@@ -132,14 +154,15 @@ type CreateTaskMetadata struct {
 }
 
 type CreateTaskCommand struct {
-	TaskID    string
-	UserID    string
-	TaskType  string
-	SessionID string
-	Query     string
-	Input     AgentTaskInput
-	Config    CreateTaskConfig
-	Metadata  CreateTaskMetadata
+	TaskID      string
+	UserID      string
+	TaskType    string
+	SessionID   string
+	Query       string
+	Input       AgentTaskInput
+	Attachments []FileAttachment
+	Config      CreateTaskConfig
+	Metadata    CreateTaskMetadata
 }
 
 type ControlSignal struct {

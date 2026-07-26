@@ -119,6 +119,7 @@ func (r *TaskExecution) SignalTaskExecution(ctx context.Context, taskID string, 
 	return r.runtime.SignalPlan(ctx, planRef(route), &agentoscore.Signal{
 		Type:           agentoscore.SignalType(signal.Type),
 		IdempotencyKey: signal.IdempotencyKey,
+		ActorID:        signal.ActorID,
 		Payload:        signal.Payload,
 		SentAt:         signal.SentAt,
 	})

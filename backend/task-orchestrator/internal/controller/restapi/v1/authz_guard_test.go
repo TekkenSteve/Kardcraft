@@ -59,7 +59,7 @@ func TestTaskControl_ReturnsAuthzDeniedWithoutOwnership(t *testing.T) {
 	}
 }
 
-func TestSSEHandler_ReturnsAuthzDeniedBeforeSubscribe(t *testing.T) {
+func TestLegacyTaskSSEEndpointRemoved(t *testing.T) {
 	s := newAuthzRouteServer()
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/stream/sse?workflow_id=wf-1", nil)
 	req = req.WithContext(context.WithValue(req.Context(), userIDContextKey, "u1"))
@@ -67,12 +67,8 @@ func TestSSEHandler_ReturnsAuthzDeniedBeforeSubscribe(t *testing.T) {
 
 	s.Handler().ServeHTTP(rr, req)
 
-	if rr.Code != http.StatusForbidden {
-		t.Fatalf("expected 403, got %d", rr.Code)
-	}
-	payload := decodeAPIErrorBody(t, rr.Body.String())
-	if payload.Error.Code != errCodeAuthzDenied {
-		t.Fatalf("expected %s, got %s", errCodeAuthzDenied, payload.Error.Code)
+	if rr.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rr.Code)
 	}
 }
 

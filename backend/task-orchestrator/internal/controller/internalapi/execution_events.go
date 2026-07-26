@@ -20,19 +20,23 @@ type ServiceTokenValidator interface {
 }
 
 type ExecutionEventsDeps struct {
-	Validator ServiceTokenValidator
-	Execution usecase.TaskExecution
+	Validator    ServiceTokenValidator
+	Execution    usecase.TaskExecution
+	Conversation usecase.Conversation
 }
 
 type executionEventRequest struct {
-	EventID   string         `json:"event_id"`
-	RunID     string         `json:"run_id"`
-	ThreadID  string         `json:"thread_id,omitempty"`
-	Sequence  int64          `json:"sequence"`
-	EventType string         `json:"event_type"`
-	Source    string         `json:"source"`
-	Timestamp time.Time      `json:"timestamp"`
-	Payload   map[string]any `json:"payload,omitempty"`
+	EventID           string         `json:"event_id"`
+	RunID             string         `json:"run_id"`
+	ThreadID          string         `json:"thread_id,omitempty"`
+	Sequence          int64          `json:"sequence"`
+	EventType         string         `json:"event_type"`
+	Source            string         `json:"source"`
+	Timestamp         time.Time      `json:"timestamp"`
+	Payload           map[string]any `json:"payload,omitempty"`
+	ConversationRunID string         `json:"conversation_run_id,omitempty"`
+	AccountID         string         `json:"account_id,omitempty"`
+	ProjectID         string         `json:"project_id,omitempty"`
 }
 
 func NewExecutionEventsHandler(deps ExecutionEventsDeps) http.HandlerFunc {
@@ -82,9 +86,23 @@ func NewExecutionEventsHandler(deps ExecutionEventsDeps) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("reject execution event: %v", err), http.StatusBadRequest)
 			return
 		}
+		conversationSequence := int64(0)
+		if deps.Conversation != nil && strings.TrimSpace(request.ConversationRunID) != "" {
+			conversationEvent, err := deps.Conversation.IngestEvent(r.Context(), usecase.ExternalConversationEvent{
+				ThreadID: request.ThreadID, RunID: request.ConversationRunID, ProcessID: request.RunID,
+				AccountID: request.AccountID, ProjectID: request.ProjectID,
+				SourceEventID: stored.EventID, SourceSequence: stored.Sequence,
+				EventType: request.EventType, OccurredAt: request.Timestamp, Payload: request.Payload,
+			})
+			if err != nil {
+				http.Error(w, fmt.Sprintf("reject conversation event: %v", err), http.StatusBadRequest)
+				return
+			}
+			conversationSequence = conversationEvent.Sequence
+		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusAccepted)
-		_ = json.NewEncoder(w).Encode(map[string]any{"event_id": stored.EventID, "sequence": stored.Sequence})
+		_ = json.NewEncoder(w).Encode(map[string]any{"event_id": stored.EventID, "sequence": stored.Sequence, "conversation_sequence": conversationSequence})
 	}
 }
 

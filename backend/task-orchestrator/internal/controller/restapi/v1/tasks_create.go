@@ -116,10 +116,13 @@ func NewTemplateTasksHandler(deps TasksDeps) http.HandlerFunc {
 		deps.WriteJSON(w, http.StatusCreated, map[string]any{
 			"workflow_id":    createResult.WorkflowID,
 			"run_id":         createResult.RunID,
+			"process_id":     createResult.ProcessID,
+			"user_message":   createResult.UserMessage,
+			"cursor":         createResult.Cursor,
 			"status":         createResult.Status,
 			"message":        fmt.Sprintf("Template workflow started with template: %s", req.TemplateID),
 			"created_at":     deps.NowRFC3339(),
-			"stream_url":     fmt.Sprintf("/api/v1/stream/sse?workflow_id=%s", createResult.WorkflowID),
+			"stream_url":     fmt.Sprintf("/api/v1/sessions/%s/events?after=%d", createResult.SessionID, createResult.Cursor),
 			"session_id":     createResult.SessionID,
 			"correlation_id": correlationID,
 		})
@@ -215,12 +218,13 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 		return
 	}
 	cmd := usecase.CreateTaskCommand{
-		TaskID:    workflowID,
-		UserID:    userID,
-		TaskType:  taskType,
-		SessionID: sessionID,
-		Query:     taskQuery,
-		Input:     prepared.Input,
+		TaskID:      workflowID,
+		UserID:      userID,
+		TaskType:    taskType,
+		SessionID:   sessionID,
+		Query:       taskQuery,
+		Input:       prepared.Input,
+		Attachments: taskPreparationAttachments(req.Input.Attachments),
 		Config: usecase.CreateTaskConfig{
 			ActivityTaskQueue: req.Config.ActivityTaskQueue,
 			ModelRef:          strings.TrimSpace(firstNonEmptyStringAny(req.Config.ModelRef, deps.DefaultModelRef)),
@@ -253,10 +257,13 @@ func handleCreateTask(w http.ResponseWriter, r *http.Request, deps TasksDeps) {
 	deps.WriteJSON(w, http.StatusCreated, map[string]any{
 		"workflow_id":    createResult.WorkflowID,
 		"run_id":         createResult.RunID,
+		"process_id":     createResult.ProcessID,
+		"user_message":   createResult.UserMessage,
+		"cursor":         createResult.Cursor,
 		"status":         createResult.Status,
 		"message":        "Task created and workflow started successfully",
 		"created_at":     deps.NowRFC3339(),
-		"stream_url":     fmt.Sprintf("/api/v1/stream/sse?workflow_id=%s", createResult.WorkflowID),
+		"stream_url":     fmt.Sprintf("/api/v1/sessions/%s/events?after=%d", createResult.SessionID, createResult.Cursor),
 		"session_id":     createResult.SessionID,
 		"correlation_id": correlationID,
 		"file_ids":       prepared.EffectiveFileIDs,

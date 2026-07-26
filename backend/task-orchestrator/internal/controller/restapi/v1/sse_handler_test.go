@@ -16,6 +16,7 @@ func TestSSEHandlerReplaysDurableEventsAfterCursor(t *testing.T) {
 		EventID:   "event-7",
 		EventType: "run.completed",
 		RunID:     "run-1",
+		ThreadID:  "session-1",
 		Sequence:  7,
 		Timestamp: time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC),
 		Payload:   map[string]any{"result": "ok"},
@@ -37,7 +38,7 @@ func TestSSEHandlerReplaysDurableEventsAfterCursor(t *testing.T) {
 	if feed.afterSequence != 6 {
 		t.Fatalf("after sequence = %d, want 6", feed.afterSequence)
 	}
-	if !strings.Contains(rr.Body.String(), "id: 7") || !strings.Contains(rr.Body.String(), "event: run.completed") {
+	if !strings.Contains(rr.Body.String(), "id: 7") || !strings.Contains(rr.Body.String(), "event: WORKFLOW_COMPLETED") || !strings.Contains(rr.Body.String(), `"sequence":7`) {
 		t.Fatalf("expected durable event in SSE response, got %q", rr.Body.String())
 	}
 }

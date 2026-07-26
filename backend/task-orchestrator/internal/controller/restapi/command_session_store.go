@@ -3,6 +3,7 @@ package restapi
 import (
 	"context"
 	"strings"
+	"time"
 
 	"task-orchestrator/internal/repo/persistent"
 	"task-orchestrator/internal/usecase"
@@ -10,6 +11,26 @@ import (
 
 type commandSessionStore struct {
 	store *persistent.SessionStore
+}
+
+func (s commandSessionStore) EnqueueConversationDispatch(ctx context.Context, item usecase.ConversationDispatch) error {
+	return s.store.EnqueueConversationDispatch(ctx, item)
+}
+
+func (s commandSessionStore) ClaimConversationDispatches(ctx context.Context, limit int, staleAfter time.Duration) ([]usecase.ConversationDispatch, error) {
+	return s.store.ClaimConversationDispatches(ctx, limit, staleAfter)
+}
+
+func (s commandSessionStore) MarkConversationDispatchDone(ctx context.Context, dispatchID string) error {
+	return s.store.MarkConversationDispatchDone(ctx, dispatchID)
+}
+
+func (s commandSessionStore) RetryConversationDispatch(ctx context.Context, dispatchID, lastError string, nextAttempt time.Time) error {
+	return s.store.RetryConversationDispatch(ctx, dispatchID, lastError, nextAttempt)
+}
+
+func (s commandSessionStore) FailConversationDispatch(ctx context.Context, dispatchID, lastError string) error {
+	return s.store.FailConversationDispatch(ctx, dispatchID, lastError)
 }
 
 func NewCommandSessionStore(store *persistent.SessionStore) usecase.CommandSessionStore {

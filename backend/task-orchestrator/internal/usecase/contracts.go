@@ -64,6 +64,14 @@ type (
 		EnsureSessionAccess(ctx context.Context, sessionID, userID string) error
 	}
 
+	ConversationDispatchOutbox interface {
+		EnqueueConversationDispatch(context.Context, ConversationDispatch) error
+		ClaimConversationDispatches(context.Context, int, time.Duration) ([]ConversationDispatch, error)
+		MarkConversationDispatchDone(context.Context, string) error
+		RetryConversationDispatch(context.Context, string, string, time.Time) error
+		FailConversationDispatch(context.Context, string, string) error
+	}
+
 	SessionEventRecorder interface {
 		InsertEvent(ctx context.Context, sessionID, taskID, workflowID, eventType, message, payload, streamID string, ts time.Time) error
 	}
@@ -192,10 +200,11 @@ type TaskExecutionProgress struct {
 }
 
 type TaskExecutionSignal struct {
-	Type           string
-	IdempotencyKey string
-	Payload        map[string]any
-	SentAt         time.Time
+	Type           string         `json:"type"`
+	IdempotencyKey string         `json:"idempotency_key"`
+	ActorID        string         `json:"actor_id"`
+	Payload        map[string]any `json:"payload"`
+	SentAt         time.Time      `json:"sent_at"`
 }
 
 type AgentMessage struct {

@@ -63,6 +63,12 @@ func TestInsertTaskIfNoActive_ConcurrentSingleWinner(t *testing.T) {
 	store := &SessionStore{pg: pool}
 	sessionID := fmt.Sprintf("it_session_%d", time.Now().UTC().UnixNano())
 	userID := "it_user"
+	if _, err := pool.Exec(ctx, `INSERT INTO kc_sessions (session_id, user_id) VALUES ($1, $2)`, sessionID, userID); err != nil {
+		t.Fatalf("insert test session failed: %v", err)
+	}
+	defer func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM kc_sessions WHERE session_id = $1`, sessionID)
+	}()
 
 	if _, err := pool.Exec(ctx, `DELETE FROM kc_tasks WHERE session_id = $1 AND user_id = $2`, sessionID, userID); err != nil {
 		t.Fatalf("cleanup failed: %v", err)
@@ -128,6 +134,12 @@ func TestInsertTaskIfNoActive_AllowsNewTaskAfterTerminalState(t *testing.T) {
 	userID := "it_user"
 	taskID1 := fmt.Sprintf("it_task_first_%d", time.Now().UTC().UnixNano())
 	taskID2 := fmt.Sprintf("it_task_second_%d", time.Now().UTC().UnixNano())
+	if _, err := pool.Exec(ctx, `INSERT INTO kc_sessions (session_id, user_id) VALUES ($1, $2)`, sessionID, userID); err != nil {
+		t.Fatalf("insert test session failed: %v", err)
+	}
+	defer func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM kc_sessions WHERE session_id = $1`, sessionID)
+	}()
 
 	if _, err := pool.Exec(ctx, `DELETE FROM kc_tasks WHERE session_id = $1 AND user_id = $2`, sessionID, userID); err != nil {
 		t.Fatalf("cleanup failed: %v", err)

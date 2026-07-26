@@ -28,6 +28,7 @@ type Server struct {
 	closeFuncs              []func()
 	taskExecution           usecase.TaskExecution
 	executionFeed           usecase.ExecutionEventFeed
+	conversation            usecase.Conversation
 	internalExecutionEvents http.Handler
 	apkgExportService       usecase.APKGExport
 	workspaceService        usecase.Workspace
@@ -50,6 +51,7 @@ type ServerDependencies struct {
 	DefaultModelRef         string
 	TaskExecution           usecase.TaskExecution
 	ExecutionFeed           usecase.ExecutionEventFeed
+	Conversation            usecase.Conversation
 	InternalExecutionEvents http.Handler
 	APKGExportService       usecase.APKGExport
 	WorkspaceService        usecase.Workspace
@@ -70,6 +72,7 @@ func NewServer(port int, deps ServerDependencies) *Server {
 		closeFuncs:              deps.CloseFuncs,
 		taskExecution:           deps.TaskExecution,
 		executionFeed:           deps.ExecutionFeed,
+		conversation:            deps.Conversation,
 		internalExecutionEvents: deps.InternalExecutionEvents,
 		apkgExportService:       deps.APKGExportService,
 		workspaceService:        deps.WorkspaceService,

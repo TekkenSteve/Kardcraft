@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"task-orchestrator/internal/usecase"
+	"task-orchestrator/internal/usecase/execution"
 )
 
 type SSEDeps struct {
@@ -82,7 +83,7 @@ func NewSSEHandler(deps SSEDeps) http.HandlerFunc {
 				return
 			}
 			fmt.Fprintf(w, "id: %d\n", event.Sequence)
-			fmt.Fprintf(w, "event: %s\n", event.EventType)
+			fmt.Fprintf(w, "event: %s\n", execution.KardcraftEventType(event.EventType))
 			fmt.Fprintf(w, "data: %s\n\n", payload)
 			flusher.Flush()
 		}, func() {
@@ -131,17 +132,26 @@ func streamExecutionEvents(ctx context.Context, subscriptions []usecase.TaskExec
 }
 
 func executionEventPayload(event usecase.TaskExecutionEvent) map[string]any {
-	payload := make(map[string]any, len(event.Payload)+7)
+	payload := make(map[string]any, len(event.Payload)+10)
 	for key, value := range event.Payload {
 		payload[key] = value
 	}
 	payload["event_id"] = event.EventID
-	payload["event_type"] = event.EventType
+	kardcraftType := execution.KardcraftEventType(event.EventType)
+	payload["event_type"] = kardcraftType
+	payload["workflow_id"] = event.RunID
+	payload["session_id"] = event.ThreadID
 	payload["run_id"] = event.RunID
 	payload["thread_id"] = event.ThreadID
 	payload["sequence"] = event.Sequence
 	payload["occurred_at"] = event.Timestamp.UTC().Format(time.RFC3339Nano)
-	payload["schema_version"] = "kardcraft.execution-event.v1"
+	payload["schema_version"] = 1
+
+	correlationID, _ := event.Payload["correlation_id"].(string)
+	if correlationID == "" {
+		correlationID = event.RunID
+	}
+	payload["correlation_id"] = correlationID
 	return payload
 }
 

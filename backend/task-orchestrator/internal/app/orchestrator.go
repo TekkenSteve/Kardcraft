@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	agentosconversation "github.com/TekkenSteve/GoAgent/agentos/conversation"
 	agentosproc "github.com/TekkenSteve/GoAgent/agentos/process"
 	agentostemporal "github.com/TekkenSteve/GoAgent/agentos/temporal"
 	tclient "go.temporal.io/sdk/client"
@@ -98,6 +99,7 @@ func NewOrchestratorFromEnv() *restapi.Server {
 		log.Fatalf("failed to start APKG export queue: %v", err)
 	}
 	var commandSvc usecase.Command
+	var conversationSvc usecase.Conversation
 	var taskExecution usecase.TaskExecution
 	var executionFeed usecase.ExecutionEventFeed
 	var internalExecutionEvents http.Handler
@@ -124,7 +126,20 @@ func NewOrchestratorFromEnv() *restapi.Server {
 		if err != nil {
 			log.Fatalf("failed to create GoAgent plan runtime: %v", err)
 		}
-		triggerDispatchQueue = externalRuntime.Runtime.TemporalTaskQueues.PlanControl
+		conversationRuntime, err := agentosconversation.NewRuntime(context.Background(), agentosconversation.Config{
+			PostgresURL: externalRuntime.Runtime.PostgresURL,
+			RedisURL:    externalRuntime.Runtime.RedisURL,
+		})
+		if err != nil {
+			log.Fatalf("failed to create GoAgent conversation runtime: %v", err)
+		}
+		conversationSvc, err = goagentadapter.NewConversation(conversationRuntime)
+		if err != nil {
+			_ = conversationRuntime.Close()
+			log.Fatalf("failed to create GoAgent conversation adapter: %v", err)
+		}
+		closeFuncs = append(closeFuncs, func() { _ = conversationRuntime.Close() })
+		triggerDispatchQueue = externalRuntime.TriggerTaskQueue
 		executionRoutes := persistent.NewTaskExecutionIndex(sessionStore)
 		taskExecution, err = goagentadapter.NewTaskExecution(
 			planRuntime,
@@ -160,8 +175,9 @@ func NewOrchestratorFromEnv() *restapi.Server {
 			log.Fatalf("failed to configure internal service authentication: %v", err)
 		}
 		internalExecutionEvents = internalapi.NewExecutionEventsHandler(internalapi.ExecutionEventsDeps{
-			Validator: introspector,
-			Execution: taskExecution,
+			Validator:    introspector,
+			Execution:    taskExecution,
+			Conversation: conversationSvc,
 		})
 		planWorkerConfig := agentosconfig.PlanWorkerConfig(externalRuntime.Runtime)
 		planWorkerKit, err := agentostemporal.NewPlanWorkerKit(context.Background(), &planWorkerConfig)
@@ -196,15 +212,20 @@ func NewOrchestratorFromEnv() *restapi.Server {
 			planControlWorker.Stop,
 			func() { _ = planWorkerKit.Close() },
 		)
-		commandSvc, err = command.New(
+		conversationCommand, commandErr := command.NewWithConversation(
 			taskService,
 			restapi.NewCommandSessionStore(sessionStore),
 			taskExecution,
+			conversationSvc,
 			readModel,
 		)
-		if err != nil {
-			log.Fatalf("failed to create command usecase: %v", err)
+		if commandErr != nil {
+			log.Fatalf("failed to create command usecase: %v", commandErr)
 		}
+		commandSvc = conversationCommand
+		dispatchContext, stopDispatch := context.WithCancel(context.Background())
+		go conversationCommand.RunConversationDispatcher(dispatchContext)
+		closeFuncs = append(closeFuncs, stopDispatch)
 	}
 
 	if temporalClient != nil {
@@ -252,6 +273,7 @@ func NewOrchestratorFromEnv() *restapi.Server {
 		DefaultModelRef:         strings.TrimSpace(os.Getenv("GOAGENT_MODEL_REF")),
 		TaskExecution:           taskExecution,
 		ExecutionFeed:           executionFeed,
+		Conversation:            conversationSvc,
 		InternalExecutionEvents: internalExecutionEvents,
 		APKGExportService:       exportService,
 		WorkspaceService:        workspaceService,

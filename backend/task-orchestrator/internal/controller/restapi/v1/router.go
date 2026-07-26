@@ -36,17 +36,6 @@ func (s *Server) registerTaskRoutes() {
 		s.mux.Handle("/internal/execution/runs/", s.internalExecutionEvents)
 	}
 
-	s.mux.HandleFunc("/api/v1/stream/sse", NewSSEHandler(SSEDeps{
-		WriteAPIError: writeAPIError,
-		UserID: func(r *http.Request) string {
-			return userIDFromContext(r.Context())
-		},
-		Authorize: func(r *http.Request, userID, workflowID string) bool {
-			return s.authorizeTaskAccess(r.Context(), userID, workflowID)
-		},
-		Feed:            s.executionFeed,
-		AuthzDeniedCode: errCodeAuthzDenied,
-	}))
 }
 
 func anyToMap(input any) map[string]any {
@@ -67,6 +56,7 @@ func (s *Server) registerSessionAndTemplateRoutes() {
 		ReadModel:                s.readModel,
 		Workspace:                s.workspaceService,
 		CommandService:           s.commandService,
+		Conversation:             s.conversation,
 		IsTaskExecutionAvailable: s.isTaskExecutionAvailable,
 		ActiveTaskCode:           errCodeActiveTaskExists,
 		AuthzDeniedCode:          errCodeAuthzDenied,

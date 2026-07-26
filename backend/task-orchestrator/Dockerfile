@@ -5,8 +5,8 @@ ARG TARGET=orchestrator
 WORKDIR /src
 
 # Download dependencies (cache layer)
-COPY go.mod go.sum ./
 COPY --from=goagent . /GoAgent
+COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
     go mod download && go mod verify
 

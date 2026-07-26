@@ -19,6 +19,13 @@ CREATE TABLE IF NOT EXISTS agentos_runs (
     )
 );
 
+-- GoAgent may have created its base table before Kardcraft migrations run.
+-- Make this migration converge that pre-existing schema before creating indexes.
+ALTER TABLE agentos_runs
+    ADD COLUMN IF NOT EXISTS plan_id TEXT,
+    ADD COLUMN IF NOT EXISTS node_id TEXT,
+    ADD COLUMN IF NOT EXISTS idempotency_key TEXT NOT NULL DEFAULT '';
+
 CREATE INDEX IF NOT EXISTS idx_agentos_runs_thread_id
 ON agentos_runs(thread_id);
 

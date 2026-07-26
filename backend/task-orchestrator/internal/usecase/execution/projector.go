@@ -124,11 +124,12 @@ func (p *Projector) consume(ctx context.Context, taskID string) {
 		return
 	}
 	defer subscription.Close()
+	events := subscription.Events()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case event, open := <-subscription.Events():
+		case event, open := <-events:
 			if !open {
 				return
 			}
@@ -152,7 +153,12 @@ func (p *Projector) Project(ctx context.Context, taskID string, event usecase.Ta
 	if err != nil {
 		return fmt.Errorf("resolve task session: %w", err)
 	}
-	eventType := KardcraftEventType(event.EventType)
+	if event.EventType == usecase.ConversationEventTextMessageStart ||
+		event.EventType == usecase.ConversationEventTextMessageContent ||
+		event.EventType == usecase.ConversationEventTextMessageEnd {
+		return nil
+	}
+	eventType := projectedEventType(event)
 	payload := executionEventEnvelope(taskID, sessionID, eventType, event)
 	if isTerminalEvent(eventType) {
 		if outcome, ok := taskOutcome(event.Payload); ok {

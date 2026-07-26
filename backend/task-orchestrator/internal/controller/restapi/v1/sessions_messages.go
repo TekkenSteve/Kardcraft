@@ -18,6 +18,7 @@ type SessionMessageHTTPBody struct {
 	ContextEnvelope map[string]any `json:"context_envelope,omitempty"`
 	Metadata        map[string]any `json:"metadata,omitempty"`
 	IdempotencyKey  string         `json:"idempotency_key,omitempty"`
+	InterruptID     string         `json:"interrupt_id,omitempty"`
 }
 
 func handleSessionMessages(w http.ResponseWriter, r *http.Request, sessionID string, deps SessionsDeps) {
@@ -76,6 +77,7 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request, sessionID str
 		ContextEnvelope: req.ContextEnvelope,
 		Metadata:        req.Metadata,
 		IdempotencyKey:  idempotencyKey,
+		InterruptID:     strings.TrimSpace(req.InterruptID),
 		SentAt:          sentAt,
 	})
 	if err != nil {
@@ -93,5 +95,9 @@ func handleSessionMessages(w http.ResponseWriter, r *http.Request, sessionID str
 		"idempotency_key": result.IdempotencyKey,
 		"sent_at":         result.SentAt.Format(time.RFC3339),
 		"stream_id":       result.StreamID,
+		"run_id":          result.RunID,
+		"process_id":      result.ProcessID,
+		"user_message":    result.UserMessage,
+		"cursor":          result.Cursor,
 	})
 }

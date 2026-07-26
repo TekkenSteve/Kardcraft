@@ -99,6 +99,32 @@ func TestProjectorCloseStopsActiveSubscription(t *testing.T) {
 	}
 }
 
+func TestProjectorReadsSubscriptionChannelOnce(t *testing.T) {
+	subscription := &countingSubscription{events: make(chan usecase.TaskExecutionEvent, 2)}
+	subscription.events <- usecase.TaskExecutionEvent{
+		EventID: "event-1", EventType: "run.started", RunID: "run-1", ThreadID: "session-1", Sequence: 1,
+		Timestamp: time.Date(2026, 7, 25, 0, 0, 0, 0, time.UTC), Payload: map[string]any{"message": "started"},
+	}
+	subscription.events <- usecase.TaskExecutionEvent{
+		EventID: "event-2", EventType: "WORKFLOW_WAITING_INPUT", RunID: "run-1", ThreadID: "session-1", Sequence: 2,
+		Timestamp: time.Date(2026, 7, 25, 0, 0, 1, 0, time.UTC), Payload: map[string]any{"message": "question"},
+	}
+	close(subscription.events)
+	execution := &singleSubscriptionExecution{subscription: subscription}
+	store := newProjectionStore()
+	projector, err := NewProjector(execution, noopRoutes{}, store)
+	if err != nil {
+		t.Fatalf("NewProjector: %v", err)
+	}
+	projector.consume(context.Background(), "task-1")
+	if subscription.eventsCalls != 1 {
+		t.Fatalf("Events calls = %d, want 1", subscription.eventsCalls)
+	}
+	if count := store.eventCount(); count != 2 {
+		t.Fatalf("persisted event count = %d, want 2", count)
+	}
+}
+
 func newTestProjector(t *testing.T, store *projectionStore) *Projector {
 	t.Helper()
 	projector, err := NewProjector(noopExecution{}, noopRoutes{}, store)
@@ -170,6 +196,40 @@ func (noopExecution) SubscribeTaskExecution(context.Context, usecase.TaskExecuti
 func (noopExecution) IngestTaskExecutionEvent(context.Context, usecase.ExternalTaskExecutionEvent) (usecase.TaskExecutionEvent, error) {
 	return usecase.TaskExecutionEvent{}, nil
 }
+
+type singleSubscriptionExecution struct {
+	subscription usecase.TaskExecutionSubscription
+}
+
+func (s *singleSubscriptionExecution) StartTaskExecution(context.Context, usecase.TaskExecutionRequest) (usecase.TaskExecutionStatus, error) {
+	return usecase.TaskExecutionStatus{}, nil
+}
+func (s *singleSubscriptionExecution) GetTaskExecutionStatus(context.Context, string) (usecase.TaskExecutionStatus, error) {
+	return usecase.TaskExecutionStatus{}, nil
+}
+func (s *singleSubscriptionExecution) SignalTaskExecution(context.Context, string, usecase.TaskExecutionSignal) error {
+	return nil
+}
+func (s *singleSubscriptionExecution) ControlTaskExecution(context.Context, string, usecase.TaskExecutionControl) error {
+	return nil
+}
+func (s *singleSubscriptionExecution) SubscribeTaskExecution(context.Context, usecase.TaskExecutionEventScope) (usecase.TaskExecutionSubscription, error) {
+	return s.subscription, nil
+}
+func (s *singleSubscriptionExecution) IngestTaskExecutionEvent(context.Context, usecase.ExternalTaskExecutionEvent) (usecase.TaskExecutionEvent, error) {
+	return usecase.TaskExecutionEvent{}, nil
+}
+
+type countingSubscription struct {
+	events      chan usecase.TaskExecutionEvent
+	eventsCalls int
+}
+
+func (s *countingSubscription) Events() <-chan usecase.TaskExecutionEvent {
+	s.eventsCalls++
+	return s.events
+}
+func (*countingSubscription) Close() error { return nil }
 
 type noopRoutes struct{}
 
