@@ -49,6 +49,7 @@ class CoverageState(TypedDict, total=False):
 
 class State(TypedDict, total=False):
     # Input
+    resume_mode: bool
     user_input: str
     topic: Optional[str]
     message_knowledge: Optional[str]

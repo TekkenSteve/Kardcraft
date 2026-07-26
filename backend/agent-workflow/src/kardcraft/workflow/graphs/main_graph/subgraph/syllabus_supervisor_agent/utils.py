@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections import defaultdict
@@ -342,7 +343,8 @@ async def _generate_outline_with_llm(
     try:
         lm = configure_dspy_lm()
         if lm is not None:
-            result = planner(
+            result = await asyncio.to_thread(
+                planner,
                 task=user_input,
                 driven_mode=driven_mode,
                 source_kind=source_kind,

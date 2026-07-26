@@ -97,15 +97,25 @@ class AgentActivities:
         task_id: str,
         session_id: Optional[str],
         user_id: Optional[str],
+        conversation_run_id: str,
+        project_id: str,
         correlation_id: str,
     ) -> AgentOSEventContext:
         normalized_correlation_id = str(correlation_id or "").strip()
         if not normalized_correlation_id:
             raise ValueError("correlation_id is required")
+        normalized_conversation_run_id = str(conversation_run_id or "").strip()
+        if not normalized_conversation_run_id:
+            raise ValueError("conversation_run_id is required")
+        normalized_project_id = str(project_id or session_id or "").strip()
+        if not normalized_project_id:
+            raise ValueError("project_id is required")
         return AgentOSEventContext(
             task_id=str(task_id),
             session_id=str(session_id or "") or None,
             user_id=str(user_id or "") or None,
+            conversation_run_id=normalized_conversation_run_id,
+            project_id=normalized_project_id,
             workflow_id=str(task_id),
             run_id=str(task_id),
             correlation_id=normalized_correlation_id,
@@ -243,6 +253,8 @@ class AgentActivities:
             task_id=str(task_id),
             session_id=session_id,
             user_id=str(user_id),
+            conversation_run_id=str(input_data.get("conversation_run_id") or ""),
+            project_id=str(input_data.get("project_id") or session_id),
             correlation_id=correlation_id,
         )
         self._event_contexts[str(task_id)] = event_ctx
@@ -529,6 +541,8 @@ class AgentActivities:
             task_id=str(task_id),
             session_id=str(session_id or ""),
             user_id=str(user_id or ""),
+            conversation_run_id=str(input_data.get("conversation_run_id") or ""),
+            project_id=str(input_data.get("project_id") or session_id or ""),
             correlation_id=correlation_id,
         )
         self._event_contexts[str(task_id)] = event_ctx

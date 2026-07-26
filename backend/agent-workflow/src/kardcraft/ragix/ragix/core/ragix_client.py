@@ -16,6 +16,15 @@ class TrackCancelledError(RuntimeError):
     """Raised when LightRAG reports a cancelled track."""
 
 
+class FileIndexingError(RuntimeError):
+    """Raised when one or more requested files cannot be indexed."""
+
+    def __init__(self, failures: Dict[str, str]):
+        self.failures = dict(failures)
+        details = "; ".join(f"{file_id}: {error}" for file_id, error in failures.items())
+        super().__init__(f"failed to index requested files: {details}")
+
+
 def _normalize_filename(name: str) -> str:
     raw = str(name or "").strip()
     if not raw:
@@ -442,6 +451,7 @@ class RagixClient:
                 self._file_title_cache.pop(key, None)
 
         indexed_new = False
+        failures: Dict[str, str] = {}
         for file_id in file_ids:
             cache_key = f"{workspace}:{user_id}:{file_id}"
             if cache_key in self._indexed_files:
@@ -451,13 +461,22 @@ class RagixClient:
                 self._indexed_files.add(cache_key)
                 indexed_new = True
             except Exception as e:
-                logger.warning(f"Failed to index file {file_id}: {e}")
+                failures[file_id] = str(e)
+                logger.error(
+                    "failed to index requested file",
+                    file_id=file_id,
+                    workspace=workspace,
+                    error=str(e),
+                )
 
         if indexed_new:
             try:
                 await client.clear_cache(workspace=session_id)
             except Exception as e:
                 logger.warning(f"Failed to clear LightRAG cache after indexing: {e}")
+
+        if failures:
+            raise FileIndexingError(failures)
 
     async def _workspace_appears_empty(
         self,

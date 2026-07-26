@@ -4,6 +4,9 @@ from io import BytesIO
 
 import pytest
 
+from kardcraft.pageindex import page_index
+from kardcraft.utils.logger import logger as app_logger
+
 from kardcraft.pageindex import api
 from kardcraft.pageindex.contracts import PageIndexBuildConfig
 
@@ -44,3 +47,7 @@ async def test_build_document_tree_async_normalizes_payload(monkeypatch):
     assert tree["summary"] == "short summary"
     assert len(tree["nodes"]) == 1
     assert tree["nodes"][0]["node_id"] == "0001"
+
+
+def test_pageindex_legacy_logger_name_uses_bound_logger() -> None:
+    assert page_index.logger is app_logger

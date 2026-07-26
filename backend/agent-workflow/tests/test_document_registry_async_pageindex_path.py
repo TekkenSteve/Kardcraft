@@ -96,3 +96,26 @@ async def test_build_one_document_tree_repeated_invocations_same_loop(monkeypatc
     assert calls["count"] == 2
     assert first["file_id"] == "file-a"
     assert second["file_id"] == "file-b"
+
+
+def test_no_context_pageindex_tree_is_low_quality_even_for_single_page():
+    tree = {
+        "doc_name": "lecture.pdf",
+        "title": "Summary Overview",
+        "summary": "Document title: Summary Overview",
+        "nodes": [
+            {
+                "title": "Summary Overview",
+                "node_id": "0001",
+                "start_index": 1,
+                "end_index": 1,
+                "summary": "Sorry, I'm not able to provide an answer.[no-context]",
+            }
+        ],
+    }
+
+    assert document_registry._is_low_quality_tree(
+        tree=tree,
+        file_id="file-1",
+        pdf_page_count=1,
+    ) is True

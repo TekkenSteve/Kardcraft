@@ -124,6 +124,8 @@ class EvidenceReactToolContext:
     miss_count: int = 0
     ungrounded_count: int = 0
     degraded_zero_ref_count: int = 0
+    backend_error_count: int = 0
+    backend_errors: List[str] = field(default_factory=list)
     low_quality_count: int = 0
     retrieval_events: List[Dict[str, Any]] = field(default_factory=list)
     stop_reason: str = "budget_exhausted"
@@ -181,6 +183,25 @@ class EvidenceReactToolContext:
         raw_refs = result.get("refs") or []
         refs = [item for item in raw_refs if isinstance(item, dict)]
         diagnostics = result.get("diagnostics") if isinstance(result, dict) else {}
+        backend_error = bool(isinstance(diagnostics, dict) and diagnostics.get("backend_error"))
+        if backend_error:
+            error = str(result.get("error") or "knowledge retrieval backend failed").strip()
+            self.backend_error_count += 1
+            self.backend_errors.append(error)
+            self.miss_count += 1
+            self.stop_reason = "backend_error"
+            self.retrieval_events.append(
+                {"query": query, "reason_code": "backend_error", "error": error}
+            )
+            return {
+                "ok": False,
+                "node_id": nid,
+                "hit": False,
+                "reason_code": "backend_error",
+                "error": error,
+                "rag_calls": self.rag_calls,
+                "stop_reason": self.stop_reason,
+            }
         zero_ref_degraded = bool(isinstance(diagnostics, dict) and diagnostics.get("zero_references"))
         hit_eval = _evaluate_grounded_hit(node=node, content=content, refs=refs)
         source_count = int(hit_eval.get("source_count") or 0)

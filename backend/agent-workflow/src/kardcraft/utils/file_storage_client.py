@@ -3,7 +3,7 @@ File Storage gRPC Client
 
 """
 
-from . import logger
+from .logger import logger
 import os
 from typing import List, Dict, Any, Optional, Tuple
 import grpc

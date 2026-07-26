@@ -156,7 +156,7 @@ async def initialize_processing(
     except Exception:
         trace_id = None
 
-    return {
+    initialized = {
         "trace_id": trace_id,
         "template_id": prepared_template.template_id,
         "template_version": prepared_template.template_version,
@@ -218,6 +218,21 @@ async def initialize_processing(
         "card_scope_report": {},
         "evidence_skillrouter_rollout": rollout,
     }
+    if state.get("resume_mode"):
+        for key in (
+            "clarification_state",
+            "termination_reason",
+            "clarification_round",
+            "max_rounds",
+            "clarification_responses",
+            "asked_questions",
+            "pending_questions",
+        ):
+            initialized.pop(key, None)
+        initialized["status"] = None
+        initialized["error"] = None
+
+    return initialized
 
 
 async def run_intent_classifier(state: State) -> Dict[str, Any]:

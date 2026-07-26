@@ -111,6 +111,27 @@ def _count_pdf_pages(pdf_bytes: bytes) -> int:
 
 
 def _is_low_quality_tree(*, tree: Dict[str, Any], file_id: str, pdf_page_count: int) -> bool:
+    placeholder_markers = (
+        "[no-context]",
+        "no context available",
+        "not able to provide an answer",
+        "unable to provide an answer",
+    )
+
+    def _contains_placeholder(node: Any) -> bool:
+        if not isinstance(node, dict):
+            return False
+        text = " ".join(
+            _as_str(node.get(key)).lower()
+            for key in ("title", "summary", "doc_description")
+        )
+        if any(marker in text for marker in placeholder_markers):
+            return True
+        return any(_contains_placeholder(child) for child in (node.get("nodes") or []))
+
+    if _contains_placeholder(tree):
+        return True
+
     if pdf_page_count < 3:
         return False
     doc_name = _as_str(tree.get("doc_name")) or file_id

@@ -130,6 +130,10 @@ async def query_knowledge(
             "mode": fallback_mode,
             "file_ids": file_ids or [],
             "error": str(e),
+            "diagnostics": {
+                "backend_error": True,
+                "error_type": type(e).__name__,
+            },
         }
 
 

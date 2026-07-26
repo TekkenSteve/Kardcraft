@@ -180,6 +180,7 @@ async def run_evidence_react_node(
     while (
         tool_context.rag_calls < max_rag_calls
         and len(tool_context.selected_nodes) < min_selected_nodes
+        and tool_context.stop_reason != "backend_error"
     ):
         next_nodes = tool_context.next_nodes(1)
         if not next_nodes:
@@ -205,7 +206,8 @@ async def run_evidence_react_node(
     if tool_context.evidence_items and tool_context.stop_reason == "budget_exhausted":
         tool_context.stop_reason = "evidence_sufficient"
 
-    status = "evidence_ready" if tool_context.evidence_items else "need_user_input"
+    backend_failed = not tool_context.evidence_items and tool_context.backend_error_count > 0
+    status = "failed" if backend_failed else ("evidence_ready" if tool_context.evidence_items else "need_user_input")
     pending_questions: List[Dict[str, Any]] = []
     if status != "evidence_ready":
         stop_reason = str(tool_context.stop_reason or "").strip() or "unknown"
@@ -243,6 +245,7 @@ async def run_evidence_react_node(
             "miss": tool_context.miss_count,
             "ungrounded": tool_context.ungrounded_count,
             "backend_degraded": tool_context.degraded_zero_ref_count,
+            "backend_error": tool_context.backend_error_count,
             "low_quality": tool_context.low_quality_count,
             "duplicate": tool_context.duplicate_queries,
             "coverage_gap": max(0, len(candidates) - len(tool_context.selected_nodes)),
@@ -284,7 +287,20 @@ async def run_evidence_react_node(
             "evidence_items": tool_context.evidence_items,
         },
     }
-    if status != "evidence_ready":
+    if status == "failed":
+        error = tool_context.backend_errors[0] if tool_context.backend_errors else "knowledge retrieval backend failed"
+        payload.update(
+            {
+                "status": "failed",
+                "error": f"knowledge_retrieval_failed:{error}",
+                "pending_questions": [],
+                "clarification_state": "resolved",
+                "termination_reason": "backend_error",
+                "question": "",
+                "message": "The source file could not be indexed. Please retry after the retrieval service recovers.",
+            }
+        )
+    elif status != "evidence_ready":
         payload.update(
             {
                 "status": "need_user_input",

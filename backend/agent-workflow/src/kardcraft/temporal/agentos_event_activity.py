@@ -42,7 +42,10 @@ class AgentOSEventActivities:
                 json={
                     "event_id": event.event_id,
                     "run_id": event.run_id,
+                    "conversation_run_id": event.conversation_run_id,
                     "thread_id": event.thread_id,
+                    "account_id": event.user_id,
+                    "project_id": event.project_id,
                     "event_type": event.event_type,
                     "source": event.source,
                     "sequence": event.sequence,

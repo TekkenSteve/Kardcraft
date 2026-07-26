@@ -15,11 +15,17 @@ from .hydra_client_credentials import (
 )
 
 
+class AgentOSEventDeliveryError(RuntimeError):
+    """An execution event was rejected by task-orchestrator."""
+
+
 @dataclass(frozen=True)
 class AgentOSEventContext:
     task_id: str
     session_id: Optional[str]
     user_id: Optional[str]
+    conversation_run_id: str
+    project_id: str
     workflow_id: str
     run_id: str
     correlation_id: str
@@ -87,7 +93,10 @@ class AgentOSEventSink:
                 json={
                     "event_id": event_id,
                     "run_id": ctx.run_id,
+                    "conversation_run_id": ctx.conversation_run_id,
                     "thread_id": ctx.session_id or "",
+                    "account_id": ctx.user_id or "",
+                    "project_id": ctx.project_id,
                     "event_type": event_type,
                     "source": "kardcraft.agent_workflow.activity",
                     "sequence": sequence,
@@ -95,7 +104,11 @@ class AgentOSEventSink:
                     "payload": normalized_payload,
                 },
             )
-            response.raise_for_status()
+            if response.is_error:
+                body = response.text.strip()
+                raise AgentOSEventDeliveryError(
+                    f"task-orchestrator rejected event status={response.status_code} body={body or '<empty>'}"
+                )
 
 
-__all__ = ["AgentOSEventContext", "AgentOSEventSink"]
+__all__ = ["AgentOSEventContext", "AgentOSEventDeliveryError", "AgentOSEventSink"]

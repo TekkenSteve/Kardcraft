@@ -33,7 +33,7 @@ async def test_socratic_preflight_skips_when_files_exist():
 
 @pytest.mark.asyncio
 async def test_socratic_preflight_requests_user_input_for_ambiguous_prompt(monkeypatch):
-    async def _fake_ainvoke(payload):
+    async def _fake_ainvoke(_tool, payload, *args, **kwargs):
         assert payload["user_input"] == "帮我做卡片"
         return {
             "status": "need_user_input",
@@ -50,7 +50,7 @@ async def test_socratic_preflight_requests_user_input_for_ambiguous_prompt(monke
             ],
         }
 
-    monkeypatch.setattr(nodes.clarify, "ainvoke", _fake_ainvoke)
+    monkeypatch.setattr(type(nodes.clarify), "ainvoke", _fake_ainvoke)
 
     result = await nodes.run_socratic_preflight(
         {
@@ -74,14 +74,14 @@ async def test_socratic_preflight_requests_user_input_for_ambiguous_prompt(monke
 
 @pytest.mark.asyncio
 async def test_socratic_preflight_passes_through_when_sufficient(monkeypatch):
-    async def _fake_ainvoke(payload):
+    async def _fake_ainvoke(_tool, payload, *args, **kwargs):
         return {
             "status": "success",
             "reason": "enough_context",
             "pending_questions": [],
         }
 
-    monkeypatch.setattr(nodes.clarify, "ainvoke", _fake_ainvoke)
+    monkeypatch.setattr(type(nodes.clarify), "ainvoke", _fake_ainvoke)
 
     result = await nodes.run_socratic_preflight(
         {
@@ -137,7 +137,7 @@ async def test_socratic_preflight_rejects_unknown_response_keys():
 
 @pytest.mark.asyncio
 async def test_socratic_preflight_marks_exhausted_when_round_limit_reached(monkeypatch):
-    async def _fake_ainvoke(payload):
+    async def _fake_ainvoke(_tool, payload, *args, **kwargs):
         return {
             "status": "need_user_input",
             "reason": "still_missing_scope",
@@ -153,7 +153,7 @@ async def test_socratic_preflight_marks_exhausted_when_round_limit_reached(monke
             ],
         }
 
-    monkeypatch.setattr(nodes.clarify, "ainvoke", _fake_ainvoke)
+    monkeypatch.setattr(type(nodes.clarify), "ainvoke", _fake_ainvoke)
 
     result = await nodes.run_socratic_preflight(
         {

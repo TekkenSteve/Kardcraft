@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from kardcraft.ragix.ragix.core.ragix_client import RagixClient, TrackCancelledError
+from kardcraft.ragix.ragix.core.ragix_client import (
+    FileIndexingError,
+    RagixClient,
+    TrackCancelledError,
+)
 
 
 class _FakeLightRAGClient:
@@ -46,3 +50,23 @@ async def test_wait_track_ready_returns_when_completed():
     lightrag = _FakeLightRAGClient(["completed"])
 
     await client._wait_track_ready(lightrag, "track-1", "session-1", timeout_seconds=0.1)
+
+
+@pytest.mark.asyncio
+async def test_ensure_files_indexed_propagates_index_failure(monkeypatch):
+    client = object.__new__(RagixClient)
+    client._indexed_files = set()
+    client._file_title_cache = {}
+    monkeypatch.setattr(client, "_get_client", lambda _workspace: object())
+
+    async def _workspace_not_empty(*_args, **_kwargs):
+        return False
+
+    async def _fail_add_document(*_args, **_kwargs):
+        raise AttributeError("parser logger is invalid")
+
+    monkeypatch.setattr(client, "_workspace_appears_empty", _workspace_not_empty)
+    monkeypatch.setattr(client, "add_document", _fail_add_document)
+
+    with pytest.raises(FileIndexingError, match="file-1: parser logger is invalid"):
+        await client._ensure_files_indexed("session-1", ["file-1"], "user-1")
