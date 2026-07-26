@@ -41,6 +41,26 @@ export type RunDomainEvent =
           message: string;
       }
     | {
+          kind: "run.finished";
+          workflowId: string;
+          outcome: "normal" | "interrupt" | "cancelled";
+          interrupt?: {
+              interrupt_id: string;
+              type: string;
+              prompt: string;
+              input_schema?: Record<string, unknown>;
+              metadata?: Record<string, unknown>;
+          };
+          at: string;
+      }
+    | {
+          kind: "message.started";
+          workflowId: string;
+          messageId: string;
+          role: "assistant";
+          at: string;
+      }
+    | {
           kind: "message.delta";
           workflowId: string;
           messageId: string;

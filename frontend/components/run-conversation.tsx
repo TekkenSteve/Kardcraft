@@ -206,6 +206,7 @@ function StatusIcon({ eventType }: { eventType?: string }) {
 interface RunConversationProps {
     messages: readonly Message[];
     agentType?: "normal" | "card_template";
+    isWaitingForAssistant?: boolean;
 }
 
 // Component to render a single citation with tooltip
@@ -497,7 +498,7 @@ function getMarkdownComponents() {
     };
 }
 
-export function RunConversation({ messages, agentType = "normal" }: RunConversationProps) {
+export function RunConversation({ messages, agentType = "normal", isWaitingForAssistant = false }: RunConversationProps) {
     const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
     const { t } = useTranslation();
     const userName = useSessionSelector((snapshot) => getSessionDisplayName(snapshot.context.session));
@@ -681,6 +682,22 @@ export function RunConversation({ messages, agentType = "normal" }: RunConversat
                     </div>
                 );
             })}
+            {isWaitingForAssistant && (
+                <div className="flex gap-2 sm:gap-3" aria-label={t("chat.assistantWorking", "Assistant is working")}>
+                    <Avatar className="size-7 sm:h-8 sm:w-8 shrink-0">
+                        <AvatarFallback className={agentType === "card_template" ? "bg-violet-100 dark:bg-violet-900/30" : "bg-amber-100 dark:bg-amber-900/30"}>
+                            {agentType === "card_template" ? <Microscope className="size-4 text-violet-500" /> : <Sparkles className="size-4 text-amber-500" />}
+                        </AvatarFallback>
+                    </Avatar>
+                    <div className="flex min-h-8 items-center">
+                        <Card className="flex h-8 items-center gap-1 px-3" role="status">
+                            <span className="size-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: "0ms" }} />
+                            <span className="size-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: "150ms" }} />
+                            <span className="size-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: "300ms" }} />
+                        </Card>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

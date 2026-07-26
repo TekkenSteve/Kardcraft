@@ -4,6 +4,7 @@ export type { ControlErrorCode, DomainEventMapResult, DomainEventRejectReason, R
 
 type WireEventInput = {
     eventType: string;
+    sequence?: number;
     payload: Record<string, unknown>;
     fallbackWorkflowId: string;
     fallbackSessionId?: string | null;
@@ -132,21 +133,46 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
         return { ok: false, reason: "invalid_payload", details: "missing run_id" };
     }
 
-    if (eventType === "WORKFLOW_STARTED") {
+    if (eventType === "RUN_STARTED") {
         return { ok: true, event: { kind: "workflow.started", workflowId, sessionId, at, runId } };
     }
-    if (eventType === "WORKFLOW_COMPLETED") {
+    if (eventType === "RUN_FINISHED") {
+        const outcome = asString(payload.outcome);
+        if (outcome !== "normal" && outcome !== "interrupt" && outcome !== "cancelled") {
+            return { ok: false, reason: "invalid_payload", details: "invalid run outcome" };
+        }
+        const rawInterrupt = payload.interrupt;
+        const interrupt = rawInterrupt && typeof rawInterrupt === "object"
+            ? rawInterrupt as Extract<RunDomainEvent, { kind: "run.finished" }>["interrupt"]
+            : undefined;
         return {
             ok: true,
             event: {
-                kind: "workflow.completed",
+                kind: "run.finished",
                 workflowId,
-                sessionId,
+                outcome,
+                interrupt,
                 at,
                 runId,
-                result: terminalResultPayload(payload),
             },
         };
+    }
+    if (eventType === "TEXT_MESSAGE_START") {
+        const messageId = asString(payload.message_id);
+        if (!messageId) return { ok: false, reason: "invalid_payload", details: "missing message_id" };
+        return { ok: true, event: { kind: "message.started", workflowId, messageId, role: "assistant", at, runId } };
+    }
+    if (eventType === "TEXT_MESSAGE_CONTENT") {
+        const messageId = asString(payload.message_id);
+        const delta = typeof payload.delta === "string" ? payload.delta : "";
+        if (!messageId || !delta) return { ok: false, reason: "invalid_payload", details: "missing message delta" };
+        return { ok: true, event: { kind: "message.delta", workflowId, messageId, delta, seq: input.sequence, at, runId } };
+    }
+    if (eventType === "TEXT_MESSAGE_END") {
+        const messageId = asString(payload.message_id);
+        const content = normalizeCompletedContent(payload);
+        if (!messageId || !content) return { ok: false, reason: "unsupported_empty_message", details: "empty completed content" };
+        return { ok: true, event: { kind: "message.completed", workflowId, messageId, content, at, runId } };
     }
     if (eventType === "done" || eventType === "STREAM_END") {
         return {
@@ -161,12 +187,12 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
                 at,
                 message: asString(payload.message) || undefined,
                 agentId: asString(payload.agent_id) || undefined,
-                seq: asNumber(payload.seq),
+                seq: input.sequence ?? asNumber(payload.seq),
                 runId,
             },
         };
     }
-    if (eventType === "WORKFLOW_FAILED" || eventType === "error") {
+    if (eventType === "RUN_ERROR") {
         const message = asString(payload.message) || "workflow failed";
         const reasonCode = asString(payload.code) || asString(payload.error_code) || "INTERNAL";
         return {
@@ -179,47 +205,6 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
                 runId,
                 reasonCode,
                 message,
-            },
-        };
-    }
-    if (eventType === "thread.message.delta") {
-        const delta = typeof payload.delta === "string" && payload.delta.length > 0
-            ? payload.delta
-            : null;
-        if (!delta) {
-            return { ok: false, reason: "invalid_payload", details: "missing delta" };
-        }
-        return {
-            ok: true,
-            event: {
-                kind: "message.delta",
-                workflowId,
-                messageId: asString(payload.stream_id) || eventId,
-                delta,
-                seq: asNumber(payload.seq),
-                at,
-                runId,
-            },
-        };
-    }
-    if (eventType === "thread.message.completed") {
-        const content = normalizeCompletedContent(payload);
-        if (!content.trim()) {
-            return { ok: false, reason: "unsupported_empty_message", details: "empty completed content" };
-        }
-        const metadata = payload.metadata && typeof payload.metadata === "object"
-            ? (payload.metadata as Record<string, unknown>)
-            : undefined;
-        return {
-            ok: true,
-            event: {
-                kind: "message.completed",
-                workflowId,
-                messageId: asString(payload.stream_id) || eventId,
-                content,
-                metadata,
-                at,
-                runId,
             },
         };
     }
@@ -238,7 +223,7 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
                     at,
                     message: asString(payload.message) || undefined,
                     agentId: asString(payload.agent_id) || undefined,
-                    seq: asNumber(payload.seq),
+                    seq: input.sequence ?? asNumber(payload.seq),
                     runId,
                 },
             };
@@ -289,7 +274,7 @@ export function mapWireEventToDomainEvent(input: WireEventInput): DomainEventMap
             at,
             message: asString(payload.message) || undefined,
             agentId: asString(payload.agent_id) || undefined,
-            seq: asNumber(payload.seq),
+            seq: input.sequence ?? asNumber(payload.seq),
             runId,
         },
     };
@@ -372,6 +357,16 @@ export function projectDomainEventToRunEvent(event: RunDomainEvent): RunEvent | 
             error_code: event.reasonCode,
         };
     }
+    if (event.kind === "run.finished") {
+        return {
+            type: "RUN_FINISHED" as EventType,
+            workflow_id: event.workflowId,
+            run_id: event.runId || undefined,
+            timestamp: event.at,
+            payload: { outcome: event.outcome, interrupt: event.interrupt },
+        } as RunEvent;
+    }
+    if (event.kind === "message.started") return null;
     if (event.kind === "message.delta") {
         return {
             type: "thread.message.delta",
@@ -395,8 +390,8 @@ export function projectDomainEventToRunEvent(event: RunDomainEvent): RunEvent | 
         };
     }
     if (event.kind === "timeline.event") {
-        const type = asEventType(event.eventKind);
-        if (!type) return null;
+        if (event.eventKind === "PLANNER_TRACE") return null;
+        const type = (asEventType(event.eventKind) || event.eventKind) as EventType;
         return {
             type,
             id: asNumber(event.eventId),

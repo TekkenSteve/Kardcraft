@@ -5,7 +5,7 @@
  */
 
 import { assign, createMachine, type ActorRefFrom } from 'xstate';
-import type { SessionContext } from './session-machine';
+import type { ConversationInterrupt, SessionContext } from './session-machine';
 import { createSessionMachine } from './session-machine';
 import type { RunEvent } from '@/lib/kardcraft/types';
 import type { AgentType, CardData, ResearchStrategy, RunMessage, TemplatePreflightState } from './types';
@@ -22,7 +22,7 @@ export type SessionRegistryContext = {
 
 export type SessionRegistryEvent =
   | { type: 'ACTIVATE_SESSION'; sessionId: string }
-  | { type: 'CREATE_TASK'; sessionId: string; workflowId: string; runId?: string; query: string }
+  | { type: 'CREATE_TASK'; sessionId: string; workflowId: string; runId?: string; query: string; cursor?: number; userMessage?: RunMessage }
   | {
       type: 'HYDRATE_SESSION';
       sessionId: string;
@@ -31,10 +31,13 @@ export type SessionRegistryEvent =
       messages: RunMessage[];
       events: RunEvent[];
       cards: CardData[];
+      cursor?: number;
+      interrupt?: ConversationInterrupt | null;
       state?: {
         active_task_id?: string | null;
         task_state?: string | null;
         session_control_state?: string | null;
+        conversation_status?: import('./types').RunStatus | null;
       } | null;
     }
   | { type: 'PAUSE_SESSION'; sessionId: string }
@@ -128,6 +131,8 @@ export const createSessionRegistryMachine = () => {
                     workflowId: event.workflowId,
                     runId: event.runId || event.workflowId,
                     query: event.query,
+                    cursor: event.cursor,
+                    userMessage: event.userMessage,
                   });
                 }
               },
@@ -170,6 +175,8 @@ export const createSessionRegistryMachine = () => {
                     messages: event.messages,
                     events: event.events,
                     cards: event.cards,
+                    cursor: event.cursor,
+                    interrupt: event.interrupt,
                     state: event.state,
                   });
                 }

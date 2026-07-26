@@ -47,6 +47,9 @@ export interface TaskSubmitResponse {
     task_id?: string;
     workflow_id: string;
     run_id?: string;
+    process_id?: string;
+    user_message?: ConversationThreadMessage;
+    cursor?: number;
     status: string;
     message?: string;
     created_at: string;
@@ -70,11 +73,16 @@ export interface SendSessionMessageRequest {
     context_envelope?: Record<string, unknown>;
     metadata?: Record<string, unknown>;
     idempotency_key?: string;
+    interrupt_id?: string;
 }
 
 export interface SendSessionMessageResponse {
     session_id: string;
-    active_task_id: string;
+    active_task_id?: string;
+    run_id: string;
+    process_id: string;
+    user_message: ConversationThreadMessage;
+    cursor: number;
     idempotency_key: string;
     sent_at: string;
     stream_id: string;
@@ -189,26 +197,91 @@ export async function submitTask(request: TaskSubmitRequest): Promise<TaskSubmit
 }
 
 export async function sendSessionMessage(request: SendSessionMessageRequest): Promise<SendSessionMessageResponse> {
-    const response = await fetch(apiUrl(`/api/v1/sessions/${encodeURIComponent(request.session_id)}/messages`), {
+    const idempotencyKey = request.idempotency_key || nextIdempotencyKey();
+    const response = await fetch(apiUrl(`/api/v1/sessions/${encodeURIComponent(request.session_id)}/runs`), {
         method: "POST",
         headers: {
             "Content-Type": "application/json",
+            "Idempotency-Key": idempotencyKey,
             ...getAuthHeaders(),
         },
         credentials: "include",
         body: JSON.stringify({
             content: request.content,
-            file_ids: request.file_ids,
             attachments: request.attachments,
             context: request.context,
             context_envelope: request.context_envelope,
             metadata: request.metadata,
-            idempotency_key: request.idempotency_key,
+            interrupt_id: request.interrupt_id,
         }),
     });
 
     await assertApiOk(response, "Failed to send message");
     return response.json();
+}
+
+export interface ConversationThreadMessage {
+    message_id: string;
+    thread_id: string;
+    run_id: string;
+    process_id?: string;
+    role: "user" | "assistant" | "system";
+    content: string;
+    status: string;
+    attachments?: SessionMessageAttachment[];
+    metadata?: Record<string, unknown>;
+    created_at: string;
+    completed_at?: string;
+}
+
+export interface ConversationThreadRun {
+    run_id: string;
+    thread_id: string;
+    process_id?: string;
+    status: string;
+    outcome?: string;
+    interrupt?: { interrupt_id: string; type: string; prompt: string; input_schema?: Record<string, unknown>; metadata?: Record<string, unknown> };
+    created_at: string;
+    started_at?: string;
+    completed_at?: string;
+    error?: string;
+}
+
+export interface ConversationThreadEvent {
+    schema_version: "agentos.conversation.v1";
+    event_id: string;
+    thread_id: string;
+    run_id: string;
+    process_id?: string;
+    sequence: number;
+    event_type: string;
+    occurred_at: string;
+    payload: Record<string, unknown>;
+}
+
+export interface SessionStreamStateResponse {
+    schema_version: "agentos.conversation.v1";
+    thread_id: string;
+    messages: ConversationThreadMessage[];
+    runs: ConversationThreadRun[];
+    events: ConversationThreadEvent[];
+    cursor: number;
+    updated_at: string;
+}
+
+export async function getSessionStreamState(sessionId: string): Promise<SessionStreamStateResponse> {
+    const response = await fetchWithTimeout(apiUrl(`/api/v1/sessions/${encodeURIComponent(sessionId)}/stream-state`), {
+        credentials: "include",
+    }, 10000);
+    await assertApiOk(response, "Failed to get session stream state");
+    return response.json();
+}
+
+export function getSessionEventsUrl(sessionId: string, after?: number): string {
+    const params = new URLSearchParams();
+    if (after !== undefined && after >= 0) params.set("after", String(after));
+    const suffix = params.size > 0 ? `?${params.toString()}` : "";
+    return apiUrl(`/api/v1/sessions/${encodeURIComponent(sessionId)}/events${suffix}`);
 }
 
 export async function getTask(taskId: string): Promise<TaskDetailResponse> {

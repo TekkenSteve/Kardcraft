@@ -12,6 +12,13 @@ describe("deriveRunDetailControlState", () => {
             isResumeLoading: false,
             inputDisabled: true,
         });
+        expect(deriveRunDetailControlState("waiting_input")).toMatchObject({
+            isControlSessionActive: true,
+            showPause: false,
+            showResume: false,
+            showCancel: true,
+            inputDisabled: false,
+        });
         expect(deriveRunDetailControlState("pausing")).toMatchObject({
             isControlSessionActive: true,
             showPause: true,

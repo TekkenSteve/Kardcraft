@@ -245,6 +245,17 @@ export function useTimeline({
     };
 
     const getFriendlyTitle = useCallback((event: RunEvent): string => {
+        const payload = event.payload && typeof event.payload === "object" ? event.payload as Record<string, unknown> : null;
+        const nodeName = typeof payload?.node_name === "string" ? payload.node_name
+            : typeof payload?.node_id === "string" ? payload.node_id
+                : typeof payload?.node === "string" ? payload.node
+                    : "";
+        const normalizedType = String(event.type).toLowerCase();
+        if (nodeName && normalizedType.includes("node")) {
+            if (normalizedType.includes("started")) return `${nodeName} started`;
+            if (normalizedType.includes("completed")) return `${nodeName} completed`;
+            if (normalizedType.includes("failed")) return `${nodeName} failed`;
+        }
         const typeMap: Record<string, string> = {
             "WORKFLOW_STARTED": t("runDetail.timelineEvents.workflowStarted"),
             "WORKFLOW_COMPLETED": t("runDetail.timelineEvents.workflowCompleted"),
@@ -276,6 +287,7 @@ export function useTimeline({
             "WORKFLOW_RESUMED": t("runDetail.timelineEvents.workflowResumed"),
             "WORKFLOW_CANCELLED": t("runDetail.timelineEvents.workflowCancelled"),
             "WORKFLOW_PROGRESS": t("runDetail.timelineEvents.workflowProgress"),
+            "WORKFLOW_WAITING_INPUT": t("runDetail.timelineEvents.waiting"),
             "NODE_STARTED": "Node started",
             "NODE_COMPLETED": "Node completed",
             "NODE_FAILED": "Node failed",
@@ -295,6 +307,10 @@ export function useTimeline({
             "LLM_PROMPT",
             "LLM_OUTPUT",
             "LLM_USAGE_RECORDED",
+            "PLANNER_TRACE",
+            "TEXT_MESSAGE_START",
+            "TEXT_MESSAGE_CONTENT",
+            "TEXT_MESSAGE_END",
         ]);
 
         const filteredRunEvents = runEvents

@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { TimelineDisplayEvent } from "./use-timeline";
-import { RunMessage } from "@/lib/run/types";
+import { RunMessage, RunStatus } from "@/lib/run/types";
 
 export function useScrollSync({
     timelineScrollRef,
@@ -16,7 +16,7 @@ export function useScrollSync({
     timelineScrollRef: React.RefObject<HTMLDivElement | null>;
     conversationScrollRef: React.RefObject<HTMLDivElement | null>;
     timelineEvents: TimelineDisplayEvent[];
-    runStatus: "idle" | "running" | "pausing" | "paused" | "resuming" | "cancelling" | "cancelled" | "completed" | "failed";
+    runStatus: RunStatus;
     messages: RunMessage[];
     activeTab: string;
     userHasScrolledRef: React.MutableRefObject<boolean>;

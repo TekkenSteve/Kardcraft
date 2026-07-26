@@ -1,7 +1,8 @@
 import { NextRequest } from "next/server";
 
 type ChatRequestBody = {
-  workflowId?: string;
+  threadId?: string;
+  after?: number;
 };
 
 const API_BASE_PATH = process.env.NEXT_PUBLIC_API_BASE_PATH || "";
@@ -65,13 +66,7 @@ function toMessageText(payload: unknown): string {
 }
 
 function isTerminalEvent(eventType: string): boolean {
-  return (
-    eventType === "WORKFLOW_COMPLETED" ||
-    eventType === "WORKFLOW_FAILED" ||
-    eventType === "WORKFLOW_CANCELLED" ||
-    eventType === "done" ||
-    eventType === "STREAM_END"
-  );
+  return eventType === "RUN_FINISHED" || eventType === "RUN_ERROR";
 }
 
 function computeCompletedTail(accumulated: string, completed: string): string {
@@ -85,15 +80,17 @@ function computeCompletedTail(accumulated: string, completed: string): string {
 
 export async function POST(request: NextRequest): Promise<Response> {
   const body = (await request.json().catch(() => ({}))) as ChatRequestBody;
-  const workflowId = typeof body.workflowId === "string" ? body.workflowId.trim() : "";
+  const threadId = typeof body.threadId === "string" ? body.threadId.trim() : "";
 
-  if (!workflowId) {
-    return new Response("workflowId is required", { status: 400 });
+  if (!threadId) {
+    return new Response("threadId is required", { status: 400 });
   }
+
+  const after = Number.isSafeInteger(body.after) && Number(body.after) >= 0 ? Number(body.after) : 0;
 
   const cookie = request.headers.get("cookie") || "";
   const upstream = await fetch(
-    buildApiUrl(request, `/api/v1/stream/sse?workflow_id=${encodeURIComponent(workflowId)}`),
+    buildApiUrl(request, `/api/v1/sessions/${encodeURIComponent(threadId)}/events?after=${after}`),
     {
       method: "GET",
       headers: {
@@ -150,7 +147,7 @@ export async function POST(request: NextRequest): Promise<Response> {
             (typeof parsed.type === "string" && parsed.type) ||
             "";
 
-          if (eventType === "thread.message.delta") {
+          if (eventType === "TEXT_MESSAGE_CONTENT") {
             const delta = toTextDelta(parsed.payload);
             if (delta) {
               streamedAssistantText += delta;
@@ -159,16 +156,7 @@ export async function POST(request: NextRequest): Promise<Response> {
             continue;
           }
 
-          if (eventType === "LLM_PARTIAL") {
-            const delta = toTextDelta(parsed.payload);
-            if (delta) {
-              streamedAssistantText += delta;
-              controller.enqueue(encoder.encode(delta));
-            }
-            continue;
-          }
-
-          if (eventType === "thread.message.completed") {
+          if (eventType === "TEXT_MESSAGE_END") {
             const completed = toCompletedText(parsed.payload);
             const tail = computeCompletedTail(streamedAssistantText, completed);
             if (tail) {
@@ -176,28 +164,6 @@ export async function POST(request: NextRequest): Promise<Response> {
               controller.enqueue(encoder.encode(tail));
             }
             continue;
-          }
-
-          if (eventType === "LLM_OUTPUT") {
-            const completed = toCompletedText(parsed.payload) || toMessageText(parsed.payload);
-            const tail = computeCompletedTail(streamedAssistantText, completed);
-            if (tail) {
-              streamedAssistantText += tail;
-              controller.enqueue(encoder.encode(tail));
-            }
-            continue;
-          }
-
-          if (eventType === "WORKFLOW_COMPLETED") {
-            const completed = toCompletedText(parsed.payload) || toMessageText(parsed.payload);
-            const tail = computeCompletedTail(streamedAssistantText, completed);
-            if (tail) {
-              streamedAssistantText += tail;
-              controller.enqueue(encoder.encode(tail));
-            }
-            controller.close();
-            await reader.cancel();
-            return;
           }
 
           if (isTerminalEvent(eventType)) {

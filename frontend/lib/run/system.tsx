@@ -86,6 +86,7 @@ export const useSessionViewModel = (sessionId: string | null) => {
         a.streamError === b.streamError &&
         a.events === b.events &&
         a.messages === b.messages &&
+        a.interrupt === b.interrupt &&
         a.cards === b.cards
       );
     }
@@ -116,6 +117,7 @@ export const useSessionViewModel = (sessionId: string | null) => {
         checkedAt: null,
         message: null,
       },
+      interrupt: null,
     };
   }
   
@@ -135,6 +137,7 @@ export const useSessionViewModel = (sessionId: string | null) => {
     isCancelling: sessionData.status === 'cancelling',
     isCancelled: sessionData.status === 'cancelled',
     templatePreflight: sessionData.templatePreflight,
+    interrupt: sessionData.interrupt,
   };
 };
 
@@ -248,7 +251,7 @@ export const useRunCommands = () => {
       actor.send({ type: 'ACTIVATE_SESSION', sessionId });
     },
     
-    createTask: (sessionId: string | null, workflowId: string, query: string, runId?: string) => {
+    createTask: (sessionId: string | null, workflowId: string, query: string, runId?: string, cursor?: number, userMessage?: RunMessage) => {
       if (!sessionId) return;
       
       // 先激活会话（如果不存在会创建）
@@ -261,6 +264,8 @@ export const useRunCommands = () => {
         workflowId, 
         runId,
         query,
+        cursor,
+        userMessage,
       });
     },
     
@@ -302,10 +307,13 @@ export const useRunCommands = () => {
       messages: RunMessage[];
       events: RunEvent[];
       cards: CardData[];
+      cursor?: number;
+      interrupt?: import('./session-machine').ConversationInterrupt | null;
       state?: {
         active_task_id?: string | null;
         task_state?: string | null;
         session_control_state?: string | null;
+        conversation_status?: import('./types').RunStatus | null;
       } | null;
     }) => {
       actor.send({
@@ -316,6 +324,8 @@ export const useRunCommands = () => {
         messages: data.messages,
         events: data.events,
         cards: data.cards,
+        cursor: data.cursor,
+        interrupt: data.interrupt,
         state: data.state,
       });
     },

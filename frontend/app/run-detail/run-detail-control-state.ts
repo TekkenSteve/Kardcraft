@@ -13,6 +13,7 @@ export type RunDetailControlState = {
 export function deriveRunDetailControlState(status: RunStatus): RunDetailControlState {
     const isControlSessionActive =
         status === "running" ||
+        status === "waiting_input" ||
         status === "pausing" ||
         status === "paused" ||
         status === "resuming" ||
@@ -27,7 +28,7 @@ export function deriveRunDetailControlState(status: RunStatus): RunDetailControl
         isResumeLoading,
         showPause: status === "running" || status === "pausing",
         showResume: status === "paused" || status === "resuming",
-        showCancel: status === "running" || status === "pausing" || status === "paused" || status === "resuming" || status === "cancelling",
-        inputDisabled: isControlSessionActive,
+        showCancel: status === "running" || status === "waiting_input" || status === "pausing" || status === "paused" || status === "resuming" || status === "cancelling",
+        inputDisabled: isControlSessionActive && status !== "waiting_input",
     };
 }

@@ -2,7 +2,7 @@
 
 import { createContext, use } from "react";
 import { SessionDataBundle, SessionHistoryData } from "./run-detail-types";
-import { RunMessage, CardData } from "@/lib/run/types";
+import { RunMessage, CardData, RunStatus } from "@/lib/run/types";
 import { RunEvent } from "@/lib/kardcraft/types";
 import { TimelineDisplayEvent } from "./hooks/use-timeline";
 
@@ -16,7 +16,7 @@ export interface RunDetailDataContextValue {
     error: string | null;
     messages: RunMessage[];
     runEvents: RunEvent[];
-    runStatus: "idle" | "running" | "pausing" | "paused" | "resuming" | "cancelling" | "cancelled" | "completed" | "failed";
+    runStatus: RunStatus;
     runPhase: "idle" | "clearing" | "loading" | "hydrated" | "streaming" | "error";
     connectionState: "idle" | "connecting" | "connected" | "reconnecting" | "error";
     streamError: string | null;
@@ -40,6 +40,7 @@ export interface RunDetailDataContextValue {
     sessionHistory: SessionHistoryData;
     currentWorkflowId: string | null;
     currentRunId: string | null;
+    interruptId: string | null;
     timelineEvents: TimelineDisplayEvent[];
     workspacePhase: "idle" | "clearing" | "loading" | "hydrated" | "empty" | "error";
     loadPhase: "idle" | "clearing" | "loading" | "hydrated" | "streaming";

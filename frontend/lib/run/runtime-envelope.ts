@@ -1,13 +1,12 @@
 export type RuntimeEnvelope = {
-    schema_version: number;
-    correlation_id: string;
+    schema_version: "agentos.conversation.v1";
     event_id: string;
     occurred_at: string;
-    workflow_id: string;
+    thread_id: string;
     run_id: string;
-    session_id: string;
+    process_id?: string;
     event_type: string;
-    stream_id?: string;
+    sequence: number;
     payload: Record<string, unknown>;
 };
 
@@ -24,30 +23,30 @@ const isNonEmptyString = (value: unknown): value is string =>
 export function validateRuntimeEnvelope(raw: unknown): RuntimeEnvelopeValidationResult {
     if (!isRecord(raw)) return { ok: false, reason: "invalid_object" };
 
-    if (raw.schema_version !== 1) return { ok: false, reason: "invalid_schema_version" };
-    if (!isNonEmptyString(raw.correlation_id)) return { ok: false, reason: "missing_correlation_id" };
+    if (raw.schema_version !== "agentos.conversation.v1") return { ok: false, reason: "invalid_schema_version" };
     if (!isNonEmptyString(raw.event_id)) return { ok: false, reason: "missing_event_id" };
     if (!isNonEmptyString(raw.occurred_at) || Number.isNaN(Date.parse(raw.occurred_at))) {
         return { ok: false, reason: "invalid_occurred_at" };
     }
-    if (!isNonEmptyString(raw.workflow_id)) return { ok: false, reason: "missing_workflow_id" };
+    if (!isNonEmptyString(raw.thread_id)) return { ok: false, reason: "missing_thread_id" };
     if (!isNonEmptyString(raw.run_id)) return { ok: false, reason: "missing_run_id" };
-    if (!isNonEmptyString(raw.session_id)) return { ok: false, reason: "missing_session_id" };
     if (!isNonEmptyString(raw.event_type)) return { ok: false, reason: "missing_event_type" };
+    if (typeof raw.sequence !== "number" || !Number.isSafeInteger(raw.sequence) || raw.sequence <= 0) {
+        return { ok: false, reason: "invalid_sequence" };
+    }
     if (!isRecord(raw.payload)) return { ok: false, reason: "invalid_payload" };
 
     return {
         ok: true,
         value: {
             schema_version: raw.schema_version,
-            correlation_id: raw.correlation_id,
             event_id: raw.event_id,
             occurred_at: raw.occurred_at,
-            workflow_id: raw.workflow_id,
+            thread_id: raw.thread_id,
             run_id: raw.run_id,
-            session_id: raw.session_id,
+            process_id: isNonEmptyString(raw.process_id) ? raw.process_id : undefined,
             event_type: raw.event_type,
-            stream_id: isNonEmptyString(raw.stream_id) ? raw.stream_id : undefined,
+            sequence: raw.sequence,
             payload: raw.payload,
         },
     };

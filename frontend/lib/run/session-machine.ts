@@ -13,6 +13,15 @@ type HydratedState = {
   active_task_id?: string | null;
   task_state?: string | null;
   session_control_state?: string | null;
+  conversation_status?: RunStatus | null;
+};
+
+export type ConversationInterrupt = {
+  interrupt_id: string;
+  type: string;
+  prompt: string;
+  input_schema?: Record<string, unknown>;
+  metadata?: Record<string, unknown>;
 };
 
 type LocalControlIntent = {
@@ -30,7 +39,10 @@ export type SessionContext = {
   connectionState: ConnectionState;
   streamError: string | null;
   events: RunEvent[];
+  persistedMessages: RunMessage[];
+  streamingOverlay: Record<string, RunMessage>;
   messages: RunMessage[];
+  interrupt: ConversationInterrupt | null;
   cards: CardData[];
   lastEventID: number;
   pauseCheckpoint: { lastEventID: number; timestamp: string } | null;
@@ -40,8 +52,8 @@ export type SessionContext = {
 };
 
 export type SessionEvent =
-  | { type: "START_WORKFLOW"; workflowId: string; runId?: string | null; query?: string }
-  | { type: "HYDRATE"; workflowId: string | null; runId: string | null; messages: RunMessage[]; events: RunEvent[]; cards: CardData[]; state?: HydratedState | null }
+  | { type: "START_WORKFLOW"; workflowId: string; runId?: string | null; query?: string; cursor?: number; userMessage?: RunMessage }
+  | { type: "HYDRATE"; workflowId: string | null; runId: string | null; messages: RunMessage[]; events: RunEvent[]; cards: CardData[]; cursor?: number; interrupt?: ConversationInterrupt | null; state?: HydratedState | null }
   | { type: "PAUSE" }
   | { type: "RESUME" }
   | { type: "CANCEL" }
@@ -63,7 +75,10 @@ const createInitialContext = (sessionId: string): SessionContext => ({
   connectionState: "idle",
   streamError: null,
   events: [],
+  persistedMessages: [],
+  streamingOverlay: {},
   messages: [],
+  interrupt: null,
   cards: [],
   lastEventID: 0,
   pauseCheckpoint: null,
@@ -106,8 +121,12 @@ const shouldReplayBacklogFromCursor = (context: SessionContext): boolean =>
   context.controlIntent?.action === "resume" &&
   context.lastEventID <= context.controlIntent.checkpointEventID;
 
-const extractRunEventID = (event: RunEvent): number => {
-  const raw = (event as { id?: unknown }).id;
+const extractRunEventSequence = (event: RunEvent): number => {
+  const streamID = (event as { stream_id?: unknown }).stream_id;
+  if (typeof streamID !== "string" || !streamID.startsWith("agentos:")) return 0;
+  const payload = (event as { payload?: unknown }).payload;
+  if (!payload || typeof payload !== "object") return 0;
+  const raw = (payload as Record<string, unknown>).sequence;
   if (typeof raw === "number" && Number.isFinite(raw)) return Math.floor(raw);
   if (typeof raw === "string") {
     const parsed = Number(raw);
@@ -116,9 +135,16 @@ const extractRunEventID = (event: RunEvent): number => {
   return 0;
 };
 
+const extractRunEventID = (event: RunEvent): number => {
+  const sequence = (event as { seq?: unknown }).seq;
+  if (typeof sequence === "number" && Number.isSafeInteger(sequence) && sequence > 0) return sequence;
+  const legacyID = (event as { id?: unknown }).id;
+  const parsed = typeof legacyID === "number" ? legacyID : Number(legacyID);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : 0;
+};
+
 const extractEnvelopeEventID = (envelope: RuntimeEnvelope): number => {
-  const parsed = Number(envelope.event_id);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0;
+  return Number.isSafeInteger(envelope.sequence) && envelope.sequence > 0 ? envelope.sequence : 0;
 };
 
 const eventIdentity = (event: RunEvent): string => {
@@ -146,50 +172,7 @@ const mergeEvents = (current: RunEvent[], incoming: RunEvent[]): RunEvent[] => {
   return next;
 };
 
-const maxEventID = (events: RunEvent[]): number => events.reduce((max, event) => Math.max(max, extractRunEventID(event)), 0);
-
-const hasPendingAssistant = (messages: RunMessage[], workflowId: string | null): boolean => {
-  if (!workflowId) return false;
-  return messages.some((message) => message.role === "assistant" && message.taskId === workflowId && (message.isGenerating || message.isStreaming));
-};
-
-const hasAssistantReply = (messages: RunMessage[], workflowId: string | null): boolean => {
-  if (!workflowId) return false;
-  return messages.some((message) => message.role === "assistant" && message.taskId === workflowId && !message.isGenerating && message.content.trim().length > 0);
-};
-
-const ensureAssistantPlaceholder = (messages: RunMessage[], workflowId: string | null, at: string = new Date().toISOString()): RunMessage[] => {
-  if (!workflowId || hasPendingAssistant(messages, workflowId) || hasAssistantReply(messages, workflowId)) return messages;
-  return [
-    ...messages,
-    {
-      id: `generating-${workflowId}`,
-      role: "assistant",
-      content: "",
-      isGenerating: true,
-      taskId: workflowId,
-      timestamp: at,
-    },
-  ];
-};
-
-const clearAssistantLoading = (messages: RunMessage[]): RunMessage[] =>
-  messages.map((message) => ({
-    ...message,
-    isGenerating: false,
-    isStreaming: false,
-  }));
-
-const removeEmptyAssistantPlaceholders = (messages: RunMessage[], workflowId: string | null): RunMessage[] =>
-  messages.filter((message) => {
-    if (message.role !== "assistant") return true;
-    if (workflowId && message.taskId !== workflowId) return true;
-    if (message.isGenerating || message.isStreaming) return true;
-    return message.content.trim().length > 0;
-  });
-
-const removeStatusMessages = (messages: RunMessage[], workflowId: string | null): RunMessage[] =>
-  messages.filter((message) => message.role !== "status" || (workflowId && message.taskId !== workflowId));
+const maxEventID = (events: RunEvent[]): number => events.reduce((max, event) => Math.max(max, extractRunEventSequence(event)), 0);
 
 const upsertCards = (current: CardData[], incoming: CardData[]): CardData[] => {
   const byId = new Map(current.map((card) => [card.card_id, card]));
@@ -197,85 +180,23 @@ const upsertCards = (current: CardData[], incoming: CardData[]): CardData[] => {
   return Array.from(byId.values());
 };
 
-const directResultMessage = (result: unknown): string | null => {
-  if (!result || typeof result !== "object") return null;
-  const record = result as Record<string, unknown>;
-  const candidate = record.response ?? record.message ?? record.content;
-  return typeof candidate === "string" && candidate.trim().length > 0 ? candidate : null;
+const mergeVisibleMessages = (persisted: RunMessage[], overlay: Record<string, RunMessage>): RunMessage[] => [
+  ...persisted,
+  ...Object.values(overlay).filter((message) => message.content.length > 0),
+];
+
+const upsertPersistedMessage = (messages: RunMessage[], incoming: RunMessage): RunMessage[] => {
+  const index = messages.findIndex((message) => message.id === incoming.id);
+  if (index < 0) return [...messages, incoming];
+  const next = [...messages];
+  next[index] = { ...messages[index], ...incoming, isStreaming: false, isGenerating: false };
+  return next;
 };
 
-const applyTerminalAssistantResult = (messages: RunMessage[], workflowId: string, result: unknown, at: string): RunMessage[] => {
-  const content = directResultMessage(result);
-  if (!content || hasAssistantReply(messages, workflowId)) return messages;
-  const existingIndex = messages.findIndex((message) =>
-    message.role === "assistant" &&
-    message.taskId === workflowId &&
-    (message.isGenerating || message.isStreaming || message.content.trim().length === 0)
-  );
-  if (existingIndex >= 0) {
-    const next = [...messages];
-    next[existingIndex] = {
-      ...next[existingIndex],
-      content,
-      isGenerating: false,
-      isStreaming: false,
-      timestamp: next[existingIndex].timestamp || at,
-    };
-    return next;
-  }
-  return [
-    ...messages,
-    {
-      id: `assistant-${workflowId}`,
-      role: "assistant",
-      content,
-      taskId: workflowId,
-      timestamp: at,
-    },
-  ];
+const clearRunOverlay = (overlay: Record<string, RunMessage>, runId: string | null | undefined) => {
+  if (!runId) return {};
+  return Object.fromEntries(Object.entries(overlay).filter(([, message]) => message.runId !== runId));
 };
-
-const finalizeTerminalMessages = (messages: RunMessage[], workflowId: string, result: unknown, at: string): RunMessage[] =>
-  removeStatusMessages(
-    removeEmptyAssistantPlaceholders(clearAssistantLoading(applyTerminalAssistantResult(messages, workflowId, result, at)), workflowId),
-    workflowId,
-  );
-
-const statusMessageContent = (event: Extract<RunDomainEvent, { kind: "timeline.event" }>): string => {
-  const message = event.message?.trim();
-  if (message) return message;
-  return event.eventKind.replace(/_/g, " ").toLowerCase();
-};
-
-const setStatusMessage = (messages: RunMessage[], input: {
-  workflowId: string;
-  content: string;
-  at: string;
-  eventType: string;
-}): RunMessage[] => {
-  const content = input.content.trim();
-  if (!content.trim()) return messages;
-  const id = `status-${input.workflowId}`;
-  return [
-    ...removeStatusMessages(messages, input.workflowId),
-    {
-      id,
-      role: "status",
-      content,
-      timestamp: input.at,
-      taskId: input.workflowId,
-      eventType: input.eventType,
-    },
-  ];
-};
-
-const upsertStatusMessage = (messages: RunMessage[], event: Extract<RunDomainEvent, { kind: "timeline.event" }>): RunMessage[] =>
-  setStatusMessage(messages, {
-    workflowId: event.workflowId,
-    content: statusMessageContent(event),
-    at: event.at,
-    eventType: event.eventKind,
-  });
 
 const shouldDeferEvent = (context: SessionContext, event: RunDomainEvent): boolean => {
   if (context.status !== "paused" && context.status !== "pausing") return false;
@@ -301,8 +222,26 @@ const applyDomainEvent = (context: SessionContext, event: RunDomainEvent): Parti
       updates.runId = event.runId || context.runId;
       updates.streamError = null;
       updates.controlIntent = null;
-      updates.messages = ensureAssistantPlaceholder(context.messages, event.workflowId, event.at);
+      updates.interrupt = null;
       break;
+
+    case "run.finished": {
+      const streamingOverlay = clearRunOverlay(context.streamingOverlay, event.runId);
+      updates.streamingOverlay = streamingOverlay;
+      updates.messages = mergeVisibleMessages(context.persistedMessages, streamingOverlay);
+      updates.connectionState = "idle";
+      updates.controlIntent = null;
+      if (event.outcome === "interrupt") {
+        updates.status = "waiting_input";
+        updates.runPhase = "hydrated";
+        updates.interrupt = event.interrupt || null;
+      } else {
+        updates.status = event.outcome === "cancelled" ? "cancelled" : "completed";
+        updates.runPhase = "hydrated";
+        updates.interrupt = null;
+      }
+      break;
+    }
 
     case "workflow.completed": {
       updates.status = "completed";
@@ -311,7 +250,8 @@ const applyDomainEvent = (context: SessionContext, event: RunDomainEvent): Parti
       updates.pauseCheckpoint = null;
       updates.deferredEvents = [];
       updates.controlIntent = null;
-      updates.messages = finalizeTerminalMessages(context.messages, event.workflowId, event.result, event.at);
+      updates.streamingOverlay = {};
+      updates.messages = context.persistedMessages;
       break;
     }
 
@@ -323,99 +263,66 @@ const applyDomainEvent = (context: SessionContext, event: RunDomainEvent): Parti
       updates.pauseCheckpoint = null;
       updates.deferredEvents = [];
       updates.controlIntent = null;
-      updates.messages = removeStatusMessages(
-        removeEmptyAssistantPlaceholders(clearAssistantLoading(context.messages), event.workflowId),
-        event.workflowId,
-      );
+      {
+        const streamingOverlay = clearRunOverlay(context.streamingOverlay, event.runId);
+        updates.streamingOverlay = streamingOverlay;
+        updates.messages = mergeVisibleMessages(context.persistedMessages, streamingOverlay);
+      }
+      updates.interrupt = null;
       break;
 
-    case "message.delta": {
-      const exactIndex = context.messages.findIndex((message) => message.id === event.messageId);
-      if (exactIndex >= 0) {
-        const messages = [...context.messages];
-        messages[exactIndex] = {
-          ...messages[exactIndex],
-          content: (messages[exactIndex].content || "") + event.delta,
-          isStreaming: true,
-          isGenerating: false,
-        };
-        updates.messages = messages;
-        break;
-      }
-
-      const generatingIndex = context.messages.findIndex((message) => message.isGenerating && message.taskId === event.workflowId);
-      if (generatingIndex >= 0) {
-        const messages = [...context.messages];
-        messages[generatingIndex] = {
+    case "message.started": {
+      const streamingOverlay = {
+        ...context.streamingOverlay,
+        [event.messageId]: {
           id: event.messageId,
-          role: "assistant",
-          content: event.delta,
-          isStreaming: true,
-          isGenerating: false,
-          taskId: event.workflowId,
-          timestamp: event.at,
-        };
-        updates.messages = messages;
-        break;
-      }
-
-      updates.messages = [
-        ...context.messages,
-        {
-          id: event.messageId,
-          role: "assistant",
-          content: event.delta,
+          role: "assistant" as const,
+          content: "",
           isStreaming: true,
           taskId: event.workflowId,
+          runId: event.runId || undefined,
           timestamp: event.at,
         },
-      ];
+      };
+      updates.streamingOverlay = streamingOverlay;
+      updates.messages = mergeVisibleMessages(context.persistedMessages, streamingOverlay);
+      break;
+    }
+
+    case "message.delta": {
+      const current = context.streamingOverlay[event.messageId];
+      const streamingOverlay = {
+        ...context.streamingOverlay,
+        [event.messageId]: {
+          id: event.messageId,
+          role: "assistant" as const,
+          content: `${current?.content || ""}${event.delta}`,
+          isStreaming: true,
+          taskId: event.workflowId,
+          runId: event.runId || undefined,
+          timestamp: current?.timestamp || event.at,
+        },
+      };
+      updates.streamingOverlay = streamingOverlay;
+      updates.messages = mergeVisibleMessages(context.persistedMessages, streamingOverlay);
       break;
     }
 
     case "message.completed": {
-      const completedIndex = context.messages.findIndex((message) => message.id === event.messageId);
-      if (completedIndex >= 0) {
-        const messages = [...context.messages];
-        messages[completedIndex] = {
-          ...messages[completedIndex],
-          content: event.content,
-          isStreaming: false,
-          isGenerating: false,
-          metadata: event.metadata,
-        };
-        updates.messages = messages;
-        break;
-      }
-
-      const generatingIndex = context.messages.findIndex((message) => message.isGenerating && message.taskId === event.workflowId);
-      if (generatingIndex >= 0) {
-        const messages = [...context.messages];
-        messages[generatingIndex] = {
-          id: event.messageId,
-          role: "assistant",
-          content: event.content,
-          isGenerating: false,
-          isStreaming: false,
-          taskId: event.workflowId,
-          timestamp: event.at,
-          metadata: event.metadata,
-        };
-        updates.messages = messages;
-        break;
-      }
-
-      updates.messages = [
-        ...context.messages,
-        {
-          id: event.messageId,
-          role: "assistant",
-          content: event.content,
-          taskId: event.workflowId,
-          timestamp: event.at,
-          metadata: event.metadata,
-        },
-      ];
+      const persistedMessages = upsertPersistedMessage(context.persistedMessages, {
+        id: event.messageId,
+        role: "assistant",
+        content: event.content,
+        taskId: event.workflowId,
+        runId: event.runId || undefined,
+        timestamp: event.at,
+        metadata: event.metadata,
+      });
+      const streamingOverlay = { ...context.streamingOverlay };
+      delete streamingOverlay[event.messageId];
+      updates.persistedMessages = persistedMessages;
+      updates.streamingOverlay = streamingOverlay;
+      updates.messages = mergeVisibleMessages(persistedMessages, streamingOverlay);
       break;
     }
 
@@ -424,13 +331,7 @@ const applyDomainEvent = (context: SessionContext, event: RunDomainEvent): Parti
       break;
 
     case "timeline.event":
-      if (isControlTimelineEvent(event)) {
-        break;
-      }
-      if (TELEMETRY_TIMELINE_TYPES.has(event.eventKind)) {
-        break;
-      }
-      updates.messages = upsertStatusMessage(context.messages, event);
+      // Extension events are timeline/process diagnostics only. They never own chat state.
       break;
 
     case "control.cancel.confirmed":
@@ -440,10 +341,8 @@ const applyDomainEvent = (context: SessionContext, event: RunDomainEvent): Parti
       updates.pauseCheckpoint = null;
       updates.deferredEvents = [];
       updates.controlIntent = null;
-      updates.messages = removeStatusMessages(
-        removeEmptyAssistantPlaceholders(clearAssistantLoading(context.messages), event.taskId),
-        event.taskId,
-      );
+      updates.streamingOverlay = {};
+      updates.messages = context.persistedMessages;
       break;
 
     case "control.rejected":
@@ -458,9 +357,10 @@ const envelopeToDomainEvent = (context: SessionContext, envelope: RuntimeEnvelop
   const payload = envelope.run_id ? { ...envelope.payload, run_id: envelope.run_id } : envelope.payload;
   return mapWireEventToDomainEvent({
     eventType: envelope.event_type,
+    sequence: envelope.sequence,
     payload,
-    fallbackWorkflowId: envelope.workflow_id,
-    fallbackSessionId: envelope.session_id,
+    fallbackWorkflowId: envelope.process_id || envelope.run_id,
+    fallbackSessionId: envelope.thread_id,
     at: envelope.occurred_at,
     eventId: envelope.event_id,
   });
@@ -468,6 +368,7 @@ const envelopeToDomainEvent = (context: SessionContext, envelope: RuntimeEnvelop
 
 const ingestEnvelope = (context: SessionContext, envelope: RuntimeEnvelope): Partial<SessionContext> => {
   const eventID = extractEnvelopeEventID(envelope);
+  if (eventID <= context.lastEventID) return {};
   const mapped = envelopeToDomainEvent(context, envelope);
   if (!mapped.ok) {
     return {
@@ -475,7 +376,7 @@ const ingestEnvelope = (context: SessionContext, envelope: RuntimeEnvelope): Par
     };
   }
 
-  if (context.workflowId && "workflowId" in mapped.event && mapped.event.workflowId !== context.workflowId) {
+  if (context.workflowId && envelope.process_id && "workflowId" in mapped.event && mapped.event.workflowId !== context.workflowId) {
     return {
       lastEventID: Math.max(context.lastEventID, eventID),
     };
@@ -497,7 +398,7 @@ const applyDeferredEvents = (context: SessionContext): Partial<SessionContext> =
   if (context.deferredEvents.length === 0) {
     return {
       pauseCheckpoint: null,
-      messages: ensureAssistantPlaceholder(context.messages, context.workflowId),
+      messages: mergeVisibleMessages(context.persistedMessages, context.streamingOverlay),
     };
   }
 
@@ -507,7 +408,7 @@ const applyDeferredEvents = (context: SessionContext): Partial<SessionContext> =
     runPhase: "streaming",
     pauseCheckpoint: null,
     deferredEvents: [],
-    messages: ensureAssistantPlaceholder(context.messages, context.workflowId),
+    messages: mergeVisibleMessages(context.persistedMessages, context.streamingOverlay),
   };
 
   context.deferredEvents.forEach((event) => {
@@ -534,6 +435,17 @@ const terminalStatusFromEvents = (events: RunEvent[]): RunStatus | null => {
     if (type === "WORKFLOW_COMPLETED") return "completed";
     if (type === "WORKFLOW_FAILED" || type === "error") return "failed";
     if (type === "WORKFLOW_CANCELLED") return "cancelled";
+  }
+  return null;
+};
+
+const latestWaitingInputEvent = (events: RunEvent[], workflowId: string | null): RunEvent | null => {
+  if (!workflowId) return null;
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.workflow_id !== workflowId) continue;
+    if (event.type === "WORKFLOW_WAITING_INPUT") return event;
+    if (event.type === "WORKFLOW_STARTED" || event.type === "MESSAGE_RECEIVED" || event.type === "WORKFLOW_RESUMED") return null;
   }
   return null;
 };
@@ -575,8 +487,10 @@ const latestStatusFromEvents = (
 };
 
 const deriveHydratedStatus = (context: SessionContext, state: HydratedState | null | undefined, events: RunEvent[]): RunStatus => {
+  if (state?.conversation_status) return state.conversation_status;
   const terminalStatus = terminalStatusFromEvents(events);
   if (terminalStatus) return terminalStatus;
+  if (latestWaitingInputEvent(events, context.workflowId || state?.active_task_id || null)) return "waiting_input";
 
   const taskState = state?.task_state;
   const controlState = state?.session_control_state;
@@ -615,14 +529,14 @@ const hydrateContext = (context: SessionContext, event: Extract<SessionEvent, { 
   const mergedEvents = mergeEvents(context.events, event.events);
   const status = deriveHydratedStatus(context, event.state, mergedEvents);
   const visibleEvents = visibleHydratedEvents(status, mergedEvents);
-  const messages = context.messages.length > 0 ? context.messages : event.messages;
+  const messages = event.messages;
   const cards = event.cards.length > 0 ? upsertCards(context.cards, event.cards) : context.cards;
   const base: Partial<SessionContext> = {
     workflowId,
     runId: event.runId || context.runId || workflowId,
     events: visibleEvents,
     cards,
-    lastEventID: maxEventID(visibleEvents),
+    lastEventID: event.cursor ?? maxEventID(visibleEvents),
     streamError: null,
     status,
     runPhase: status === "running" ? "streaming" : status === "failed" ? "error" : status === "idle" ? "idle" : "hydrated",
@@ -631,38 +545,25 @@ const hydrateContext = (context: SessionContext, event: Extract<SessionEvent, { 
     pauseCheckpoint: status === "paused"
       ? { lastEventID: maxEventID(visibleEvents), timestamp: new Date().toISOString() }
       : null,
+    persistedMessages: messages,
+    streamingOverlay: {},
+    messages,
+    interrupt: event.interrupt ?? null,
   };
-
-  if (status === "running") {
-    const runningMessages = ensureAssistantPlaceholder(messages, workflowId);
-    const latestStatus = latestStatusFromEvents(visibleEvents, workflowId);
-    base.messages = latestStatus && workflowId
-      ? setStatusMessage(runningMessages, { workflowId, ...latestStatus })
-      : removeStatusMessages(runningMessages, workflowId);
-  } else if (status === "paused") {
-    const pausedMessages = removeEmptyAssistantPlaceholders(clearAssistantLoading(messages), workflowId);
-    const latestStatus = latestStatusFromEvents(visibleEvents, workflowId);
-    base.messages = latestStatus && workflowId
-      ? setStatusMessage(pausedMessages, { workflowId, ...latestStatus })
-      : pausedMessages;
-  } else if (isTerminalStatus(status)) {
-    base.messages = removeStatusMessages(removeEmptyAssistantPlaceholders(clearAssistantLoading(messages), workflowId), workflowId);
-  } else {
-    base.messages = messages;
-  }
 
   return base;
 };
 
 const startWorkflowContext = (context: SessionContext, event: Extract<SessionEvent, { type: "START_WORKFLOW" }>): Partial<SessionContext> => {
   const runId = event.runId || event.workflowId;
-  const userMessage = event.query
+  const userMessage = event.userMessage ? [event.userMessage] : event.query
     ? [{
         id: `user-${event.workflowId}`,
         role: "user" as const,
         content: event.query,
         timestamp: new Date().toISOString(),
         taskId: event.workflowId,
+        runId,
       }]
     : [];
 
@@ -674,11 +575,14 @@ const startWorkflowContext = (context: SessionContext, event: Extract<SessionEve
     connectionState: "idle",
     streamError: null,
     events: [],
-    lastEventID: 0,
+    lastEventID: event.cursor ?? 0,
     pauseCheckpoint: null,
     deferredEvents: [],
     controlIntent: null,
-    messages: ensureAssistantPlaceholder([...context.messages, ...userMessage], event.workflowId),
+    persistedMessages: [...context.persistedMessages, ...userMessage],
+    streamingOverlay: {},
+    messages: [...context.persistedMessages, ...userMessage],
+    interrupt: null,
   };
 };
 
@@ -697,7 +601,7 @@ const resumeFromPausedContext = (context: SessionContext): Partial<SessionContex
   const appliedMessages = applied.messages ?? context.messages;
   const messages = context.deferredEvents.length > 0
     ? appliedMessages
-    : removeStatusMessages(appliedMessages, context.workflowId);
+    : appliedMessages;
 
   return {
     ...applied,
@@ -710,7 +614,7 @@ const resumeFromPausedContext = (context: SessionContext): Partial<SessionContex
       checkpointEventID,
     },
     lastEventID: Math.max(checkpointEventID, applied.lastEventID ?? context.lastEventID),
-    messages: ensureAssistantPlaceholder(messages, context.workflowId),
+    messages,
   };
 };
 
@@ -735,14 +639,13 @@ export const createSessionMachine = (sessionId?: string) => {
           actions: assign(({ context, event }) => hydrateContext(context, event)),
         },
         ADD_MESSAGE: {
-          actions: assign({
-            messages: ({ context, event }) => [...context.messages, event.message],
+          actions: assign(({ context, event }) => {
+            const persistedMessages = upsertPersistedMessage(context.persistedMessages, event.message);
+            return { persistedMessages, messages: mergeVisibleMessages(persistedMessages, context.streamingOverlay) };
           }),
         },
         SET_MESSAGES: {
-          actions: assign({
-            messages: ({ event }) => event.messages,
-          }),
+          actions: assign({ persistedMessages: ({ event }) => event.messages, streamingOverlay: {}, messages: ({ event }) => event.messages }),
         },
         UPSERT_CARDS: {
           actions: assign({
@@ -802,6 +705,7 @@ export const createSessionMachine = (sessionId?: string) => {
         routing: {
           always: [
             { guard: ({ context }) => context.status === "running" || context.status === "resuming", target: "running" },
+            { guard: ({ context }) => context.status === "waiting_input", target: "waitingInput" },
             { guard: ({ context }) => context.status === "paused" || context.status === "pausing", target: "paused" },
             { guard: ({ context }) => context.status === "completed", target: "completed" },
             { guard: ({ context }) => context.status === "failed", target: "failed" },
@@ -815,18 +719,18 @@ export const createSessionMachine = (sessionId?: string) => {
             id: SSE_ACTOR_ID,
             src: sseActor,
             input: ({ context }: { context: SessionContext }): SessionSseConfig => ({
-              workflowId: context.workflowId!,
               sessionId: context.sessionId,
               lastEventID: context.lastEventID,
-              includeLastEventID: shouldReplayBacklogFromCursor(context),
+              includeLastEventID: true,
             }),
           },
           entry: sendTo(SSE_ACTOR_ID, ({ context }) => ({
             type: "CONNECT",
             lastEventID: context.lastEventID,
-            includeLastEventID: shouldReplayBacklogFromCursor(context),
+            includeLastEventID: true,
           })),
           always: [
+            { guard: ({ context }) => context.status === "waiting_input", target: "waitingInput" },
             { guard: ({ context }) => context.status === "completed", target: "completed" },
             { guard: ({ context }) => context.status === "failed", target: "failed" },
             { guard: ({ context }) => context.status === "cancelled", target: "cancelled" },
@@ -850,17 +754,7 @@ export const createSessionMachine = (sessionId?: string) => {
                     at,
                     checkpointEventID: context.lastEventID,
                   } satisfies LocalControlIntent,
-                  messages: context.workflowId
-                    ? setStatusMessage(
-                        removeEmptyAssistantPlaceholders(clearAssistantLoading(context.messages), context.workflowId),
-                        {
-                          workflowId: context.workflowId,
-                          content: "Paused",
-                          at,
-                          eventType: "WORKFLOW_PAUSED",
-                        },
-                      )
-                    : removeEmptyAssistantPlaceholders(clearAssistantLoading(context.messages), context.workflowId),
+                  messages: mergeVisibleMessages(context.persistedMessages, context.streamingOverlay),
                 };
               }),
             },
@@ -873,7 +767,25 @@ export const createSessionMachine = (sessionId?: string) => {
                 pauseCheckpoint: null,
                 deferredEvents: [],
                 controlIntent: null,
-                messages: removeStatusMessages(removeEmptyAssistantPlaceholders(clearAssistantLoading(context.messages), context.workflowId), context.workflowId),
+                streamingOverlay: {},
+                messages: context.persistedMessages,
+              })),
+            },
+          },
+        },
+        waitingInput: {
+          on: {
+            CANCEL: {
+              target: "cancelled",
+              actions: assign(({ context }) => ({
+                status: "cancelled" as RunStatus,
+                runPhase: "hydrated" as RunPhase,
+                connectionState: "idle" as ConnectionState,
+                pauseCheckpoint: null,
+                deferredEvents: [],
+                controlIntent: null,
+                streamingOverlay: {},
+                messages: context.persistedMessages,
               })),
             },
           },
@@ -899,7 +811,8 @@ export const createSessionMachine = (sessionId?: string) => {
                 pauseCheckpoint: null,
                 deferredEvents: [],
                 controlIntent: null,
-                messages: removeStatusMessages(removeEmptyAssistantPlaceholders(clearAssistantLoading(context.messages), context.workflowId), context.workflowId),
+                streamingOverlay: {},
+                messages: context.persistedMessages,
               })),
             },
           },

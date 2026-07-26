@@ -26,6 +26,8 @@ export function ConversationPanel() {
         isNewSession,
         resolvedSessionId,
         currentWorkflowId,
+        currentRunId,
+        interruptId,
     } = useRunDetailData();
     const { conversationScrollRef } = useRunDetailUi();
     const {
@@ -36,6 +38,14 @@ export function ConversationPanel() {
         setSelectedAgentValue,
     } = useRunDetailActions();
     const showTaskControls = isControlSessionActive;
+    const hasCurrentAssistantOverlay = messages.some((message) =>
+        message.role === "assistant" &&
+        message.isStreaming &&
+        (!currentRunId || message.runId === currentRunId)
+    );
+    const isWaitingForAssistant =
+        (runStatus === "running" || runStatus === "resuming") &&
+        !hasCurrentAssistantOverlay;
     const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
 
     return (
@@ -43,7 +53,11 @@ export function ConversationPanel() {
             {(messages.length > 0 || showTaskControls) && (
             <div className="flex-1 min-h-0">
                 <ScrollArea className="h-full" ref={conversationScrollRef}>
-                    <RunConversation messages={messages} agentType={selectedAgent} />
+                    <RunConversation
+                        messages={messages}
+                        agentType={selectedAgent}
+                        isWaitingForAssistant={isWaitingForAssistant}
+                    />
                 </ScrollArea>
             </div>
             )}
@@ -57,6 +71,7 @@ export function ConversationPanel() {
                     initialResearchStrategy={researchStrategy}
                     onTaskCreated={handleTaskCreated}
                     currentWorkflowId={currentWorkflowId}
+                    interruptId={interruptId}
                     variant={(messages.length > 0 || showTaskControls) ? "default" : "centered"}
                     isTaskRunning={showTaskControls}
                     isPaused={isPaused}

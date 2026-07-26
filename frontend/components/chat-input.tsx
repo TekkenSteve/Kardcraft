@@ -169,8 +169,11 @@ interface ChatInputProps {
         newSessionId?: string,
         attachments?: Array<{fileId: string; filename: string; size: number; mimeType: string}>,
         runId?: string,
+        cursor?: number,
+        userMessage?: import("@/lib/kardcraft/api").ConversationThreadMessage,
     ) => void;
     currentWorkflowId?: string | null;
+    interruptId?: string | null;
     /** Use centered textarea layout for empty sessions */
     variant?: "default" | "centered";
     /** Task control props */
@@ -202,6 +205,7 @@ export function ChatInput({
     initialResearchStrategy = "quick",
     onTaskCreated,
     currentWorkflowId = null,
+    interruptId = null,
     variant = "default",
     isTaskRunning = false,
     isPaused = false,
@@ -467,6 +471,7 @@ export function ChatInput({
                     file_ids: fileIdsToSubmit,
                     attachments,
                     context: Object.keys(context).length ? context : undefined,
+                    interrupt_id: interruptId || undefined,
                 });
 
                 setQuery("");
@@ -475,7 +480,7 @@ export function ChatInput({
                 fileUploadRef.current?.clearFiles();
 
                 onTaskCreated(
-                    response.active_task_id,
+                    response.process_id,
                     query.trim(),
                     response.session_id,
                     attachments.map((item) => ({
@@ -484,6 +489,9 @@ export function ChatInput({
                         size: item.size,
                         mimeType: item.mime_type,
                     })),
+                    response.run_id,
+                    response.cursor,
+                    response.user_message,
                 );
                 return;
             }
@@ -529,6 +537,8 @@ export function ChatInput({
                         mimeType: item.mime_type,
                     })),
                     response.run_id,
+                    response.cursor,
+                    response.user_message,
                 );
             } else {
                 // Use the existing API for tasks without files
@@ -554,7 +564,7 @@ export function ChatInput({
 
                 setQuery("");
 
-                onTaskCreated(response.workflow_id, query.trim(), response.session_id, undefined, response.run_id);
+                onTaskCreated(response.workflow_id, query.trim(), response.session_id, undefined, response.run_id, response.cursor, response.user_message);
             }
         } catch (err) {
             setError(err instanceof Error ? err.message : t("chat.submitFailed"));

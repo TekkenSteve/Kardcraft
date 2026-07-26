@@ -233,9 +233,9 @@ export class SseGateway {
                     this.reportProtocolViolation({
                         reason: validated.reason,
                         explicitType,
-                        workflowId: typeof raw?.workflow_id === "string" ? raw.workflow_id : undefined,
+                        workflowId: typeof raw?.process_id === "string" ? raw.process_id : undefined,
                         runId: typeof raw?.run_id === "string" ? raw.run_id : undefined,
-                        sessionId: typeof raw?.session_id === "string" ? raw.session_id : undefined,
+                        sessionId: typeof raw?.thread_id === "string" ? raw.thread_id : undefined,
                         eventId: typeof raw?.event_id === "string" ? raw.event_id : undefined,
                     });
                     return;
@@ -250,7 +250,7 @@ export class SseGateway {
 
                 const eventType = explicitType || envelope.event_type;
                 const interested = Array.from(this.subscriptions.values()).filter(
-                    (item) => item.workflowId === envelope.workflow_id && (!item.sessionId || item.sessionId === envelope.session_id),
+                    (item) => item.workflowId === (envelope.process_id || envelope.run_id) && (!item.sessionId || item.sessionId === envelope.thread_id),
                 );
                 if (interested.length === 0) return;
                 interested.forEach((sub) => sub.handlers.onEnvelope?.(envelope));
@@ -265,16 +265,16 @@ export class SseGateway {
 
                 const mapped = mapWireEventToDomainEvent({
                     eventType,
+                    sequence: envelope.sequence,
                     payload: {
                         ...envelope.payload,
-                        workflow_id: envelope.workflow_id,
+                        workflow_id: envelope.process_id || envelope.run_id,
                         run_id: envelope.run_id,
-                        session_id: envelope.session_id,
+                        session_id: envelope.thread_id,
                         event_id: envelope.event_id,
-                        correlation_id: envelope.correlation_id,
                     },
-                    fallbackWorkflowId: envelope.workflow_id,
-                    fallbackSessionId: envelope.session_id,
+                    fallbackWorkflowId: envelope.process_id || envelope.run_id,
+                    fallbackSessionId: envelope.thread_id,
                     at: envelope.occurred_at,
                     eventId: envelope.event_id,
                 });
@@ -282,9 +282,9 @@ export class SseGateway {
                     this.reportProtocolViolation({
                         reason: `domain_map_rejected:${mapped.reason}`,
                         explicitType: eventType,
-                        workflowId: envelope.workflow_id,
+                        workflowId: envelope.process_id || envelope.run_id,
                         runId: envelope.run_id,
-                        sessionId: envelope.session_id,
+                        sessionId: envelope.thread_id,
                         eventId: envelope.event_id,
                     });
                     return;

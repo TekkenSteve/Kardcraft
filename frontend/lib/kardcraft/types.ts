@@ -61,6 +61,7 @@ export interface BaseEvent {
     seq?: number;
     stream_id?: string;
     timestamp?: string; // Client-side timestamp
+    payload?: Record<string, unknown>;
 }
 
 export interface ThreadMessageDeltaEvent extends BaseEvent {

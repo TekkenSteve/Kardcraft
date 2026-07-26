@@ -10,7 +10,7 @@
 
 import { fetchEventSource } from '@microsoft/fetch-event-source';
 import { fromCallback } from 'xstate';
-import { getStreamUrlForWorkflows } from '@/lib/kardcraft/api';
+import { getSessionEventsUrl } from '@/lib/kardcraft/api';
 import type { RuntimeEnvelope } from './runtime-envelope';
 import { validateRuntimeEnvelope } from './runtime-envelope';
 import type { ConnectionState } from './types';
@@ -30,7 +30,6 @@ export type SessionSseOutputEvent =
   | { type: 'SSE_ENVELOPE'; envelope: RuntimeEnvelope };
 
 export type SessionSseConfig = {
-  workflowId: string;
   sessionId: string;
   lastEventID?: number;
   includeLastEventID?: boolean;
@@ -45,8 +44,8 @@ class FatalError extends Error {
 
 export function createSessionSseActor() {
   return fromCallback<SessionSseInputEvent, SessionSseConfig, SessionSseOutputEvent>(({ sendBack, receive, input }) => {
-    const config = input ?? { workflowId: '', sessionId: '' };
-    const { workflowId } = config;
+    const config = input ?? { sessionId: '' };
+    const { sessionId } = config;
     
     let abortController: AbortController | null = null;
     let lastEventID = config.lastEventID || 0;
@@ -57,7 +56,7 @@ export function createSessionSseActor() {
     let lastActivityAt = 0;
 
     const log = (message: string, ...args: unknown[]) => {
-      console.log(`[SessionSSE:${workflowId.slice(-8)}] ${message}`, ...args);
+      console.log(`[SessionSSE:${sessionId.slice(-8)}] ${message}`, ...args);
     };
 
     const emitState = (state: ConnectionState) => {
@@ -115,10 +114,7 @@ export function createSessionSseActor() {
       startWatchdog(generation);
       emitState('connecting');
 
-      const url = getStreamUrlForWorkflows([workflowId], {
-        lastEventID: eventID,
-        includeLastEventID,
-      });
+      const url = getSessionEventsUrl(sessionId, includeLastEventID ? eventID : undefined);
       log('Connecting to URL:', url);
 
       fetchEventSource(url, {
@@ -189,7 +185,7 @@ export function createSessionSseActor() {
               envelope.event_id = event.id;
             }
 
-            log('Sending SSE_ENVELOPE to session:', { event_type: envelope.event_type, workflow_id: envelope.workflow_id });
+            log('Sending SSE_ENVELOPE to session:', { event_type: envelope.event_type, thread_id: envelope.thread_id });
             sendBack({ type: 'SSE_ENVELOPE', envelope });
           } catch (error) {
             log('Failed to parse event:', error);

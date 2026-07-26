@@ -21,14 +21,14 @@ import {
 const makeEnvelope = (overrides: Partial<RuntimeEnvelope> & Pick<RuntimeEnvelope, "event_type" | "event_id">): RuntimeEnvelope => {
   const { event_id: eventId, event_type: eventType, ...rest } = overrides;
   return {
-    schema_version: 1,
-    correlation_id: "corr-test",
+    schema_version: "agentos.conversation.v1",
     event_id: eventId,
     event_type: eventType,
+    sequence: 1,
     occurred_at: new Date().toISOString(),
-    workflow_id: "wf-1",
+    process_id: "wf-1",
     run_id: "run-1",
-    session_id: "s-1",
+    thread_id: "s-1",
     payload: {},
     ...rest,
   };
@@ -69,7 +69,7 @@ describe("session SSE actor", () => {
     const message: EventSourceMessage = {
       id: "106",
       event: "NODE_COMPLETED",
-      data: JSON.stringify(makeEnvelope({ event_type: "NODE_COMPLETED", event_id: "106" })),
+      data: JSON.stringify(makeEnvelope({ event_type: "NODE_COMPLETED", event_id: "wf-1:106", sequence: 106 })),
       retry: undefined,
     };
     fetchCalls[0].init.onmessage?.(message);
@@ -81,7 +81,7 @@ describe("session SSE actor", () => {
 
     expect(fetchCalls).toHaveLength(2);
     expect(fetchCalls[0].init.signal?.aborted).toBe(true);
-    expect(String(fetchCalls[1].input)).toContain("last_event_id=106");
+    expect(String(fetchCalls[1].input)).toContain("after=106");
 
     actor.stop();
   });

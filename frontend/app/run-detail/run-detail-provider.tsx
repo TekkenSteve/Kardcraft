@@ -1,7 +1,8 @@
 "use client";
 
 import { cancelTask, pauseTask, resumeTask } from "@/lib/kardcraft/api";
-import { getSessionConversation, getSessionHistory, getSessionState, getSessionTimeline, getSessionWorkspace } from "@/lib/kardcraft/session-repository";
+import { getSessionStreamState } from "@/lib/kardcraft/api";
+import { getSessionWorkspace } from "@/lib/kardcraft/session-repository";
 import type { RunEvent } from "@/lib/kardcraft/types";
 import { useRegistryActor, useRegistryViewModel, useRunCommands, useSessionViewModel } from "@/lib/run/system";
 import type { CardData, RunMessage } from "@/lib/run/types";
@@ -65,62 +66,41 @@ export function RunDetailProvider({ children }: { children: React.ReactNode }) {
         queryKey: ["run-detail", "bootstrap", resolvedSessionId],
         queryFn: async () => {
             if (!resolvedSessionId) return null;
-            const [conversation, timeline, history, state, workspace] = await Promise.all([
-                getSessionConversation(resolvedSessionId),
-                getSessionTimeline(resolvedSessionId, 500, 0, true),
-                getSessionHistory(resolvedSessionId),
-                getSessionState(resolvedSessionId),
+            const [streamState, workspace] = await Promise.all([
+                getSessionStreamState(resolvedSessionId),
                 getSessionWorkspace(resolvedSessionId),
             ]);
-            return { conversation, timeline, history, state, workspace };
+            return { streamState, workspace };
         },
         enabled: !!resolvedSessionId,
         staleTime: Infinity,
     });
 
-    // 跟踪是否已经 hydrated，避免重复
-    const hydratedSessionsRef = useRef<Set<string>>(new Set());
     const registryActor = useRegistryActor();
 
     useEffect(() => {
         const data = bootstrapQuery.data;
         if (!data || !resolvedSessionId) return;
 
-        // 如果已经 hydrated 过这个 session，跳过
-        if (hydratedSessionsRef.current.has(resolvedSessionId)) {
-            console.log('[Provider] Session already hydrated, skipping:', resolvedSessionId);
-            return;
-        }
-
-        // 检查 session 是否已由 createTask 启动（用户刚发送消息）
-        // 如果 session 已处于 running 且有消息，说明是刚创建的任务，不需要用 DB 数据覆盖
-        const existingSession = registryActor.getSnapshot().context.sessions[resolvedSessionId];
-        if (existingSession) {
-            const snap = existingSession.getSnapshot();
-            if (snap.context.status === 'running' && snap.context.messages.length > 0) {
-                console.log('[Provider] Session already running with messages, skip hydration (freshly created task)');
-                hydratedSessionsRef.current.add(resolvedSessionId);
-                return;
-            }
-        }
-
-        console.log('[Provider] Hydrating session:', resolvedSessionId);
-        hydratedSessionsRef.current.add(resolvedSessionId);
-
-        // 从数据库恢复状态
-        const state = data.state;
-        const workflowId = state?.active_task_id || null;
-        const runId = workflowId;
-
-        console.log('[Provider] Hydrate data:', { workflowId, runId, messagesCount: data.conversation?.messages?.length, cardsCount: data.workspace?.cards?.length });
+        const latestRun = data.streamState.runs.at(-1) ?? null;
+        const workflowId = latestRun?.process_id || null;
+        const runId = latestRun?.run_id || null;
+        const conversationStatus = latestRun
+            ? latestRun.status === "interrupted" ? "waiting_input"
+                : latestRun.status === "completed" ? "completed"
+                    : latestRun.status === "cancelled" ? "cancelled"
+                        : latestRun.status === "error" ? "failed"
+                            : "running"
+            : "idle";
 
         // 从 conversation 恢复消息（需要转换字段名）
-        const messages: RunMessage[] = (data.conversation?.messages || []).map((msg) => ({
-            id: msg.id,
+        const messages: RunMessage[] = data.streamState.messages.map((msg) => ({
+            id: msg.message_id,
             role: msg.role,
             content: msg.content,
-            timestamp: msg.timestamp,
-            taskId: msg.task_id,
+            timestamp: msg.completed_at || msg.created_at,
+            taskId: msg.process_id,
+            runId: msg.run_id,
             metadata: msg.metadata,
             attachments: msg.attachments?.map((att) => ({
                 fileId: att.file_id,
@@ -130,15 +110,19 @@ export function RunDetailProvider({ children }: { children: React.ReactNode }) {
             })),
         }));
 
-        const events: RunEvent[] = (data.timeline?.events || []).map((event) => {
-            const eventRecord = event as typeof event & { run_id?: string };
-            return {
-                ...event,
-                workflow_id: event.workflow_id || event.task_id || workflowId || undefined,
-                run_id: eventRecord.run_id || runId || undefined,
-                timestamp: event.timestamp || new Date().toISOString(),
-            } as RunEvent;
-        });
+        const chatEvents = new Set(["RUN_STARTED", "TEXT_MESSAGE_START", "TEXT_MESSAGE_CONTENT", "TEXT_MESSAGE_END", "RUN_FINISHED", "RUN_ERROR"]);
+        const events: RunEvent[] = data.streamState.events
+            .filter((event) => !chatEvents.has(event.event_type) && event.event_type !== "PLANNER_TRACE")
+            .map((event) => ({
+                id: event.sequence,
+                type: event.event_type,
+                workflow_id: event.process_id || workflowId || undefined,
+                run_id: event.run_id,
+                stream_id: event.event_id,
+                timestamp: event.occurred_at,
+                payload: event.payload,
+                message: typeof event.payload.message === "string" ? event.payload.message : undefined,
+            } as RunEvent));
 
         // 从 workspace 恢复卡片（需要转换字段名）
         const cards: CardData[] = (data.workspace?.cards || []).map((card) => ({
@@ -158,17 +142,22 @@ export function RunDetailProvider({ children }: { children: React.ReactNode }) {
             messages,
             events,
             cards,
-            state: state
-                ? {
-                    active_task_id: state.active_task_id,
-                    task_state: state.task_state,
-                    session_control_state: state.session_control_state,
-                }
-                : null,
+            cursor: data.streamState.cursor,
+            interrupt: latestRun?.interrupt || null,
+            state: { conversation_status: conversationStatus },
         });
+    }, [bootstrapQuery.data, resolvedSessionId, commands]);
 
-        console.log('[Provider] Hydration complete');
-    }, [bootstrapQuery.data, resolvedSessionId, commands, registryActor]);
+    const reconciledTerminalRef = useRef<string | null>(null);
+    useEffect(() => {
+        if (!resolvedSessionId) return;
+        const shouldReconcile = view.status === "completed" || view.status === "failed" || view.status === "cancelled" || view.status === "waiting_input" || view.connectionState === "error";
+        if (!shouldReconcile) return;
+        const key = `${view.runId || "none"}:${view.status}:${view.connectionState}`;
+        if (reconciledTerminalRef.current === key) return;
+        reconciledTerminalRef.current = key;
+        void bootstrapQuery.refetch();
+    }, [bootstrapQuery, resolvedSessionId, view.connectionState, view.runId, view.status]);
 
     const uiPreferenceSessionKey = useMemo(() => resolvedSessionId ?? "new:default", [resolvedSessionId]);
     const persistedActiveTab = useRunDetailPreferencesStore((s) => s.activeTabBySession[uiPreferenceSessionKey] || "conversation");
@@ -207,7 +196,7 @@ export function RunDetailProvider({ children }: { children: React.ReactNode }) {
     });
 
     const handleTaskCreated = useCallback(
-        (workflowId: string, query: string, newSessionId?: string, attachments?: Array<{ fileId: string; filename: string; size: number; mimeType: string }>, runId?: string) => {
+        (workflowId: string, query: string, newSessionId?: string, attachments?: Array<{ fileId: string; filename: string; size: number; mimeType: string }>, runId?: string, cursor?: number, serverUserMessage?: import("@/lib/kardcraft/api").ConversationThreadMessage) => {
             const normalizedWorkflow = workflowId.trim();
             if (!normalizedWorkflow) return;
 
@@ -224,7 +213,19 @@ export function RunDetailProvider({ children }: { children: React.ReactNode }) {
             if (targetSessionId) {
                 console.log('[handleTaskCreated] activating/creating task for', { targetSessionId });
                 commands.activateSession(targetSessionId);
-                commands.createTask(targetSessionId, normalizedWorkflow, query, runId);
+                const userMessage: RunMessage | undefined = serverUserMessage ? {
+                    id: serverUserMessage.message_id,
+                    role: serverUserMessage.role,
+                    content: serverUserMessage.content,
+                    timestamp: serverUserMessage.completed_at || serverUserMessage.created_at,
+                    taskId: serverUserMessage.process_id,
+                    runId: serverUserMessage.run_id,
+                    metadata: serverUserMessage.metadata,
+                    attachments: serverUserMessage.attachments?.map((item) => ({
+                        fileId: item.file_id, filename: item.filename, size: item.size, mimeType: item.mime_type,
+                    })),
+                } : undefined;
+                commands.createTask(targetSessionId, normalizedWorkflow, query, runId, cursor, userMessage);
 
                 // Debug: check session state immediately after create
                 const snap = registryActor.getSnapshot().context.sessions[targetSessionId]?.getSnapshot();
@@ -312,12 +313,11 @@ export function RunDetailProvider({ children }: { children: React.ReactNode }) {
             isCancelling: view.isCancelling,
             isCancelled: view.isCancelled,
             cards: view.cards,
-            sessionData: bootstrapQuery.data
-                ? { conversation: bootstrapQuery.data.conversation, timeline: bootstrapQuery.data.timeline }
-                : null,
-            sessionHistory: bootstrapQuery.data?.history || null,
+            sessionData: null,
+            sessionHistory: null,
             currentWorkflowId: view.workflowId,
             currentRunId: view.runId,
+            interruptId: view.interrupt?.interrupt_id || null,
             timelineEvents,
             workspacePhase: (view.cards.length > 0 ? "hydrated" : "empty"),
             loadPhase: view.runPhase === "error" ? "loading" : view.runPhase,

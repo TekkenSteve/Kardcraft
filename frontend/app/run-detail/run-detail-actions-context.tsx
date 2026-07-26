@@ -10,6 +10,8 @@ export interface RunDetailActionsContextValue {
         newSessionId?: string,
         attachments?: Array<{fileId: string; filename: string; size: number; mimeType: string}>,
         runId?: string,
+        cursor?: number,
+        userMessage?: import("@/lib/kardcraft/api").ConversationThreadMessage,
     ) => void;
     handlePause: () => void;
     handleResume: () => void;
