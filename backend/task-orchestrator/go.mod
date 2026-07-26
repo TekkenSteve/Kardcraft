@@ -2,10 +2,8 @@ module task-orchestrator
 
 go 1.26.2
 
-replace github.com/TekkenSteve/GoAgent => ../../../GoAgent
-
 require (
-	github.com/TekkenSteve/GoAgent v0.0.0-20260715133128-17e2c74d1103
+	github.com/TekkenSteve/GoAgent v0.0.0-20260726104421-b09aa5013ac2
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/redis/go-redis/v9 v9.18.0

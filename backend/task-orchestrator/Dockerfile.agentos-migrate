@@ -1,9 +1,13 @@
 # syntax=docker/dockerfile:1
 
-# During joint development the goagent named context is the same source used
-# by the orchestrator's go.mod replace directive. Release builds replace that
-# directive with a pinned module version before publishing this image.
-FROM goagent AS goagent-source
+# Extract migrations from the exact GoAgent module version pinned in go.mod.
+FROM golang:1.26-alpine AS goagent-source
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download github.com/TekkenSteve/GoAgent && \
+    module_dir="$(go list -m -f '{{.Dir}}' github.com/TekkenSteve/GoAgent)" && \
+    cp -R "${module_dir}/migrations" /migrations
 
 FROM migrate/migrate:v4.19.1
 

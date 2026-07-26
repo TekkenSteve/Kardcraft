@@ -101,8 +101,6 @@ services:
     build:
       context: ./backend/task-orchestrator
       dockerfile: Dockerfile.agentos-migrate
-      additional_contexts:
-        goagent: ${GOAGENT_SOURCE_PATH:-../GoAgent}
     container_name: kardcraft-agentos-migrate
     command: [ "-path", "/migrations", "-database", "postgres://agentos:agentos@postgres:5432/agentos?sslmode=disable", "up" ]
     restart: on-failure
@@ -118,8 +116,6 @@ services:
       dockerfile: Dockerfile
       args:
         TARGET: river-migrate
-      additional_contexts:
-        goagent: ${GOAGENT_SOURCE_PATH:-../GoAgent}
     container_name: kardcraft-river-migrate
     environment:
       PG_URL: postgres://postgres:postgres123@postgres:5432/kardcraft?sslmode=disable
@@ -593,8 +589,6 @@ services:
     build:
       context: ./backend/task-orchestrator
       dockerfile: Dockerfile
-      additional_contexts:
-        goagent: ${GOAGENT_SOURCE_PATH:-../GoAgent}
     container_name: kardcraft-task-orchestrator
     restart: always
     command: [ /app/task-orchestrator ]
