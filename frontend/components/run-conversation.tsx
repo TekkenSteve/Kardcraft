@@ -5,11 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { RunMessage } from "@/lib/run/types";
+import type { ProcessProgress } from "@/lib/run/process-progress";
 import { getSessionDisplayName } from "@/lib/session/profile";
 import { useSessionSelector } from "@/lib/session/system";
 import { cn, openExternalUrl } from "@/lib/utils";
 import "highlight.js/styles/github-dark.css";
-import { AlertCircle, Brain, Check, CheckCircle, CircleSlash, Clock, Copy, ExternalLink, File, FileAudio, FileText, FileVideo, FolderSync, Image as ImageIcon, Link, Loader2, MessageSquare, Microscope, Paperclip, Pause, Play, RefreshCw, Search, ShieldAlert, Sparkles, Users, XCircle, Zap } from "lucide-react";
+import { AlertCircle, Check, CheckCircle, Copy, ExternalLink, File, FileAudio, FileText, FileVideo, Image as ImageIcon, Loader2, Microscope, Paperclip, Sparkles, XCircle } from "lucide-react";
 import React, { useMemo, useState, type ComponentPropsWithoutRef, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
@@ -147,66 +148,11 @@ const extractMessageAttachments = (message: Message): MessageAttachment[] => {
     });
 };
 
-// Status message icon mapping based on event type
-function StatusIcon({ eventType }: { eventType?: string }) {
-    switch (eventType) {
-        case "AGENT_THINKING":
-            return <Brain className="size-3.5 text-blue-500 animate-pulse" />;
-        case "AGENT_STARTED":
-            return <Play className="size-3.5 text-green-500" />;
-        case "AGENT_COMPLETED":
-            return <CheckCircle className="size-3.5 text-green-500" />;
-        case "DELEGATION":
-            return <Users className="size-3.5 text-purple-500" />;
-        case "PROGRESS":
-        case "STATUS_UPDATE":
-            return <Zap className="size-3.5 text-amber-500" />;
-        case "DATA_PROCESSING":
-            return <Loader2 className="size-3.5 text-green-500 animate-spin" />;
-        case "TOOL_INVOKED":
-            return <Search className="size-3.5 text-blue-500 animate-pulse" />;
-        case "TOOL_OBSERVATION":
-            return <Sparkles className="size-3.5 text-emerald-500" />;
-        case "APPROVAL_REQUESTED":
-            return <AlertCircle className="size-3.5 text-orange-500" />;
-        case "APPROVAL_DECISION":
-            return <CheckCircle className="size-3.5 text-green-500" />;
-        case "WAITING":
-            return <Clock className="size-3.5 text-amber-500 animate-pulse" />;
-        case "DEPENDENCY_SATISFIED":
-            return <Link className="size-3.5 text-green-500" />;
-        case "ERROR_OCCURRED":
-            return <ShieldAlert className="size-3.5 text-red-500" />;
-        case "ERROR_RECOVERY":
-            return <RefreshCw className="size-3.5 text-amber-500 animate-spin" />;
-        case "MESSAGE_SENT":
-        case "MESSAGE_RECEIVED":
-            return <MessageSquare className="size-3.5 text-blue-500" />;
-        case "WORKSPACE_UPDATED":
-            return <FolderSync className="size-3.5 text-purple-500" />;
-        case "workflow.pausing":
-            return <Pause className="size-3.5 text-amber-500 animate-pulse" />;
-        case "WORKFLOW_PAUSED":
-            return <Pause className="size-3.5 text-amber-500" />;
-        case "workflow.resuming":
-            return <Play className="size-3.5 text-green-500 animate-pulse" />;
-        case "WORKFLOW_RESUMED":
-            return <Play className="size-3.5 text-green-500" />;
-        case "workflow.cancelling":
-        case "WORKFLOW_CANCELLING":
-            return <CircleSlash className="size-3.5 text-red-500 animate-pulse" />;
-        case "WORKFLOW_CANCELLED":
-            return <XCircle className="size-3.5 text-red-500" />;
-        case "WORKFLOW_STARTED":
-        default:
-            return <Loader2 className="size-3.5 text-muted-foreground animate-spin" />;
-    }
-}
-
 interface RunConversationProps {
     messages: readonly Message[];
     agentType?: "normal" | "card_template";
     isWaitingForAssistant?: boolean;
+    processProgress?: ProcessProgress | null;
 }
 
 // Component to render a single citation with tooltip
@@ -498,7 +444,7 @@ function getMarkdownComponents() {
     };
 }
 
-export function RunConversation({ messages, agentType = "normal", isWaitingForAssistant = false }: RunConversationProps) {
+export function RunConversation({ messages, agentType = "normal", isWaitingForAssistant = false, processProgress = null }: RunConversationProps) {
     const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
     const { t } = useTranslation();
     const userName = useSessionSelector((snapshot) => getSessionDisplayName(snapshot.context.session));
@@ -544,22 +490,6 @@ export function RunConversation({ messages, agentType = "normal", isWaitingForAs
             {displayedMessages.map((message) => {
                 const messageLabel = message.role === "user" ? userLabel : (message.sender || message.role);
                 const attachments = extractMessageAttachments(message);
-                // Render status messages inline (human-readable progress updates)
-                if (message.role === "status") {
-                    return (
-                        <div
-                            key={message.id}
-                            className="flex items-center justify-center gap-2 py-2 animate-in fade-in-0 slide-in-from-bottom-2 duration-300"
-                            style={{ contentVisibility: "auto", containIntrinsicSize: "1px 80px" }}
-                        >
-                            <div className="flex items-center gap-2 px-3 py-1.5 rounded-md bg-muted/50 text-muted-foreground text-xs">
-                                <StatusIcon eventType={message.eventType} />
-                                <span>{message.content}</span>
-                            </div>
-                        </div>
-                    );
-                }
-
                 // Render user and final assistant messages normally
                 return (
                     <div
@@ -682,19 +612,31 @@ export function RunConversation({ messages, agentType = "normal", isWaitingForAs
                     </div>
                 );
             })}
-            {isWaitingForAssistant && (
-                <div className="flex gap-2 sm:gap-3" aria-label={t("chat.assistantWorking", "Assistant is working")}>
-                    <Avatar className="size-7 sm:h-8 sm:w-8 shrink-0">
-                        <AvatarFallback className={agentType === "card_template" ? "bg-violet-100 dark:bg-violet-900/30" : "bg-amber-100 dark:bg-amber-900/30"}>
-                            {agentType === "card_template" ? <Microscope className="size-4 text-violet-500" /> : <Sparkles className="size-4 text-amber-500" />}
-                        </AvatarFallback>
-                    </Avatar>
-                    <div className="flex min-h-8 items-center">
-                        <Card className="flex h-8 items-center gap-1 px-3" role="status">
-                            <span className="size-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: "0ms" }} />
-                            <span className="size-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: "150ms" }} />
-                            <span className="size-1.5 rounded-full bg-muted-foreground animate-bounce" style={{ animationDelay: "300ms" }} />
-                        </Card>
+            {(isWaitingForAssistant || processProgress) && (
+                <div
+                    className="flex items-center justify-center py-2 animate-in fade-in-0 slide-in-from-bottom-2 duration-300"
+                >
+                    <div
+                        className="flex max-w-full items-center gap-2 rounded-md bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground"
+                        role="status"
+                        aria-live="polite"
+                        aria-label={t("chat.assistantWorking", "Assistant is working")}
+                    >
+                        {processProgress?.status === "failed" ? (
+                            <AlertCircle className="size-3.5 shrink-0 text-destructive" />
+                        ) : processProgress?.status === "completed" ? (
+                            <CheckCircle className="size-3.5 shrink-0 text-emerald-600" />
+                        ) : (
+                            <Loader2 className="size-3.5 shrink-0 animate-spin" />
+                        )}
+                        <span className="truncate">
+                            {processProgress
+                                ? t(`chat.processProgress.${processProgress.status}`, {
+                                    node: processProgress.label,
+                                    defaultValue: `${processProgress.label} ${processProgress.status}`,
+                                })
+                                : t("chat.assistantWorking", "Assistant is working")}
+                        </span>
                     </div>
                 </div>
             )}

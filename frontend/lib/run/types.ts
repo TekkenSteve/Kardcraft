@@ -3,7 +3,7 @@ import type { RunDomainEvent } from "./domain-event-types";
 
 export interface RunMessage {
     id: string;
-    role: "user" | "assistant" | "system" | "status";
+    role: "user" | "assistant" | "system";
     sender?: string;
     content: string;
     timestamp?: string;
@@ -14,7 +14,6 @@ export interface RunMessage {
     isGenerating?: boolean;
     isError?: boolean;
     isCancelled?: boolean;
-    eventType?: string;
     attachments?: Array<{
         fileId: string;
         filename: string;

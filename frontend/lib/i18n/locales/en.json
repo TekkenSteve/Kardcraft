@@ -224,7 +224,13 @@
     }
   },
   "chat": {
-    "you": "You"
+    "you": "You",
+    "assistantWorking": "Assistant is working",
+    "processProgress": {
+      "running": "Running {{node}}",
+      "completed": "Completed {{node}}",
+      "failed": "Failed at {{node}}"
+    }
   },
   "workspace": {
     "emptyTitle": "No drafts yet",

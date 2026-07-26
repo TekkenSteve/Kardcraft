@@ -4,12 +4,14 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { RunConversation } from "@/components/run-conversation";
 import { ChatInput } from "@/components/chat-input";
 import type { UploadedFile } from "@/lib/file-upload/types";
-import { useState } from "react";
+import { deriveProcessProgress } from "@/lib/run/process-progress";
+import { useMemo, useState } from "react";
 import { useRunDetailData, useRunDetailActions, useRunDetailUi } from "./run-detail-hooks";
 
 export function ConversationPanel() {
     const {
         messages,
+        runEvents,
         selectedAgent,
         researchStrategy,
         runStatus,
@@ -46,6 +48,13 @@ export function ConversationPanel() {
     const isWaitingForAssistant =
         (runStatus === "running" || runStatus === "resuming") &&
         !hasCurrentAssistantOverlay;
+    const processProgress = useMemo(
+        () => deriveProcessProgress(runEvents, currentRunId),
+        [currentRunId, runEvents],
+    );
+    const activeProcessProgress = runStatus === "running" || runStatus === "resuming"
+        ? processProgress
+        : null;
     const [uploadedFiles, setUploadedFiles] = useState<UploadedFile[]>([]);
 
     return (
@@ -57,6 +66,7 @@ export function ConversationPanel() {
                         messages={messages}
                         agentType={selectedAgent}
                         isWaitingForAssistant={isWaitingForAssistant}
+                        processProgress={activeProcessProgress}
                     />
                 </ScrollArea>
             </div>

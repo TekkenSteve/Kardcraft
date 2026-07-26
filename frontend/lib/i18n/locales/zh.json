@@ -224,7 +224,13 @@
     }
   },
   "chat": {
-    "you": "你"
+    "you": "你",
+    "assistantWorking": "助手正在处理",
+    "processProgress": {
+      "running": "正在运行：{{node}}",
+      "completed": "已完成：{{node}}",
+      "failed": "节点失败：{{node}}"
+    }
   },
   "workspace": {
     "emptyTitle": "暂无草稿",
